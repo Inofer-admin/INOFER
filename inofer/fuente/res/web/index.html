@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.28.07" />
+  <meta name="inofer-version" content="2026.10.28.08" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -2838,7 +2838,7 @@ function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmi
     }
 
     // Dirección de la nube de la planta: los equipos nuevos se conectan solos (los datos siguen protegidos por usuario y clave)
-    const INOFER_NUBE_PREDETERMINADA = '';
+    const INOFER_NUBE_PREDETERMINADA = 'https://script.google.com/macros/s/AKfycbzymlhXpbf4lWUTsyi9vMJYLqXDO9MesUNEntv60-anDlQR-axCPCzrgIPd5-isQ9YW/exec';
 
     function loadState() {
       try {
