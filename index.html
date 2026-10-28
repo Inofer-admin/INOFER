@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>INOFER</title>
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" href="inofer/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="inofer/icons/apple-touch-icon.png" />
+  <style>
+    :root { --bg: #020617; --card: #0f172a; --line: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --cyan: #22d3ee; --cyan2: #06b6d4; --green: #34d399; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--text);
+      background: radial-gradient(900px 500px at 50% -10%, rgba(6,182,212,.20), transparent), var(--bg); display: flex; justify-content: center; padding: 32px 16px; }
+    main { width: 100%; max-width: 760px; }
+    header { text-align: center; margin-bottom: 28px; }
+    header img { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+    h1 { margin: 12px 0 4px; font-size: 34px; letter-spacing: .04em; color: var(--cyan); }
+    header p { margin: 0; color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    @media (min-width: 680px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px; }
+    .card.reco { border-color: var(--cyan2); box-shadow: 0 0 0 1px rgba(6,182,212,.35); }
+    .tag { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .06em; color: #0f172a; background: var(--cyan); border-radius: 999px; padding: 3px 9px; margin-bottom: 8px; display: none; }
+    .card.reco .tag { display: inline-block; }
+    h2 { margin: 0 0 6px; font-size: 20px; }
+    .card p { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .btn { display: block; text-align: center; text-decoration: none; font-weight: 800; font-size: 16px; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+    .btn.primary { background: var(--cyan2); color: #02131a; }
+    .btn.primary:hover { background: var(--cyan); }
+    .btn.secondary { border: 1px solid var(--line); color: var(--text); font-size: 13px; font-weight: 600; padding: 10px; }
+    .btn.secondary:hover { border-color: #334155; }
+    ol { margin: 6px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    ol b { color: var(--text); }
+    footer { text-align: center; color: #475569; font-size: 12px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <img src="inofer/icons/icon-192.png" alt="" />
+      <h1>INOFER</h1>
+      <p>Sistema de inyección, órdenes y planificación</p>
+    </header>
+
+    <div class="grid">
+      <section class="card" id="cardMovil">
+        <span class="tag">RECOMENDADO PARA ESTE EQUIPO</span>
+        <h2>📱 Celular o tablet</h2>
+        <p>Se usa desde el navegador y se instala en la pantalla de inicio con su ícono.</p>
+        <a class="btn primary" href="inofer/">Abrir INOFER</a>
+        <ol>
+          <li>Tocá <b>Abrir INOFER</b>.</li>
+          <li><b>Android:</b> menú ⋮ → <b>Agregar a pantalla principal</b> / <b>Instalar app</b>.</li>
+          <li><b>iPhone:</b> botón Compartir → <b>Agregar a pantalla de inicio</b>.</li>
+        </ol>
+      </section>
+
+      <section class="card" id="cardPc">
+        <span class="tag">RECOMENDADO PARA ESTE EQUIPO</span>
+        <h2>🖥️ PC con Windows</h2>
+        <p>Programa de escritorio con ícono propio. Se actualiza solo.</p>
+        <a class="btn primary" href="inofer/INOFER-PC.zip" download>Descargar INOFER para PC</a>
+        <a class="btn secondary" href="https://github.com/Inofer-admin/INOFER/raw/main/inofer/INOFER-PC.zip">Si no descarga, probá con este otro enlace</a>
+        <ol>
+          <li>Abrí el archivo descargado (<b>INOFER-PC.zip</b>) → <b>Extraer todo</b>.</li>
+          <li>Doble clic en <b>INOFER.jar</b> → <b>Sí</b> en "Instalar INOFER".</li>
+          <li>Queda el ícono <b>INOFER</b> en el Escritorio.</li>
+        </ol>
+        <p style="margin:10px 0 0;font-size:12px">¿Pide Java? Instalalo desde <a style="color:var(--cyan)" href="https://adoptium.net/temurin/releases/">adoptium.net</a> (Windows · x64 · JRE · 21 · .msi).</p>
+      </section>
+    </div>
+
+    <footer>Las actualizaciones llegan solas a todos los equipos.</footer>
+  </main>
+  <script>
+    (function () {
+      var movil = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      document.getElementById(movil ? 'cardMovil' : 'cardPc').classList.add('reco');
+      if (movil) document.querySelector('.grid').insertBefore(document.getElementById('cardMovil'), document.getElementById('cardPc'));
+      else document.querySelector('.grid').insertBefore(document.getElementById('cardPc'), document.getElementById('cardMovil'));
+    })();
+  </script>
+</body>
+</html>

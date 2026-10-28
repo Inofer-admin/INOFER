@@ -41,6 +41,12 @@ cat > "$OUT/version.json" <<EOF
   "jarSha256": "$SHA"
 }
 EOF
+# Paquete para PC en .zip (los navegadores suelen bloquear la descarga directa de .jar)
+Z=$(mktemp -d)
+cp "$OUT/INOFER.jar" "$Z/INOFER.jar"
+printf 'INOFER para PC\r\n==============\r\n1. Doble clic en INOFER.jar\r\n2. Toca SI en "Instalar INOFER".\r\n3. Queda el icono INOFER en el Escritorio y en el menu Inicio.\r\n\r\nSi se abre WinRAR o 7-Zip: clic derecho en INOFER.jar -> Abrir con -> OpenJDK Platform binary.\r\nSi pide Java: https://adoptium.net/temurin/releases/ (Windows, x64, JRE, 21, .msi).\r\n' > "$Z/LEEME.txt"
+rm -f "$OUT/INOFER-PC.zip"; (cd "$Z" && zip -q -X "$OUT/INOFER-PC.zip" INOFER.jar LEEME.txt); rm -rf "$Z"
+
 # Servidor de Apps Script: el cargador (Codigo.gs) descarga este archivo
 { cat "$SRC/servidor/servidor.gs"; printf '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin };\n'; } > "$OUT/servidor.js"
 touch "$OUT/.nojekyll"
