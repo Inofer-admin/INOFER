@@ -41,6 +41,8 @@ cat > "$OUT/version.json" <<EOF
   "jarSha256": "$SHA"
 }
 EOF
+# Servidor de Apps Script: el cargador (Codigo.gs) descarga este archivo
+{ cat "$SRC/servidor/servidor.gs"; printf '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin };\n'; } > "$OUT/servidor.js"
 touch "$OUT/.nojekyll"
 rm -rf "$B"
 echo "web=$VWEB jar=$VJAR sha=$SHA"

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>INOFER</title>
-  <meta name="inofer-version" content="2026.10.28.02" />
+  <meta name="inofer-version" content="2026.10.28.03" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -2611,475 +2611,69 @@
             </button>
           </div>
           <p>Este código guarda cada carga en tu planilla de Google Sheets y envía las actualizaciones en vivo a todos los celulares y PCs conectados:</p>
-          <pre id="appsScriptSnippet" class="rounded-lg bg-slate-950 p-3 text-[11px] text-cyan-300 overflow-x-auto border border-slate-800 max-h-56 custom-scrollbar">const SPREADSHEET_ID = '1TEVDf0xDjwljzUd7FWaLCA2knkLChHbkBpWrduPlz9U';
-const SHEET_NAME = 'BD_Tiempo_Real';
-const STATE_SHEET_NAME = 'BD_Sistema_Completo';
+          <pre id="appsScriptSnippet" class="rounded-lg bg-slate-950 p-3 text-[11px] text-cyan-300 overflow-x-auto border border-slate-800 max-h-56 custom-scrollbar">/**
+ * INOFER — CARGADOR DEL SERVIDOR (Google Apps Script)
+ * ----------------------------------------------------
+ * Este archivo se pega UNA SOLA VEZ en Apps Script y no hace falta volver a tocarlo.
+ * La lógica del servidor (usuarios, permisos, partes, órdenes, Gantt...) se descarga sola
+ * desde la app publicada en GitHub, así que cada mejora se aplica automáticamente.
+ * Si GitHub no responde, se usa la última versión guardada en la hoja "BD_Servidor".
+ */
+const INOFER_SERVIDOR_URL = 'https://inofer-admin.github.io/INOFER/inofer/servidor.js';
+const INOFER_CACHE_SEGUNDOS = 120;
 
-function getSs() {
-  return SpreadsheetApp.getActiveSpreadsheet() || SpreadsheetApp.openById(SPREADSHEET_ID);
-}
-
-function getDbSheet() {
-  const ss = getSs();
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    sheet.appendRow([
-      'id', 'date', 'machine', 'shift', 'available',
-      'parada_maquina', 'setup_molde', 'puesta_punto',
-      'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at'
-    ]);
-  }
-  return sheet;
-}
-
-function getStateSheet() {
-  const ss = getSs();
-  let sheet = ss.getSheetByName(STATE_SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(STATE_SHEET_NAME);
-    sheet.appendRow(['key', 'json_value', 'updated_at']);
-  }
-  return sheet;
-}
-
-// Cada celda de Google Sheets admite hasta 50.000 caracteres: los módulos grandes
-// (Gantt, catálogo, órdenes) se guardan partidos en varias columnas (B y D en adelante).
-const CHUNK = 45000;
-
-function obtenerEstadoModulos() {
-  const sheet = getStateSheet();
-  const rows = sheet.getDataRange().getValues();
-  const state = {};
-  for (let i = 1; i &lt; rows.length; i++) {
-    const k = String(rows[i][0] || '');
-    let val = String(rows[i][1] || '');
-    for (let c = 3; c &lt; rows[i].length; c++) val += String(rows[i][c] || '');
-    if (k &amp;&amp; val) {
-      try { state[k] = JSON.parse(val); } catch (e) {}
-    }
-  }
-  return state;
-}
-
-function guardarModuloEstado(key, dataObj) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    const sheet = getStateSheet();
-    const rows = sheet.getDataRange().getValues();
-    const jsonStr = JSON.stringify(dataObj);
-    const nowStr = new Date().toISOString();
-    const parts = [];
-    for (let p = 0; p &lt; jsonStr.length; p += CHUNK) parts.push(jsonStr.substring(p, p + CHUNK));
-    if (!parts.length) parts.push('');
-    const rowVals = [String(key), parts[0], nowStr].concat(parts.slice(1));
-    let rowIdx = -1;
-    for (let i = 1; i &lt; rows.length; i++) {
-      if (String(rows[i][0]) === String(key)) { rowIdx = i + 1; break; }
-    }
-    if (rowIdx === -1) rowIdx = Math.max(sheet.getLastRow(), 1) + 1;
-    const lastCol = Math.max(sheet.getLastColumn(), rowVals.length);
-    sheet.getRange(rowIdx, 1, 1, lastCol).clearContent();
-    sheet.getRange(rowIdx, 1, 1, rowVals.length).setNumberFormat('@').setValues([rowVals]);
-    return { status: 'ok' };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function obtenerRegistros() {
-  const sheet = getDbSheet();
-  const rows = sheet.getDataRange().getValues();
-  if (rows.length &lt;= 1) return [];
-  const list = [];
-  for (let i = 1; i &lt; rows.length; i++) {
-    const r = rows[i];
-    if (!r[0]) continue;
-    list.unshift({
-      id: String(r[0]),
-      date: r[1] instanceof Date ? Utilities.formatDate(r[1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(r[1]),
-      machine: String(r[2]),
-      shift: String(r[3]),
-      available: Number(r[4]) || 0,
-      parada_maquina: Number(r[5]) || 0,
-      setup_molde: Number(r[6]) || 0,
-      puesta_punto: Number(r[7]) || 0,
-      mant_preventivo: Number(r[8]) || 0,
-      mant_correctivo: Number(r[9]) || 0,
-      falta_material: Number(r[10]) || 0,
-      falta_operario: Number(r[11]) || 0,
-      otros: Number(r[12]) || 0
-    });
-  }
-  return list;
-}
-
-function obtenerTodoElSistema() {
-  return {
-    records: obtenerRegistros(),
-    modules: obtenerEstadoModulos()
-  };
-}
-
-function guardarRegistro(entry) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    const sheet = getDbSheet();
-    sheet.appendRow([
-      entry.id || ('rec-' + new Date().getTime()),
-      entry.date, entry.machine, entry.shift,
-      Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
-      Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
-      Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
-      Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-      Number(entry.otros) || 0, new Date().toISOString()
-    ]);
-    return obtenerRegistros();
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function editarRegistro(entry) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  let found = false;
-  try {
-    const sheet = getDbSheet();
-    const rows = sheet.getDataRange().getValues();
-    for (let i = 1; i &lt; rows.length; i++) {
-      if (String(rows[i][0]) === String(entry.id)) {
-        sheet.getRange(i + 1, 1, 1, 14).setValues([[
-          entry.id, entry.date, entry.machine, entry.shift,
-          Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
-          Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
-          Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
-          Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-          Number(entry.otros) || 0, new Date().toISOString()
-        ]]);
-        found = true;
-        break;
+function inoferServidor_() {
+  if (globalThis.__inoferSrv) return globalThis.__inoferSrv;
+  const cache = CacheService.getScriptCache();
+  let code = cache.get('inofer_srv');
+  if (!code) {
+    try {
+      const r = UrlFetchApp.fetch(INOFER_SERVIDOR_URL + '?t=' + Date.now(), { muteHttpExceptions: true, followRedirects: true });
+      const txt = r.getResponseCode() === 200 ? r.getContentText() : '';
+      if (txt.indexOf('INOFER_SERVIDOR_OK') !== -1) {
+        code = txt;
+        try { cache.put('inofer_srv', code, INOFER_CACHE_SEGUNDOS); } catch (e) {}
+        inoferGuardarCopia_(code);
       }
-    }
-    if (!found) {
-      sheet.appendRow([
-        entry.id, entry.date, entry.machine, entry.shift,
-        Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
-        Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
-        Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
-        Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-        Number(entry.otros) || 0, new Date().toISOString()
-      ]);
-    }
-    return obtenerRegistros();
-  } finally {
-    lock.releaseLock();
+    } catch (e) {}
+    if (!code) code = inoferLeerCopia_();
   }
+  if (!code) throw new Error('No se pudo cargar el servidor de INOFER (sin conexión con GitHub y sin copia guardada).');
+  globalThis.__inoferSrv = new Function(code)();
+  return globalThis.__inoferSrv;
 }
 
-function eliminarRegistro(id) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+function inoferHojaCopia_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return ss.getSheetByName('BD_Servidor') || ss.insertSheet('BD_Servidor');
+}
+function inoferGuardarCopia_(code) {
   try {
-    const sheet = getDbSheet();
-    const rows = sheet.getDataRange().getValues();
-    for (let i = rows.length - 1; i &gt;= 1; i--) {
-      if (String(rows[i][0]) === String(id)) {
-        sheet.deleteRow(i + 1);
-        break;
-      }
-    }
-    return obtenerRegistros();
-  } finally {
-    lock.releaseLock();
-  }
+    const sh = inoferHojaCopia_();
+    const partes = [];
+    for (let i = 0; i &lt; code.length; i += 45000) partes.push(code.substring(i, i + 45000));
+    const actual = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].join('');
+    if (actual === code) return;
+    sh.clearContents();
+    sh.getRange(1, 1, 1, partes.length).setNumberFormat('@').setValues([partes]);
+  } catch (e) {}
 }
-
-function reemplazarRegistros(entries) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+function inoferLeerCopia_() {
   try {
-    const sheet = getDbSheet();
-    sheet.clearContents();
-    sheet.appendRow([
-      'id', 'date', 'machine', 'shift', 'available',
-      'parada_maquina', 'setup_molde', 'puesta_punto',
-      'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at'
-    ]);
-    (entries || []).slice().reverse().forEach(entry =&gt; {
-      sheet.appendRow([
-        entry.id || ('rec-' + new Date().getTime()),
-        entry.date, entry.machine, entry.shift,
-        Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
-        Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
-        Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
-        Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-        Number(entry.otros) || 0, new Date().toISOString()
-      ]);
-    });
-    return obtenerRegistros();
-  } finally {
-    lock.releaseLock();
-  }
+    const sh = inoferHojaCopia_();
+    if (sh.getLastColumn() &lt; 1) return '';
+    return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].join('');
+  } catch (e) { return ''; }
 }
 
-// =====================================================================
-// USUARIOS Y PERMISOS
-// Hoja BD_Usuarios: usuario | nombre | rol | permisos(JSON) | activo | sal | hash | actualizado
-// Permisos por área: 'none' (sin acceso) | 'view' (solo ver) | 'edit' (ver y modificar)
-// =====================================================================
-const USERS_SHEET_NAME = 'BD_Usuarios';
-const AREAS = ['partes', 'ordenes', 'catalogo', 'gantt', 'ia'];
-const SESION_DIAS = 30;
-
-function getUsersSheet() {
-  const ss = getSs();
-  let sheet = ss.getSheetByName(USERS_SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(USERS_SHEET_NAME);
-    sheet.appendRow(['usuario', 'nombre', 'rol', 'permisos', 'activo', 'sal', 'hash', 'actualizado']);
-    sheet.getRange('A:H').setNumberFormat('@');
-  }
-  return sheet;
-}
-
-function hashClave(sal, clave) {
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, sal + ':' + clave, Utilities.Charset.UTF_8);
-  return bytes.map(function (b) { return ('0' + (b &amp; 0xff).toString(16)).slice(-2); }).join('');
-}
-
-function normalizarPermisos(rol, permisos) {
-  const out = {};
-  AREAS.forEach(function (a) {
-    const v = rol === 'admin' ? 'edit' : (permisos &amp;&amp; permisos[a]);
-    out[a] = (v === 'edit' || v === 'view') ? v : 'none';
-  });
-  return out;
-}
-
-function leerUsuarios() {
-  const rows = getUsersSheet().getDataRange().getValues();
-  const list = [];
-  for (let i = 1; i &lt; rows.length; i++) {
-    const r = rows[i];
-    if (!r[0]) continue;
-    let perms = {};
-    try { perms = JSON.parse(String(r[3] || '{}')); } catch (e) {}
-    list.push({
-      fila: i + 1, usuario: String(r[0]).toLowerCase(), nombre: String(r[1] || r[0]),
-      rol: String(r[2]) === 'admin' ? 'admin' : 'usuario',
-      permisos: normalizarPermisos(String(r[2]), perms),
-      activo: String(r[4]) !== 'no', sal: String(r[5] || ''), hash: String(r[6] || '')
-    });
-  }
-  return list;
-}
-
-function publico(u) {
-  return { usuario: u.usuario, nombre: u.nombre, rol: u.rol, permisos: u.permisos, activo: u.activo };
-}
-
-function escribirUsuario(u) {
-  const sheet = getUsersSheet();
-  const fila = [u.usuario, u.nombre, u.rol, JSON.stringify(u.permisos), u.activo ? 'si' : 'no', u.sal, u.hash, new Date().toISOString()];
-  const existentes = leerUsuarios();
-  const ex = existentes.filter(function (x) { return x.usuario === u.usuario; })[0];
-  if (ex) sheet.getRange(ex.fila, 1, 1, 8).setNumberFormat('@').setValues([fila]);
-  else sheet.appendRow(fila);
-}
-
-function crearSesion(usuario) {
-  const props = PropertiesService.getScriptProperties();
-  const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
-  const exp = Date.now() + SESION_DIAS * 86400000;
-  // limpiar sesiones vencidas
-  const todas = props.getProperties();
-  Object.keys(todas).forEach(function (k) {
-    if (k.indexOf('ses_') === 0) {
-      try { if (JSON.parse(todas[k]).exp &lt; Date.now()) props.deleteProperty(k); } catch (e) { props.deleteProperty(k); }
-    }
-  });
-  props.setProperty('ses_' + token, JSON.stringify({ u: usuario, exp: exp }));
-  return token;
-}
-
-/** Devuelve el usuario dueño del token o null. */
-function usuarioDeToken(token) {
-  if (!token) return null;
-  const raw = PropertiesService.getScriptProperties().getProperty('ses_' + token);
-  if (!raw) return null;
-  let s;
-  try { s = JSON.parse(raw); } catch (e) { return null; }
-  if (!s || s.exp &lt; Date.now()) return null;
-  const u = leerUsuarios().filter(function (x) { return x.usuario === s.u; })[0];
-  return (u &amp;&amp; u.activo) ? u : null;
-}
-
-function puede(u, area, nivel) {
-  if (!u) return false;
-  if (u.rol === 'admin') return true;
-  const v = u.permisos[area];
-  return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
-}
-
-const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin' };
-
-function modulosVisibles(u) {
-  const all = obtenerEstadoModulos();
-  const out = {};
-  Object.keys(all).forEach(function (k) {
-    if (k === 'users') return; // nunca se envía la lista de usuarios por acá
-    const area = MODULO_AREA[k];
-    if (!area) return;
-    if (area === 'admin' ? (k === 'config' &amp;&amp; puede(u, 'ia', 'view')) : puede(u, area, 'view')) out[k] = all[k];
-  });
-  return out;
-}
-
-function respuesta(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-function paqueteDatos(u, records) {
-  return {
-    status: 'ok', auth: publico(u),
-    records: puede(u, 'partes', 'view') ? (records || obtenerRegistros()) : [],
-    modules: modulosVisibles(u)
-  };
-}
-
-/** Acciones de cuenta: ingreso, alta inicial y administración de usuarios. */
-const ACCIONES_CUENTA = ['authInfo', 'setupAdmin', 'login', 'logout', 'cambiarMiClave', 'listUsers', 'saveUser', 'deleteUser'];
-
-function accionCuenta(body) {
-  if (ACCIONES_CUENTA.indexOf(body.action) === -1) return null;
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    const usuarios = leerUsuarios();
-    if (body.action === 'authInfo') {
-      return { status: 'ok', authRequired: true, needsSetup: usuarios.length === 0 };
-    }
-    if (body.action === 'setupAdmin') {
-      if (usuarios.length &gt; 0) return { status: 'error', error: 'Ya existe un administrador.' };
-      const usuario = String(body.usuario || '').trim().toLowerCase();
-      if (!usuario || String(body.clave || '').length &lt; 4) return { status: 'error', error: 'Usuario o clave inválidos.' };
-      const sal = Utilities.getUuid();
-      const u = { usuario: usuario, nombre: String(body.nombre || usuario), rol: 'admin', permisos: normalizarPermisos('admin', {}), activo: true, sal: sal, hash: hashClave(sal, String(body.clave)) };
-      escribirUsuario(u);
-      return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
-    }
-    if (body.action === 'login') {
-      const usuario = String(body.usuario || '').trim().toLowerCase();
-      const u = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
-      if (!u || !u.activo || hashClave(u.sal, String(body.clave || '')) !== u.hash) {
-        Utilities.sleep(800);
-        return { status: 'error', error: 'Usuario o clave incorrectos.' };
-      }
-      return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
-    }
-    if (body.action === 'logout') {
-      if (body.token) PropertiesService.getScriptProperties().deleteProperty('ses_' + body.token);
-      return { status: 'ok' };
-    }
-    const yo = usuarioDeToken(body.token);
-    if (!yo) return { status: 'error', error: 'auth' };
-    if (body.action === 'cambiarMiClave') {
-      if (hashClave(yo.sal, String(body.claveActual || '')) !== yo.hash) return { status: 'error', error: 'La clave actual no es correcta.' };
-      if (String(body.claveNueva || '').length &lt; 4) return { status: 'error', error: 'La clave nueva debe tener al menos 4 caracteres.' };
-      yo.sal = Utilities.getUuid(); yo.hash = hashClave(yo.sal, String(body.claveNueva));
-      escribirUsuario(yo);
-      return { status: 'ok' };
-    }
-    if (yo.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede gestionar usuarios.' };
-    if (body.action === 'listUsers') {
-      return { status: 'ok', users: usuarios.map(publico) };
-    }
-    if (body.action === 'saveUser') {
-      const d = body.user || {};
-      const usuario = String(d.usuario || '').trim().toLowerCase();
-      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return { status: 'error', error: 'El usuario debe tener entre 3 y 30 letras o números (sin espacios).' };
-      const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
-      const rol = d.rol === 'admin' ? 'admin' : 'usuario';
-      const activo = d.activo !== false;
-      if (ex &amp;&amp; ex.rol === 'admin' &amp;&amp; (rol !== 'admin' || !activo)) {
-        const otrosAdmins = usuarios.filter(function (x) { return x.rol === 'admin' &amp;&amp; x.activo &amp;&amp; x.usuario !== usuario; });
-        if (!otrosAdmins.length) return { status: 'error', error: 'Tiene que quedar al menos un administrador activo.' };
-      }
-      if (!ex &amp;&amp; String(d.clave || '').length &lt; 4) return { status: 'error', error: 'La clave debe tener al menos 4 caracteres.' };
-      const u = ex || { usuario: usuario, sal: '', hash: '' };
-      u.nombre = String(d.nombre || usuario).slice(0, 60);
-      u.rol = rol; u.activo = activo;
-      u.permisos = normalizarPermisos(rol, d.permisos || {});
-      if (d.clave) { u.sal = Utilities.getUuid(); u.hash = hashClave(u.sal, String(d.clave)); }
-      escribirUsuario(u);
-      return { status: 'ok', users: leerUsuarios().map(publico) };
-    }
-    if (body.action === 'deleteUser') {
-      const usuario = String(body.usuario || '').toLowerCase();
-      if (usuario === yo.usuario) return { status: 'error', error: 'No podés borrar tu propio usuario.' };
-      const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
-      if (ex) getUsersSheet().deleteRow(ex.fila);
-      return { status: 'ok', users: leerUsuarios().map(publico) };
-    }
-    return null;
-  } finally {
-    lock.releaseLock();
-  }
-}
+function doGet(e) { return inoferServidor_().doGet(e); }
+function doPost(e) { return inoferServidor_().doPost(e); }
 
 /**
- * EMERGENCIA: si te olvidás la clave del administrador, en el editor de Apps Script
- * elegí esta función arriba (menú desplegable) y tocá "Ejecutar".
- * La clave del primer administrador pasa a ser: inofer1234  (cambiala después de entrar).
+ * EMERGENCIA: si te olvidás la clave del administrador, elegí esta función en el menú
+ * de arriba y tocá "Ejecutar". La clave del primer administrador pasa a ser: inofer1234
  */
-function restablecerClaveAdmin() {
-  const admin = leerUsuarios().filter(function (x) { return x.rol === 'admin'; })[0];
-  if (!admin) { Logger.log('No hay administradores: al abrir INOFER se te va a pedir crear uno.'); return; }
-  admin.sal = Utilities.getUuid(); admin.hash = hashClave(admin.sal, 'inofer1234'); admin.activo = true;
-  escribirUsuario(admin);
-  Logger.log('Listo. Usuario: ' + admin.usuario + '  Clave: inofer1234');
-}
-
-function doGet(e) {
-  const p = (e &amp;&amp; e.parameter) || {};
-  if (p.action === 'json') {
-    const u = usuarioDeToken(p.token);
-    if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
-    return respuesta(paqueteDatos(u));
-  }
-  return HtmlService.createHtmlOutput('&lt;h3&gt;INOFER - servidor de datos funcionando.&lt;/h3&gt;');
-}
-
-function doPost(e) {
-  const body = JSON.parse((e &amp;&amp; e.postData &amp;&amp; e.postData.contents) || '{}');
-  const cuenta = accionCuenta(body);
-  if (cuenta) return respuesta(cuenta);
-
-  const u = usuarioDeToken(body.token);
-  if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
-
-  let records = null;
-  const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
-  if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
-    if (!puede(u, 'partes', 'edit')) return sinPermiso('partes');
-    if (body.action === 'add') records = guardarRegistro(body.entry);
-    else if (body.action === 'edit') records = editarRegistro(body.entry);
-    else if (body.action === 'delete') records = eliminarRegistro(body.id);
-    else records = reemplazarRegistros(body.records);
-  } else if (body.action === 'saveModule') {
-    const area = MODULO_AREA[body.moduleKey];
-    if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
-    const ok = area === 'admin' ? u.rol === 'admin' : puede(u, area, 'edit');
-    if (!ok) return sinPermiso(area);
-    guardarModuloEstado(body.moduleKey, body.moduleData);
-  }
-  return respuesta(paqueteDatos(u, records));
-}
+function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmin(); }
 </pre>
           <div class="space-y-1 text-slate-200 pt-1">
             <p><strong>Paso 2:</strong> En Apps Script, creá o abrí el archivo HTML llamado <code class="text-amber-300">Index</code> y pegá el código HTML actualizado de este tablero.</p>
@@ -9947,8 +9541,26 @@ ${lines}${trendNote}`;
         try { pushCloudModuleState('users', list); } catch (e) { }
       }
     }
+    // La sesión se cierra al cerrar la app, salvo que el usuario elija "Mantener la sesión iniciada"
+    // (recordar: true -> localStorage; si no -> sessionStorage, que se borra al cerrar la ventana/app).
     function inoferSaveSession() {
-      try { if (inoferSession) localStorage.setItem(INOFER_SESSION_KEY, JSON.stringify(inoferSession)); else localStorage.removeItem(INOFER_SESSION_KEY); } catch (e) { }
+      try {
+        if (inoferSession && inoferSession.recordar) {
+          localStorage.setItem(INOFER_SESSION_KEY, JSON.stringify(inoferSession)); sessionStorage.removeItem(INOFER_SESSION_KEY);
+        } else if (inoferSession) {
+          sessionStorage.setItem(INOFER_SESSION_KEY, JSON.stringify(inoferSession)); localStorage.removeItem(INOFER_SESSION_KEY);
+        } else {
+          localStorage.removeItem(INOFER_SESSION_KEY); sessionStorage.removeItem(INOFER_SESSION_KEY);
+        }
+      } catch (e) { }
+    }
+    function inoferLoadSession() {
+      try {
+        const rec = JSON.parse(localStorage.getItem(INOFER_SESSION_KEY) || 'null');
+        if (rec && rec.recordar === true) return rec;
+        localStorage.removeItem(INOFER_SESSION_KEY); // sesiones viejas sin "mantener": se cierran
+        return JSON.parse(sessionStorage.getItem(INOFER_SESSION_KEY) || 'null');
+      } catch (e) { return null; }
     }
 
     // ---------- comunicación con la nube
@@ -10027,6 +9639,10 @@ ${lines}${trendNote}`;
             </label>
             <label id="inoferSetupPass2Wrap" class="hidden text-xs font-semibold text-slate-300">Repetir clave
               <input id="inoferSetupPass2" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none" />
+            </label>
+            <label class="flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
+              <input id="inoferLoginRemember" type="checkbox" class="mt-0.5 accent-cyan-500" />
+              <span>Mantener la sesión iniciada en este dispositivo<span class="block text-[10px] text-slate-500">Si no lo marcás, la sesión se cierra cada vez que se cierra la app.</span></span>
             </label>
             <p id="inoferLoginError" class="hidden rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300"></p>
             <button id="inoferLoginBtn" type="submit" class="w-full rounded-xl bg-cyan-500 py-2.5 text-sm font-extrabold text-slate-950 shadow-lg hover:bg-cyan-400 disabled:opacity-60">Ingresar</button>
@@ -10121,6 +9737,7 @@ ${lines}${trendNote}`;
           const d = await inoferCloudPost(body);
           if (!d || d.status !== 'ok') { inoferLoginError((d && d.error) || 'No se pudo ingresar.'); return; }
           inoferSession = { usuario: d.auth.usuario, nombre: d.auth.nombre, rol: d.auth.rol, permisos: inoferNormPerms(d.auth.rol, d.auth.permisos), token: d.token, modo: 'nube' };
+          inoferSession.recordar = !!document.getElementById('inoferLoginRemember').checked;
         } else {
           let users = inoferLocalUsers();
           if (inoferSetupMode) {
@@ -10134,6 +9751,7 @@ ${lines}${trendNote}`;
             inoferLoginError('Usuario o clave incorrectos.'); return;
           }
           inoferSession = { usuario: u.usuario, nombre: u.nombre, rol: u.rol, permisos: inoferNormPerms(u.rol, u.permisos), token: '', modo: 'local' };
+          inoferSession.recordar = !!document.getElementById('inoferLoginRemember').checked;
         }
         inoferSaveSession();
         inoferHideLogin();
@@ -10183,6 +9801,7 @@ ${lines}${trendNote}`;
         <div id="inoferUserMenu" class="hidden absolute right-0 z-[60] mt-1 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 text-xs shadow-2xl">
           <div id="inoferUserMenuInfo" class="border-b border-slate-800 px-3 py-2 text-[11px] text-slate-400"></div>
           <button id="inoferMenuUsers" type="button" class="block w-full px-3 py-2 text-left font-semibold text-amber-300 hover:bg-slate-800">🛡️ Usuarios y permisos</button>
+          <button id="inoferMenuRemember" type="button" class="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">🔒 Mantener sesión iniciada: <b id="inoferMenuRememberState">No</b></button>
           <button id="inoferMenuPass" type="button" class="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">🔑 Cambiar mi clave</button>
           <button id="inoferMenuLogout" type="button" class="block w-full px-3 py-2 text-left text-rose-300 hover:bg-slate-800">🚪 Cerrar sesión</button>
         </div>`;
@@ -10192,6 +9811,12 @@ ${lines}${trendNote}`;
       document.addEventListener('click', () => menu.classList.add('hidden'));
       wrap.querySelector('#inoferMenuUsers').addEventListener('click', () => { menu.classList.add('hidden'); inoferOpenUsersModal(); });
       wrap.querySelector('#inoferMenuPass').addEventListener('click', () => { menu.classList.add('hidden'); inoferChangeMyPassword(); });
+      wrap.querySelector('#inoferMenuRemember').addEventListener('click', () => {
+        menu.classList.add('hidden');
+        if (!inoferSession) return;
+        inoferSession.recordar = !inoferSession.recordar; inoferSaveSession(); inoferApplyPermissions();
+        showToast(inoferSession.recordar ? 'La sesión va a quedar iniciada en este dispositivo' : 'La sesión se va a cerrar al cerrar la app');
+      });
       wrap.querySelector('#inoferMenuLogout').addEventListener('click', () => { menu.classList.add('hidden'); inoferLogout(); });
     }
 
@@ -10496,6 +10121,7 @@ ${lines}${trendNote}`;
         chipName.textContent = logged ? inoferSession.nombre : '—';
         document.getElementById('inoferUserChipRole').textContent = logged ? (inoferSession.rol === 'admin' ? 'ADMIN' : 'USUARIO') : '';
         document.getElementById('inoferMenuUsers').classList.toggle('hidden', !inoferIsAdmin());
+        const rs = document.getElementById('inoferMenuRememberState'); if (rs) rs.textContent = logged && inoferSession.recordar ? 'Sí' : 'No';
         const info = document.getElementById('inoferUserMenuInfo');
         if (logged) {
           const ro = INOFER_AREAS.filter(a => inoferCan(a.key, 'view') && !inoferCan(a.key, 'edit')).map(a => a.label.split(' ')[0]);
@@ -10600,7 +10226,7 @@ ${lines}${trendNote}`;
       document.head.appendChild(st);
       inoferWrapGuards();
       inoferBuildUserChip();
-      try { inoferSession = JSON.parse(localStorage.getItem(INOFER_SESSION_KEY) || 'null'); } catch (e) { inoferSession = null; }
+      inoferSession = inoferLoadSession();
       if (inoferSession) {
         inoferAuthMode = inoferSession.modo === 'nube' ? 'nube' : 'local';
         if (inoferAuthMode === 'local') {
