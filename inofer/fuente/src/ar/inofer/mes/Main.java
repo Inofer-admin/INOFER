@@ -26,7 +26,7 @@ import java.nio.file.Path;
  */
 public final class Main {
 
-    public static final String VERSION = "2.3";
+    public static final String VERSION = "2.4";
     private static final int PUERTO_BASE = 47821;
 
     private static ServidorLocal servidor;

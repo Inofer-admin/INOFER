@@ -2,7 +2,7 @@
 # Arma el sitio publicable de INOFER (GitHub Pages) y el INOFER.jar con auto-actualización.
 # Uso: fuente/publicar.sh            (publica en la raiz del repositorio)
 set -e
-URL="${1:-https://inofer-admin.github.io/INOFER/}"; OUT="${2:-$(cd "$(dirname "$0")/.." && pwd)}"; VWEB="$3"
+URL="${1:-https://inofer-admin.github.io/INOFER/inofer/}"; OUT="${2:-$(cd "$(dirname "$0")/.." && pwd)}"; VWEB="$3"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 

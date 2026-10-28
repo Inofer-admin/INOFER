@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>INOFER</title>
-  <meta name="inofer-version" content="2026.10.28.01" />
+  <meta name="inofer-version" content="2026.10.28.02" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -2652,11 +2652,11 @@ function obtenerEstadoModulos() {
   const sheet = getStateSheet();
   const rows = sheet.getDataRange().getValues();
   const state = {};
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = 1; i &lt; rows.length; i++) {
     const k = String(rows[i][0] || '');
     let val = String(rows[i][1] || '');
-    for (let c = 3; c < rows[i].length; c++) val += String(rows[i][c] || '');
-    if (k && val) {
+    for (let c = 3; c &lt; rows[i].length; c++) val += String(rows[i][c] || '');
+    if (k &amp;&amp; val) {
       try { state[k] = JSON.parse(val); } catch (e) {}
     }
   }
@@ -2672,11 +2672,11 @@ function guardarModuloEstado(key, dataObj) {
     const jsonStr = JSON.stringify(dataObj);
     const nowStr = new Date().toISOString();
     const parts = [];
-    for (let p = 0; p < jsonStr.length; p += CHUNK) parts.push(jsonStr.substring(p, p + CHUNK));
+    for (let p = 0; p &lt; jsonStr.length; p += CHUNK) parts.push(jsonStr.substring(p, p + CHUNK));
     if (!parts.length) parts.push('');
     const rowVals = [String(key), parts[0], nowStr].concat(parts.slice(1));
     let rowIdx = -1;
-    for (let i = 1; i < rows.length; i++) {
+    for (let i = 1; i &lt; rows.length; i++) {
       if (String(rows[i][0]) === String(key)) { rowIdx = i + 1; break; }
     }
     if (rowIdx === -1) rowIdx = Math.max(sheet.getLastRow(), 1) + 1;
@@ -2692,9 +2692,9 @@ function guardarModuloEstado(key, dataObj) {
 function obtenerRegistros() {
   const sheet = getDbSheet();
   const rows = sheet.getDataRange().getValues();
-  if (rows.length <= 1) return [];
+  if (rows.length &lt;= 1) return [];
   const list = [];
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = 1; i &lt; rows.length; i++) {
     const r = rows[i];
     if (!r[0]) continue;
     list.unshift({
@@ -2750,7 +2750,7 @@ function editarRegistro(entry) {
   try {
     const sheet = getDbSheet();
     const rows = sheet.getDataRange().getValues();
-    for (let i = 1; i < rows.length; i++) {
+    for (let i = 1; i &lt; rows.length; i++) {
       if (String(rows[i][0]) === String(entry.id)) {
         sheet.getRange(i + 1, 1, 1, 14).setValues([[
           entry.id, entry.date, entry.machine, entry.shift,
@@ -2786,7 +2786,7 @@ function eliminarRegistro(id) {
   try {
     const sheet = getDbSheet();
     const rows = sheet.getDataRange().getValues();
-    for (let i = rows.length - 1; i >= 1; i--) {
+    for (let i = rows.length - 1; i &gt;= 1; i--) {
       if (String(rows[i][0]) === String(id)) {
         sheet.deleteRow(i + 1);
         break;
@@ -2810,7 +2810,7 @@ function reemplazarRegistros(entries) {
       'mant_preventivo', 'mant_correctivo', 'falta_material',
       'falta_operario', 'otros', 'updated_at'
     ]);
-    (entries || []).slice().reverse().forEach(entry => {
+    (entries || []).slice().reverse().forEach(entry =&gt; {
       sheet.appendRow([
         entry.id || ('rec-' + new Date().getTime()),
         entry.date, entry.machine, entry.shift,
@@ -2827,37 +2827,260 @@ function reemplazarRegistros(entries) {
   }
 }
 
-function doGet(e) {
-  if (e && e.parameter && e.parameter.action === 'json') {
-    const full = obtenerTodoElSistema();
-    return ContentService.createTextOutput(JSON.stringify({ status: 'ok', records: full.records, modules: full.modules }))
-      .setMimeType(ContentService.MimeType.JSON);
+// =====================================================================
+// USUARIOS Y PERMISOS
+// Hoja BD_Usuarios: usuario | nombre | rol | permisos(JSON) | activo | sal | hash | actualizado
+// Permisos por área: 'none' (sin acceso) | 'view' (solo ver) | 'edit' (ver y modificar)
+// =====================================================================
+const USERS_SHEET_NAME = 'BD_Usuarios';
+const AREAS = ['partes', 'ordenes', 'catalogo', 'gantt', 'ia'];
+const SESION_DIAS = 30;
+
+function getUsersSheet() {
+  const ss = getSs();
+  let sheet = ss.getSheetByName(USERS_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(USERS_SHEET_NAME);
+    sheet.appendRow(['usuario', 'nombre', 'rol', 'permisos', 'activo', 'sal', 'hash', 'actualizado']);
+    sheet.getRange('A:H').setNumberFormat('@');
   }
-  return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Tablero de Mando - Inyectoras (En Vivo)')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  return sheet;
+}
+
+function hashClave(sal, clave) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, sal + ':' + clave, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { return ('0' + (b &amp; 0xff).toString(16)).slice(-2); }).join('');
+}
+
+function normalizarPermisos(rol, permisos) {
+  const out = {};
+  AREAS.forEach(function (a) {
+    const v = rol === 'admin' ? 'edit' : (permisos &amp;&amp; permisos[a]);
+    out[a] = (v === 'edit' || v === 'view') ? v : 'none';
+  });
+  return out;
+}
+
+function leerUsuarios() {
+  const rows = getUsersSheet().getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i &lt; rows.length; i++) {
+    const r = rows[i];
+    if (!r[0]) continue;
+    let perms = {};
+    try { perms = JSON.parse(String(r[3] || '{}')); } catch (e) {}
+    list.push({
+      fila: i + 1, usuario: String(r[0]).toLowerCase(), nombre: String(r[1] || r[0]),
+      rol: String(r[2]) === 'admin' ? 'admin' : 'usuario',
+      permisos: normalizarPermisos(String(r[2]), perms),
+      activo: String(r[4]) !== 'no', sal: String(r[5] || ''), hash: String(r[6] || '')
+    });
+  }
+  return list;
+}
+
+function publico(u) {
+  return { usuario: u.usuario, nombre: u.nombre, rol: u.rol, permisos: u.permisos, activo: u.activo };
+}
+
+function escribirUsuario(u) {
+  const sheet = getUsersSheet();
+  const fila = [u.usuario, u.nombre, u.rol, JSON.stringify(u.permisos), u.activo ? 'si' : 'no', u.sal, u.hash, new Date().toISOString()];
+  const existentes = leerUsuarios();
+  const ex = existentes.filter(function (x) { return x.usuario === u.usuario; })[0];
+  if (ex) sheet.getRange(ex.fila, 1, 1, 8).setNumberFormat('@').setValues([fila]);
+  else sheet.appendRow(fila);
+}
+
+function crearSesion(usuario) {
+  const props = PropertiesService.getScriptProperties();
+  const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
+  const exp = Date.now() + SESION_DIAS * 86400000;
+  // limpiar sesiones vencidas
+  const todas = props.getProperties();
+  Object.keys(todas).forEach(function (k) {
+    if (k.indexOf('ses_') === 0) {
+      try { if (JSON.parse(todas[k]).exp &lt; Date.now()) props.deleteProperty(k); } catch (e) { props.deleteProperty(k); }
+    }
+  });
+  props.setProperty('ses_' + token, JSON.stringify({ u: usuario, exp: exp }));
+  return token;
+}
+
+/** Devuelve el usuario dueño del token o null. */
+function usuarioDeToken(token) {
+  if (!token) return null;
+  const raw = PropertiesService.getScriptProperties().getProperty('ses_' + token);
+  if (!raw) return null;
+  let s;
+  try { s = JSON.parse(raw); } catch (e) { return null; }
+  if (!s || s.exp &lt; Date.now()) return null;
+  const u = leerUsuarios().filter(function (x) { return x.usuario === s.u; })[0];
+  return (u &amp;&amp; u.activo) ? u : null;
+}
+
+function puede(u, area, nivel) {
+  if (!u) return false;
+  if (u.rol === 'admin') return true;
+  const v = u.permisos[area];
+  return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
+}
+
+const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin' };
+
+function modulosVisibles(u) {
+  const all = obtenerEstadoModulos();
+  const out = {};
+  Object.keys(all).forEach(function (k) {
+    if (k === 'users') return; // nunca se envía la lista de usuarios por acá
+    const area = MODULO_AREA[k];
+    if (!area) return;
+    if (area === 'admin' ? (k === 'config' &amp;&amp; puede(u, 'ia', 'view')) : puede(u, area, 'view')) out[k] = all[k];
+  });
+  return out;
+}
+
+function respuesta(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function paqueteDatos(u, records) {
+  return {
+    status: 'ok', auth: publico(u),
+    records: puede(u, 'partes', 'view') ? (records || obtenerRegistros()) : [],
+    modules: modulosVisibles(u)
+  };
+}
+
+/** Acciones de cuenta: ingreso, alta inicial y administración de usuarios. */
+const ACCIONES_CUENTA = ['authInfo', 'setupAdmin', 'login', 'logout', 'cambiarMiClave', 'listUsers', 'saveUser', 'deleteUser'];
+
+function accionCuenta(body) {
+  if (ACCIONES_CUENTA.indexOf(body.action) === -1) return null;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const usuarios = leerUsuarios();
+    if (body.action === 'authInfo') {
+      return { status: 'ok', authRequired: true, needsSetup: usuarios.length === 0 };
+    }
+    if (body.action === 'setupAdmin') {
+      if (usuarios.length &gt; 0) return { status: 'error', error: 'Ya existe un administrador.' };
+      const usuario = String(body.usuario || '').trim().toLowerCase();
+      if (!usuario || String(body.clave || '').length &lt; 4) return { status: 'error', error: 'Usuario o clave inválidos.' };
+      const sal = Utilities.getUuid();
+      const u = { usuario: usuario, nombre: String(body.nombre || usuario), rol: 'admin', permisos: normalizarPermisos('admin', {}), activo: true, sal: sal, hash: hashClave(sal, String(body.clave)) };
+      escribirUsuario(u);
+      return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
+    }
+    if (body.action === 'login') {
+      const usuario = String(body.usuario || '').trim().toLowerCase();
+      const u = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
+      if (!u || !u.activo || hashClave(u.sal, String(body.clave || '')) !== u.hash) {
+        Utilities.sleep(800);
+        return { status: 'error', error: 'Usuario o clave incorrectos.' };
+      }
+      return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
+    }
+    if (body.action === 'logout') {
+      if (body.token) PropertiesService.getScriptProperties().deleteProperty('ses_' + body.token);
+      return { status: 'ok' };
+    }
+    const yo = usuarioDeToken(body.token);
+    if (!yo) return { status: 'error', error: 'auth' };
+    if (body.action === 'cambiarMiClave') {
+      if (hashClave(yo.sal, String(body.claveActual || '')) !== yo.hash) return { status: 'error', error: 'La clave actual no es correcta.' };
+      if (String(body.claveNueva || '').length &lt; 4) return { status: 'error', error: 'La clave nueva debe tener al menos 4 caracteres.' };
+      yo.sal = Utilities.getUuid(); yo.hash = hashClave(yo.sal, String(body.claveNueva));
+      escribirUsuario(yo);
+      return { status: 'ok' };
+    }
+    if (yo.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede gestionar usuarios.' };
+    if (body.action === 'listUsers') {
+      return { status: 'ok', users: usuarios.map(publico) };
+    }
+    if (body.action === 'saveUser') {
+      const d = body.user || {};
+      const usuario = String(d.usuario || '').trim().toLowerCase();
+      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return { status: 'error', error: 'El usuario debe tener entre 3 y 30 letras o números (sin espacios).' };
+      const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
+      const rol = d.rol === 'admin' ? 'admin' : 'usuario';
+      const activo = d.activo !== false;
+      if (ex &amp;&amp; ex.rol === 'admin' &amp;&amp; (rol !== 'admin' || !activo)) {
+        const otrosAdmins = usuarios.filter(function (x) { return x.rol === 'admin' &amp;&amp; x.activo &amp;&amp; x.usuario !== usuario; });
+        if (!otrosAdmins.length) return { status: 'error', error: 'Tiene que quedar al menos un administrador activo.' };
+      }
+      if (!ex &amp;&amp; String(d.clave || '').length &lt; 4) return { status: 'error', error: 'La clave debe tener al menos 4 caracteres.' };
+      const u = ex || { usuario: usuario, sal: '', hash: '' };
+      u.nombre = String(d.nombre || usuario).slice(0, 60);
+      u.rol = rol; u.activo = activo;
+      u.permisos = normalizarPermisos(rol, d.permisos || {});
+      if (d.clave) { u.sal = Utilities.getUuid(); u.hash = hashClave(u.sal, String(d.clave)); }
+      escribirUsuario(u);
+      return { status: 'ok', users: leerUsuarios().map(publico) };
+    }
+    if (body.action === 'deleteUser') {
+      const usuario = String(body.usuario || '').toLowerCase();
+      if (usuario === yo.usuario) return { status: 'error', error: 'No podés borrar tu propio usuario.' };
+      const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
+      if (ex) getUsersSheet().deleteRow(ex.fila);
+      return { status: 'ok', users: leerUsuarios().map(publico) };
+    }
+    return null;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * EMERGENCIA: si te olvidás la clave del administrador, en el editor de Apps Script
+ * elegí esta función arriba (menú desplegable) y tocá "Ejecutar".
+ * La clave del primer administrador pasa a ser: inofer1234  (cambiala después de entrar).
+ */
+function restablecerClaveAdmin() {
+  const admin = leerUsuarios().filter(function (x) { return x.rol === 'admin'; })[0];
+  if (!admin) { Logger.log('No hay administradores: al abrir INOFER se te va a pedir crear uno.'); return; }
+  admin.sal = Utilities.getUuid(); admin.hash = hashClave(admin.sal, 'inofer1234'); admin.activo = true;
+  escribirUsuario(admin);
+  Logger.log('Listo. Usuario: ' + admin.usuario + '  Clave: inofer1234');
+}
+
+function doGet(e) {
+  const p = (e &amp;&amp; e.parameter) || {};
+  if (p.action === 'json') {
+    const u = usuarioDeToken(p.token);
+    if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
+    return respuesta(paqueteDatos(u));
+  }
+  return HtmlService.createHtmlOutput('&lt;h3&gt;INOFER - servidor de datos funcionando.&lt;/h3&gt;');
 }
 
 function doPost(e) {
-  const body = JSON.parse(e.postData.contents || '{}');
-  let records = [];
-  if (body.action === 'add') {
-    records = guardarRegistro(body.entry);
-  } else if (body.action === 'edit') {
-    records = editarRegistro(body.entry);
-  } else if (body.action === 'delete') {
-    records = eliminarRegistro(body.id);
-  } else if (body.action === 'replace') {
-    records = reemplazarRegistros(body.records);
+  const body = JSON.parse((e &amp;&amp; e.postData &amp;&amp; e.postData.contents) || '{}');
+  const cuenta = accionCuenta(body);
+  if (cuenta) return respuesta(cuenta);
+
+  const u = usuarioDeToken(body.token);
+  if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
+
+  let records = null;
+  const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
+  if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
+    if (!puede(u, 'partes', 'edit')) return sinPermiso('partes');
+    if (body.action === 'add') records = guardarRegistro(body.entry);
+    else if (body.action === 'edit') records = editarRegistro(body.entry);
+    else if (body.action === 'delete') records = eliminarRegistro(body.id);
+    else records = reemplazarRegistros(body.records);
   } else if (body.action === 'saveModule') {
+    const area = MODULO_AREA[body.moduleKey];
+    if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
+    const ok = area === 'admin' ? u.rol === 'admin' : puede(u, area, 'edit');
+    if (!ok) return sinPermiso(area);
     guardarModuloEstado(body.moduleKey, body.moduleData);
-    records = obtenerRegistros();
-  } else {
-    records = obtenerRegistros();
   }
-  return ContentService.createTextOutput(JSON.stringify({ status: 'ok', records: records, modules: obtenerEstadoModulos() }))
-    .setMimeType(ContentService.MimeType.JSON);
-}</pre>
+  return respuesta(paqueteDatos(u, records));
+}
+</pre>
           <div class="space-y-1 text-slate-200 pt-1">
             <p><strong>Paso 2:</strong> En Apps Script, creá o abrí el archivo HTML llamado <code class="text-amber-300">Index</code> y pegá el código HTML actualizado de este tablero.</p>
             <p><strong>Paso 3:</strong> Tocá <strong>Implementar &rarr; Nueva implementación</strong> (o <strong>Administrar implementaciones &rarr; Editar &rarr; Nueva versión</strong>), elegí <strong>Ejecutar como: Yo</strong> y <strong>Quién tiene acceso: Cualquier usuario</strong>. Todos los que abran ese link verán los cambios en tiempo real.</p>
@@ -3085,9 +3308,10 @@ function doPost(e) {
         fetch(cloudApiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'replace', records: list })
+          body: JSON.stringify({ token: inoferAuthToken(), action: 'replace', records: list })
         })
           .then(r => r.json())
+          .then(inoferHandleCloudReply)
           .then(data => { done(); if (data && Array.isArray(data.records)) applyRemoteRecords(data.records); updateSyncStatusUI('live', 'En Vivo · Nube'); })
           .catch(() => { done(); updateSyncStatusUI('local', 'Error al sincronizar URL'); });
       } else {
@@ -3143,7 +3367,7 @@ function doPost(e) {
       updateSyncStatusUI('syncing');
       try {
         const sep = cloudApiUrl.includes('?') ? '&' : '?';
-        const data = await (await fetch(cloudApiUrl + sep + 'action=json&t=' + Date.now())).json();
+        const data = inoferHandleCloudReply(await (await fetch(cloudApiUrl + sep + 'action=json&t=' + Date.now() + inoferTokenParam())).json());
         if (!data || !Array.isArray(data.records)) throw new Error('respuesta inválida');
         const mods = data.modules || {};
         const isEmpty = v => !v || (Array.isArray(v) ? v.length === 0 : Object.keys(v).length === 0);
@@ -3172,6 +3396,7 @@ function doPost(e) {
 
     function fetchCloudRecords(silent) {
       if (isSyncing || connectingCloud) return;
+      if (typeof inoferSession !== 'undefined' && !inoferSession) return; // primero hay que ingresar
       // No pisar datos locales mientras hay cambios en vuelo o recién hechos
       if (pendingCloudOps > 0 || (Date.now() - lastLocalChangeAt) < 6000) return;
       if (hasAppsScriptRuntime()) {
@@ -3192,8 +3417,9 @@ function doPost(e) {
         isSyncing = true;
         if (!silent) updateSyncStatusUI('syncing');
         const sep = cloudApiUrl.includes('?') ? '&' : '?';
-        fetch(cloudApiUrl + sep + 'action=json&t=' + Date.now())
+        fetch(cloudApiUrl + sep + 'action=json&t=' + Date.now() + inoferTokenParam())
           .then(r => r.json())
+          .then(inoferHandleCloudReply)
           .then(data => {
             isSyncing = false;
             if (data && Array.isArray(data.records)) {
@@ -3249,9 +3475,10 @@ function doPost(e) {
         fetch(cloudApiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action, ...payload })
+          body: JSON.stringify({ token: inoferAuthToken(), action, ...payload })
         })
           .then(r => r.json())
+          .then(inoferHandleCloudReply)
           .then(data => {
             end();
             if (data && Array.isArray(data.records)) applyRemoteRecords(data.records);
@@ -5235,8 +5462,8 @@ ${lines}${trendNote}`;
         fetch(cloudApiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action: 'saveModule', moduleKey, moduleData })
-        }).catch(() => {}).finally(() => { pendingCloudOps = Math.max(0, pendingCloudOps - 1); lastLocalChangeAt = Date.now(); });
+          body: JSON.stringify({ token: inoferAuthToken(), action: 'saveModule', moduleKey, moduleData })
+        }).then(r => r.json()).then(inoferHandleCloudReply).catch(() => {}).finally(() => { pendingCloudOps = Math.max(0, pendingCloudOps - 1); lastLocalChangeAt = Date.now(); });
       }
     }
 
@@ -9572,7 +9799,7 @@ ${lines}${trendNote}`;
         } catch (e) {}
         if (cloudApiUrl) {
           closeCloudModal();
-          firstConnectSync();
+          inoferOnCloudUrlChanged();
         } else {
           updateSyncStatusUI('local', 'Modo Local');
           showToast('Se desconectó la URL externa');
@@ -9632,6 +9859,791 @@ ${lines}${trendNote}`;
         showToast('Archivo CSV descargado');
       });
     });
+  </script>
+
+  <script>
+    // =====================================================================
+    // INOFER — USUARIOS, INGRESO Y PERMISOS
+    //  Áreas: partes · ordenes · catalogo · gantt · ia
+    //  Niveles: 'none' (sin acceso) · 'view' (solo ver) · 'edit' (ver y modificar)
+    //  Modo "nube": la planilla de Google valida usuario, clave y permisos (Codigo.gs nuevo).
+    //  Modo "local": sin nube (o con un Codigo.gs viejo) los usuarios se guardan en el equipo
+    //               y se comparten entre dispositivos como un módulo más.
+    // =====================================================================
+    const INOFER_AREAS = [
+      { key: 'partes', label: 'Partes de horas y tablero', hint: 'Cargar, editar y borrar partes; simulador; cierres semanales' },
+      { key: 'ordenes', label: 'Órdenes de producción', hint: 'Crear órdenes, cargar turnos, frente y dorso' },
+      { key: 'catalogo', label: 'Base de piezas y moldes', hint: 'Altas, cambios y bajas de piezas' },
+      { key: 'gantt', label: 'Plan Gantt', hint: 'Programación semanal y mensual' },
+      { key: 'ia', label: 'Asistente IA', hint: 'Ver: consultar. Modificar: enseñarle reglas y borrar su memoria' }
+    ];
+    const INOFER_LEVELS = { none: 'Sin acceso', view: 'Solo ver', edit: 'Ver y modificar' };
+    const INOFER_SESSION_KEY = 'tablero_inyectoras_session_v1';
+    const INOFER_USERS_KEY = 'tablero_inyectoras_users_v1';
+
+    let inoferSession = null;        // { usuario, nombre, rol, permisos, token, modo }
+    let inoferAuthMode = 'local';    // 'nube' | 'local'
+
+    // ---------- utilidades
+    function inoferEsc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function inoferNormPerms(rol, p) {
+      const out = {};
+      INOFER_AREAS.forEach(a => { const v = rol === 'admin' ? 'edit' : (p && p[a.key]); out[a.key] = (v === 'edit' || v === 'view') ? v : 'none'; });
+      return out;
+    }
+    function inoferAuthToken() { return inoferSession && inoferSession.token ? inoferSession.token : ''; }
+    function inoferTokenParam() { return inoferAuthToken() ? '&token=' + encodeURIComponent(inoferAuthToken()) : ''; }
+    function inoferIsAdmin() { return !!(inoferSession && inoferSession.rol === 'admin'); }
+    function inoferCan(area, nivel) {
+      if (!inoferSession) return false;
+      if (inoferSession.rol === 'admin') return true;
+      const v = (inoferSession.permisos || {})[area];
+      return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
+    }
+
+    // SHA-256 (WebCrypto si existe; si no, implementación propia)
+    function inoferSha256Js(ascii) {
+      function rr(v, a) { return (v >>> a) | (v << (32 - a)); }
+      const bytes = unescape(encodeURIComponent(ascii)); const K = []; const H = []; let primes = 0;
+      const isC = {}; for (let c = 2; primes < 64; c++) { if (!isC[c]) { for (let i = 0; i < 313; i += c) isC[i] = c; H[primes] = (Math.pow(c, .5) * 4294967296) | 0; K[primes++] = (Math.pow(c, 1 / 3) * 4294967296) | 0; } }
+      let hash = H.slice(0, 8); const words = []; const bl = bytes.length * 8; let s = bytes + '\x80';
+      while (s.length % 64 - 56) s += '\x00';
+      for (let i = 0; i < s.length; i++) { const j = s.charCodeAt(i); words[i >> 2] |= j << ((3 - i) % 4) * 8; }
+      words[words.length] = ((bl / 4294967296) | 0); words[words.length] = bl;
+      for (let j = 0; j < words.length;) {
+        const w = words.slice(j, j += 16); const old = hash; hash = hash.slice(0, 8);
+        for (let i = 0; i < 64; i++) {
+          const w15 = w[i - 15], w2 = w[i - 2]; const a = hash[0], e = hash[4];
+          const t1 = hash[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & hash[5]) ^ ((~e) & hash[6])) + K[i] +
+            (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0);
+          const t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+          hash = [(t1 + t2) | 0].concat(hash); hash[4] = (hash[4] + t1) | 0;
+        }
+        for (let i = 0; i < 8; i++) hash[i] = (hash[i] + old[i]) | 0;
+      }
+      let out = ''; for (let i = 0; i < 8; i++) for (let j = 3; j + 1; j--) { const b = (hash[i] >> (j * 8)) & 255; out += ((b < 16) ? 0 : '') + b.toString(16); }
+      return out;
+    }
+    async function inoferHash(sal, clave) {
+      const txt = sal + ':' + clave;
+      try {
+        if (window.crypto && crypto.subtle) {
+          const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt));
+          return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+      } catch (e) { }
+      return inoferSha256Js(txt);
+    }
+    function inoferNewSalt() {
+      try { return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join(''); }
+      catch (e) { return String(Date.now()) + Math.random().toString(16).slice(2); }
+    }
+
+    // ---------- almacenamiento local de usuarios (modo local)
+    function inoferLocalUsers() { try { return JSON.parse(localStorage.getItem(INOFER_USERS_KEY) || '[]') || []; } catch (e) { return []; } }
+    function inoferSaveLocalUsers(list, push) {
+      try { localStorage.setItem(INOFER_USERS_KEY, JSON.stringify(list)); } catch (e) { }
+      if (push !== false && cloudApiUrl && inoferAuthMode === 'local') {
+        try { pushCloudModuleState('users', list); } catch (e) { }
+      }
+    }
+    function inoferSaveSession() {
+      try { if (inoferSession) localStorage.setItem(INOFER_SESSION_KEY, JSON.stringify(inoferSession)); else localStorage.removeItem(INOFER_SESSION_KEY); } catch (e) { }
+    }
+
+    // ---------- comunicación con la nube
+    async function inoferCloudPost(body) {
+      const r = await fetch(cloudApiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+      return r.json();
+    }
+    /** Pregunta a la nube si valida usuarios. Devuelve 'nube' | 'local' | 'offline'. */
+    async function inoferDetectMode() {
+      if (!cloudApiUrl) return 'local';
+      try {
+        const d = await inoferCloudPost({ action: 'authInfo' });
+        if (d && d.authRequired) { inoferDetectMode.needsSetup = !!d.needsSetup; return 'nube'; }
+        // Codigo.gs viejo: no valida usuarios -> los usuarios viajan como módulo
+        if (d && d.modules && Array.isArray(d.modules.users)) inoferSaveLocalUsers(d.modules.users, false);
+        return 'local';
+      } catch (e) {
+        return 'offline';
+      }
+    }
+
+    /** Procesa cada respuesta de la nube: permisos actualizados, sesión vencida o falta de permiso. */
+    function inoferHandleCloudReply(data) {
+      if (!data || typeof data !== 'object') return data;
+      if (data.auth && inoferSession && inoferAuthMode === 'nube' && data.auth.usuario === inoferSession.usuario) {
+        const antes = JSON.stringify([inoferSession.rol, inoferSession.permisos]);
+        inoferSession.rol = data.auth.rol; inoferSession.nombre = data.auth.nombre;
+        inoferSession.permisos = inoferNormPerms(data.auth.rol, data.auth.permisos);
+        inoferSaveSession();
+        if (antes !== JSON.stringify([inoferSession.rol, inoferSession.permisos])) {
+          inoferApplyPermissions();
+          showToast('Tus permisos fueron actualizados por el administrador');
+        }
+      }
+      if (data.status === 'error' && data.error === 'auth') {
+        if (inoferSession && inoferAuthMode === 'nube') {
+          inoferSession = null; inoferSaveSession();
+          inoferShowLogin('Tu sesión venció o tu usuario fue desactivado. Volvé a ingresar.');
+        } else if (!inoferSession) {
+          const ov = document.getElementById('inoferLoginOverlay');
+          if (!ov || ov.classList.contains('hidden')) { inoferAuthMode = 'nube'; inoferShowLogin(); }
+        }
+      } else if (data.status === 'error' && data.error === 'permiso') {
+        showToast('🔒 No tenés permiso para modificar esa información. Se volvió a cargar lo último guardado.');
+        setTimeout(() => { try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (e) { } }, 500);
+      }
+      return data;
+    }
+
+    // ---------- pantalla de ingreso
+    function inoferBuildLoginUi() {
+      if (document.getElementById('inoferLoginOverlay')) return;
+      const o = document.createElement('div');
+      o.id = 'inoferLoginOverlay';
+      o.className = 'fixed inset-0 z-[9998] hidden items-center justify-center bg-slate-950 p-4 overflow-y-auto';
+      o.style.background = 'radial-gradient(1200px 600px at 50% -10%, rgba(6,182,212,.18), transparent), #020617';
+      o.innerHTML = `
+        <div class="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl">
+          <div class="flex flex-col items-center gap-2 pb-4">
+            <img src="icons/icon-192.png" alt="" class="h-16 w-16 rounded-2xl shadow-lg" onerror="this.style.display='none'" />
+            <h1 class="text-2xl font-black tracking-wide text-cyan-400">INOFER</h1>
+            <p id="inoferLoginSubtitle" class="text-center text-xs text-slate-400">Ingresá con tu usuario y clave</p>
+          </div>
+          <form id="inoferLoginForm" class="space-y-3" autocomplete="on">
+            <div id="inoferSetupFields" class="hidden space-y-3">
+              <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">Primera vez: creá el usuario <b>administrador</b>. Con él vas a poder crear los demás usuarios y darles permisos.</div>
+              <label class="block text-xs font-semibold text-slate-300">Tu nombre
+                <input id="inoferSetupName" type="text" placeholder="Ej: Juan Pérez" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none" />
+              </label>
+            </div>
+            <label class="block text-xs font-semibold text-slate-300">Usuario
+              <input id="inoferLoginUser" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none" />
+            </label>
+            <label class="block text-xs font-semibold text-slate-300">Clave
+              <input id="inoferLoginPass" type="password" autocomplete="current-password" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none" />
+            </label>
+            <label id="inoferSetupPass2Wrap" class="hidden text-xs font-semibold text-slate-300">Repetir clave
+              <input id="inoferSetupPass2" type="password" autocomplete="new-password" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none" />
+            </label>
+            <p id="inoferLoginError" class="hidden rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300"></p>
+            <button id="inoferLoginBtn" type="submit" class="w-full rounded-xl bg-cyan-500 py-2.5 text-sm font-extrabold text-slate-950 shadow-lg hover:bg-cyan-400 disabled:opacity-60">Ingresar</button>
+          </form>
+          <details id="inoferLoginServerBox" class="mt-4 text-xs text-slate-400">
+            <summary class="cursor-pointer select-none hover:text-slate-200">⚙️ Conexión a la nube <span id="inoferLoginModeBadge" class="ml-1 rounded bg-slate-800 px-1.5 py-0.5 text-[10px]"></span></summary>
+            <div class="mt-2 space-y-2 rounded-lg border border-slate-800 bg-slate-950 p-3">
+              <p>Pegá la dirección de la nube que te pasó el administrador (termina en <code>/exec</code>). Sin nube, los usuarios y datos quedan solo en este equipo.</p>
+              <input id="inoferLoginServerUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" />
+              <button id="inoferLoginServerSave" type="button" class="w-full rounded-lg border border-cyan-500/40 bg-cyan-500/10 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20">Guardar conexión</button>
+            </div>
+          </details>
+        </div>`;
+      document.body.appendChild(o);
+      document.getElementById('inoferLoginForm').addEventListener('submit', e => { e.preventDefault(); inoferSubmitLogin(); });
+      document.getElementById('inoferLoginServerSave').addEventListener('click', async () => {
+        const url = (document.getElementById('inoferLoginServerUrl').value || '').trim();
+        if (url && !/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(url)) { inoferLoginError('Esa dirección no parece de Google Apps Script (tiene que empezar con https://script.google.com/ y terminar en /exec).'); return; }
+        cloudApiUrl = url;
+        try { localStorage.setItem('tablero_inyectoras_cloud_url', url); } catch (e) { }
+        const inp = document.getElementById('cloudEndpointInput'); if (inp) inp.value = url;
+        await inoferShowLogin();
+        showToast(url ? 'Conexión guardada' : 'Sin nube: modo local');
+      });
+    }
+
+    let inoferSetupMode = false;
+    function inoferLoginError(msg) {
+      const el = document.getElementById('inoferLoginError');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.classList.toggle('hidden', !msg);
+    }
+
+    async function inoferShowLogin(msg) {
+      inoferBuildLoginUi();
+      const o = document.getElementById('inoferLoginOverlay');
+      o.classList.remove('hidden'); o.classList.add('flex');
+      document.getElementById('inoferLoginServerUrl').value = cloudApiUrl || '';
+      inoferLoginError(msg || '');
+      const btn = document.getElementById('inoferLoginBtn');
+      btn.disabled = true; btn.textContent = 'Conectando…';
+      const modo = await inoferDetectMode();
+      btn.disabled = false;
+      let needsSetup = false;
+      if (modo === 'nube') {
+        inoferAuthMode = 'nube'; needsSetup = !!inoferDetectMode.needsSetup;
+        if (needsSetup && !inoferAfterLogin) inoferAfterLogin = firstConnectSync; // nube nueva: ofrecer subir los datos de este equipo
+      }
+      else if (modo === 'local') { inoferAuthMode = 'local'; needsSetup = inoferLocalUsers().length === 0; }
+      else {
+        // sin conexión: si había usuarios locales se puede entrar en modo local
+        inoferAuthMode = inoferLocalUsers().length ? 'local' : 'offline';
+        if (inoferAuthMode === 'offline') inoferLoginError('No hay conexión con la nube. Revisá internet o la dirección de la nube.');
+      }
+      inoferSetupMode = needsSetup;
+      document.getElementById('inoferSetupFields').classList.toggle('hidden', !needsSetup);
+      const p2 = document.getElementById('inoferSetupPass2Wrap');
+      p2.classList.toggle('hidden', !needsSetup); p2.classList.toggle('block', needsSetup);
+      document.getElementById('inoferLoginPass').autocomplete = needsSetup ? 'new-password' : 'current-password';
+      btn.textContent = needsSetup ? 'Crear administrador e ingresar' : 'Ingresar';
+      document.getElementById('inoferLoginSubtitle').textContent = needsSetup ? 'Configuración inicial' : 'Ingresá con tu usuario y clave';
+      document.getElementById('inoferLoginModeBadge').textContent = inoferAuthMode === 'nube' ? 'Nube conectada ✓' : (cloudApiUrl ? (modo === 'offline' ? 'Sin conexión' : 'Nube sin usuarios (Codigo.gs viejo)') : 'Solo este equipo');
+      setTimeout(() => { try { document.getElementById(needsSetup ? 'inoferSetupName' : 'inoferLoginUser').focus(); } catch (e) { } }, 50);
+    }
+
+    function inoferHideLogin() {
+      const o = document.getElementById('inoferLoginOverlay');
+      if (o) { o.classList.add('hidden'); o.classList.remove('flex'); }
+      const pass = document.getElementById('inoferLoginPass'); if (pass) pass.value = '';
+      const p2 = document.getElementById('inoferSetupPass2'); if (p2) p2.value = '';
+    }
+
+    async function inoferSubmitLogin() {
+      const usuario = (document.getElementById('inoferLoginUser').value || '').trim().toLowerCase();
+      const clave = document.getElementById('inoferLoginPass').value || '';
+      const btn = document.getElementById('inoferLoginBtn');
+      inoferLoginError('');
+      if (inoferAuthMode === 'offline') { await inoferShowLogin(); return; }
+      if (!usuario || !clave) { inoferLoginError('Completá usuario y clave.'); return; }
+      if (inoferSetupMode) {
+        if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) { inoferLoginError('El usuario debe tener entre 3 y 30 letras o números, sin espacios.'); return; }
+        if (clave.length < 4) { inoferLoginError('La clave debe tener al menos 4 caracteres.'); return; }
+        if (clave !== document.getElementById('inoferSetupPass2').value) { inoferLoginError('Las dos claves no coinciden.'); return; }
+      }
+      btn.disabled = true; const txt = btn.textContent; btn.textContent = 'Verificando…';
+      try {
+        if (inoferAuthMode === 'nube') {
+          const body = inoferSetupMode
+            ? { action: 'setupAdmin', usuario, clave, nombre: (document.getElementById('inoferSetupName').value || usuario).trim() }
+            : { action: 'login', usuario, clave };
+          const d = await inoferCloudPost(body);
+          if (!d || d.status !== 'ok') { inoferLoginError((d && d.error) || 'No se pudo ingresar.'); return; }
+          inoferSession = { usuario: d.auth.usuario, nombre: d.auth.nombre, rol: d.auth.rol, permisos: inoferNormPerms(d.auth.rol, d.auth.permisos), token: d.token, modo: 'nube' };
+        } else {
+          let users = inoferLocalUsers();
+          if (inoferSetupMode) {
+            const sal = inoferNewSalt();
+            const u = { usuario, nombre: (document.getElementById('inoferSetupName').value || usuario).trim(), rol: 'admin', permisos: inoferNormPerms('admin', {}), activo: true, sal, hash: await inoferHash(sal, clave) };
+            users = [u]; inoferSaveLocalUsers(users);
+          }
+          const u = users.find(x => x.usuario === usuario);
+          if (!u || u.activo === false || (await inoferHash(u.sal, clave)) !== u.hash) {
+            await new Promise(r => setTimeout(r, 600));
+            inoferLoginError('Usuario o clave incorrectos.'); return;
+          }
+          inoferSession = { usuario: u.usuario, nombre: u.nombre, rol: u.rol, permisos: inoferNormPerms(u.rol, u.permisos), token: '', modo: 'local' };
+        }
+        inoferSaveSession();
+        inoferHideLogin();
+        inoferApplyPermissions();
+        showToast(`Hola ${inoferSession.nombre} 👋`);
+        // traer los datos que este usuario puede ver (o, si recién se conectó la nube, subir/bajar todo)
+        if (inoferAfterLogin) { const f = inoferAfterLogin; inoferAfterLogin = null; try { f(); } catch (e) { } }
+        else { try { lastLocalChangeAt = 0; pendingCloudOps = 0; isSyncing = false; fetchCloudRecords(false); } catch (e) { } }
+      } catch (e) {
+        inoferLoginError('No hay conexión con la nube. Probá de nuevo en unos segundos.');
+      } finally {
+        btn.disabled = false; btn.textContent = txt;
+      }
+    }
+
+    // Cuando el administrador conecta (o cambia) la nube desde "Activar Tiempo Real"
+    let inoferAfterLogin = null;
+    async function inoferOnCloudUrlChanged() {
+      const modo = await inoferDetectMode();
+      if (modo === 'nube' && (!inoferSession || inoferSession.modo !== 'nube')) {
+        inoferSession = null; inoferSaveSession(); inoferApplyPermissions();
+        inoferAfterLogin = firstConnectSync;
+        await inoferShowLogin('Esta nube tiene sus propios usuarios: ingresá con tu usuario de la nube. Si es la primera vez, creá el administrador.');
+        return;
+      }
+      firstConnectSync();
+    }
+
+    function inoferLogout() {
+      if (inoferAuthMode === 'nube' && inoferAuthToken()) { inoferCloudPost({ action: 'logout', token: inoferAuthToken() }).catch(() => { }); }
+      inoferSession = null; inoferSaveSession();
+      inoferApplyPermissions();
+      inoferShowLogin();
+    }
+
+    // ---------- menú de usuario en el encabezado
+    function inoferBuildUserChip() {
+      if (document.getElementById('inoferUserChip')) return;
+      const anchor = document.getElementById('openCloudModalBtn') || document.getElementById('toggleFullscreenBtn');
+      if (!anchor) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'relative';
+      wrap.innerHTML = `
+        <button id="inoferUserChip" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">
+          <span>👤</span><span id="inoferUserChipName">—</span><span id="inoferUserChipRole" class="rounded bg-cyan-500/20 px-1.5 text-[10px] text-cyan-300"></span><span>▾</span>
+        </button>
+        <div id="inoferUserMenu" class="hidden absolute right-0 z-[60] mt-1 w-56 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 text-xs shadow-2xl">
+          <div id="inoferUserMenuInfo" class="border-b border-slate-800 px-3 py-2 text-[11px] text-slate-400"></div>
+          <button id="inoferMenuUsers" type="button" class="block w-full px-3 py-2 text-left font-semibold text-amber-300 hover:bg-slate-800">🛡️ Usuarios y permisos</button>
+          <button id="inoferMenuPass" type="button" class="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">🔑 Cambiar mi clave</button>
+          <button id="inoferMenuLogout" type="button" class="block w-full px-3 py-2 text-left text-rose-300 hover:bg-slate-800">🚪 Cerrar sesión</button>
+        </div>`;
+      anchor.parentNode.insertBefore(wrap, anchor);
+      const menu = wrap.querySelector('#inoferUserMenu');
+      wrap.querySelector('#inoferUserChip').addEventListener('click', ev => { ev.stopPropagation(); menu.classList.toggle('hidden'); });
+      document.addEventListener('click', () => menu.classList.add('hidden'));
+      wrap.querySelector('#inoferMenuUsers').addEventListener('click', () => { menu.classList.add('hidden'); inoferOpenUsersModal(); });
+      wrap.querySelector('#inoferMenuPass').addEventListener('click', () => { menu.classList.add('hidden'); inoferChangeMyPassword(); });
+      wrap.querySelector('#inoferMenuLogout').addEventListener('click', () => { menu.classList.add('hidden'); inoferLogout(); });
+    }
+
+    async function inoferChangeMyPassword() {
+      const actual = prompt('Clave actual:');
+      if (actual == null) return;
+      const nueva = prompt('Clave nueva (mínimo 4 caracteres):');
+      if (nueva == null) return;
+      if (nueva.length < 4) { showToast('La clave nueva debe tener al menos 4 caracteres'); return; }
+      if (nueva !== prompt('Repetí la clave nueva:')) { showToast('Las claves no coinciden'); return; }
+      try {
+        if (inoferAuthMode === 'nube') {
+          const d = await inoferCloudPost({ action: 'cambiarMiClave', token: inoferAuthToken(), claveActual: actual, claveNueva: nueva });
+          showToast(d && d.status === 'ok' ? 'Clave cambiada ✓' : ((d && d.error) || 'No se pudo cambiar la clave'));
+        } else {
+          const users = inoferLocalUsers(); const u = users.find(x => x.usuario === inoferSession.usuario);
+          if (!u || (await inoferHash(u.sal, actual)) !== u.hash) { showToast('La clave actual no es correcta'); return; }
+          u.sal = inoferNewSalt(); u.hash = await inoferHash(u.sal, nueva);
+          inoferSaveLocalUsers(users); showToast('Clave cambiada ✓');
+        }
+      } catch (e) { showToast('Sin conexión: no se pudo cambiar la clave'); }
+    }
+
+    // ---------- administración de usuarios (solo administrador)
+    let inoferUsersCache = [];
+    function inoferBuildUsersModal() {
+      if (document.getElementById('inoferUsersModal')) return;
+      const m = document.createElement('div');
+      m.id = 'inoferUsersModal';
+      m.className = 'fixed inset-0 z-[9990] hidden items-start justify-center overflow-y-auto bg-slate-950/80 p-3 backdrop-blur-sm sm:p-6';
+      const rows = INOFER_AREAS.map(a => `
+        <div class="grid grid-cols-1 items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/70 p-2.5 sm:grid-cols-[1fr_auto]">
+          <div><div class="text-xs font-bold text-white">${a.label}</div><div class="text-[10px] text-slate-500">${a.hint}</div></div>
+          <div class="inline-flex overflow-hidden rounded-lg border border-slate-700 text-[11px] font-bold" data-perm-group="${a.key}">
+            ${Object.keys(INOFER_LEVELS).map(l => `<button type="button" data-perm-area="${a.key}" data-perm-level="${l}" class="inofer-perm-opt px-2.5 py-1.5 text-slate-300 hover:bg-slate-800">${INOFER_LEVELS[l]}</button>`).join('')}
+          </div>
+        </div>`).join('');
+      m.innerHTML = `
+        <div class="w-full max-w-4xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+            <div><h3 class="text-base font-extrabold text-white">🛡️ Usuarios y permisos</h3>
+              <p id="inoferUsersModeText" class="text-[11px] text-slate-400"></p></div>
+            <button id="inoferUsersClose" type="button" class="rounded-lg px-2 py-1 text-xl leading-none text-slate-400 hover:bg-slate-800 hover:text-white">×</button>
+          </div>
+          <div class="grid gap-4 p-4 lg:grid-cols-[1fr_1.15fr]">
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Usuarios</span>
+                <button id="inoferUsersNew" type="button" class="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-cyan-400">+ Nuevo usuario</button>
+              </div>
+              <div id="inoferUsersList" class="max-h-[60vh] space-y-1.5 overflow-y-auto pr-1"></div>
+            </div>
+            <form id="inoferUserForm" class="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3.5" autocomplete="off">
+              <div id="inoferUserFormTitle" class="text-sm font-extrabold text-cyan-300">Nuevo usuario</div>
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label class="text-[11px] font-semibold text-slate-400">Nombre y apellido
+                  <input id="inoferUfNombre" type="text" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label class="text-[11px] font-semibold text-slate-400">Usuario (para ingresar)
+                  <input id="inoferUfUsuario" type="text" autocapitalize="none" spellcheck="false" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label class="text-[11px] font-semibold text-slate-400"><span id="inoferUfClaveLabel">Clave</span>
+                  <input id="inoferUfClave" type="text" autocomplete="new-password" placeholder="mínimo 4 caracteres" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
+                <label class="text-[11px] font-semibold text-slate-400">Tipo de usuario
+                  <select id="inoferUfRol" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none">
+                    <option value="usuario">Usuario (permisos a elección)</option>
+                    <option value="admin">Administrador (todo + usuarios)</option>
+                  </select></label>
+              </div>
+              <label class="inline-flex items-center gap-2 text-xs text-slate-300"><input id="inoferUfActivo" type="checkbox" checked class="accent-cyan-500" /> Usuario activo (puede ingresar)</label>
+              <div id="inoferUfPermsBox" class="space-y-1.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Permisos</span>
+                  <div class="flex flex-wrap gap-1 text-[10px] font-bold">
+                    <button type="button" data-preset="view" class="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Solo ver todo</button>
+                    <button type="button" data-preset="operario" class="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Operario</button>
+                    <button type="button" data-preset="pcp" class="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Programación</button>
+                    <button type="button" data-preset="edit" class="rounded border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800">Modificar todo</button>
+                  </div>
+                </div>
+                ${rows}
+              </div>
+              <div id="inoferUfAdminNote" class="hidden rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">El administrador ve y modifica todo, conecta la nube y gestiona usuarios.</div>
+              <p id="inoferUfError" class="hidden rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300"></p>
+              <div class="flex flex-wrap justify-between gap-2 pt-1">
+                <button id="inoferUfDelete" type="button" class="hidden rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/20">Borrar usuario</button>
+                <button id="inoferUfSave" type="submit" class="ml-auto rounded-lg bg-emerald-500 px-4 py-2 text-xs font-extrabold text-slate-950 hover:bg-emerald-400 disabled:opacity-60">Guardar usuario</button>
+              </div>
+            </form>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      const close = () => { m.classList.add('hidden'); m.classList.remove('flex'); };
+      m.querySelector('#inoferUsersClose').addEventListener('click', close);
+      m.addEventListener('click', e => { if (e.target === m) close(); });
+      m.querySelector('#inoferUsersNew').addEventListener('click', () => inoferFillUserForm(null));
+      m.querySelector('#inoferUfRol').addEventListener('change', inoferRefreshPermUi);
+      m.querySelectorAll('.inofer-perm-opt').forEach(b => b.addEventListener('click', () => {
+        inoferFormPerms[b.dataset.permArea] = b.dataset.permLevel; inoferRefreshPermUi();
+      }));
+      m.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+        const p = b.dataset.preset;
+        const presets = {
+          view: { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'view', ia: 'view' },
+          operario: { partes: 'edit', ordenes: 'edit', catalogo: 'view', gantt: 'view', ia: 'view' },
+          pcp: { partes: 'view', ordenes: 'edit', catalogo: 'edit', gantt: 'edit', ia: 'view' },
+          edit: { partes: 'edit', ordenes: 'edit', catalogo: 'edit', gantt: 'edit', ia: 'edit' }
+        };
+        inoferFormPerms = { ...presets[p] }; inoferRefreshPermUi();
+      }));
+      m.querySelector('#inoferUserForm').addEventListener('submit', e => { e.preventDefault(); inoferSaveUserForm(); });
+      m.querySelector('#inoferUfDelete').addEventListener('click', inoferDeleteUserFromForm);
+    }
+
+    let inoferFormPerms = {};
+    let inoferEditingUser = null;
+    function inoferRefreshPermUi() {
+      const rol = document.getElementById('inoferUfRol').value;
+      const isAdm = rol === 'admin';
+      document.getElementById('inoferUfAdminNote').classList.toggle('hidden', !isAdm);
+      document.querySelectorAll('#inoferUsersModal .inofer-perm-opt').forEach(b => {
+        const sel = isAdm ? b.dataset.permLevel === 'edit' : (inoferFormPerms[b.dataset.permArea] || 'none') === b.dataset.permLevel;
+        const color = { none: 'bg-slate-700 text-white', view: 'bg-sky-500 text-slate-950', edit: 'bg-emerald-500 text-slate-950' }[b.dataset.permLevel];
+        b.className = 'inofer-perm-opt px-2.5 py-1.5 ' + (sel ? color : 'text-slate-400 hover:bg-slate-800');
+        b.disabled = isAdm;
+      });
+    }
+    function inoferFillUserForm(u) {
+      inoferEditingUser = u ? u.usuario : null;
+      document.getElementById('inoferUserFormTitle').textContent = u ? `Editar: ${u.nombre}` : 'Nuevo usuario';
+      document.getElementById('inoferUfNombre').value = u ? u.nombre : '';
+      const uu = document.getElementById('inoferUfUsuario'); uu.value = u ? u.usuario : ''; uu.disabled = !!u;
+      document.getElementById('inoferUfClave').value = '';
+      document.getElementById('inoferUfClaveLabel').textContent = u ? 'Clave nueva (vacío = no cambiar)' : 'Clave';
+      document.getElementById('inoferUfRol').value = u ? u.rol : 'usuario';
+      document.getElementById('inoferUfActivo').checked = u ? u.activo !== false : true;
+      inoferFormPerms = u ? { ...inoferNormPerms('usuario', u.permisos) } : { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'view', ia: 'view' };
+      document.getElementById('inoferUfDelete').classList.toggle('hidden', !u || u.usuario === inoferSession.usuario);
+      document.getElementById('inoferUfError').classList.add('hidden');
+      inoferRefreshPermUi();
+      inoferRenderUsersList();
+    }
+    function inoferRenderUsersList() {
+      const box = document.getElementById('inoferUsersList');
+      if (!box) return;
+      if (!inoferUsersCache.length) { box.innerHTML = '<p class="text-xs text-slate-500">Cargando…</p>'; return; }
+      const short = { none: '—', view: '👁', edit: '✏️' };
+      box.innerHTML = inoferUsersCache.map(u => `
+        <button type="button" data-user="${inoferEsc(u.usuario)}" class="inofer-user-row block w-full rounded-lg border ${inoferEditingUser === u.usuario ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950/60 hover:border-slate-600'} p-2.5 text-left">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-bold text-white">${inoferEsc(u.nombre)} <span class="font-normal text-slate-500">@${inoferEsc(u.usuario)}</span></span>
+            <span class="rounded px-1.5 py-0.5 text-[10px] font-bold ${u.rol === 'admin' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">${u.rol === 'admin' ? 'ADMIN' : 'USUARIO'}</span>
+          </div>
+          <div class="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-400">
+            ${u.activo === false ? '<span class="rounded bg-rose-500/20 px-1.5 text-rose-300">DESACTIVADO</span>' : ''}
+            ${INOFER_AREAS.map(a => `<span class="rounded bg-slate-800 px-1.5">${a.label.split(' ')[0]} ${short[inoferNormPerms(u.rol, u.permisos)[a.key]]}</span>`).join('')}
+          </div>
+        </button>`).join('');
+      box.querySelectorAll('.inofer-user-row').forEach(b => b.addEventListener('click', () => {
+        inoferFillUserForm(inoferUsersCache.find(x => x.usuario === b.dataset.user));
+      }));
+    }
+    async function inoferLoadUsers() {
+      if (inoferAuthMode === 'nube') {
+        const d = await inoferCloudPost({ action: 'listUsers', token: inoferAuthToken() });
+        if (!d || d.status !== 'ok') throw new Error((d && d.error) || 'No se pudo leer la lista de usuarios');
+        inoferUsersCache = d.users || [];
+      } else {
+        inoferUsersCache = inoferLocalUsers().map(u => ({ usuario: u.usuario, nombre: u.nombre, rol: u.rol, permisos: u.permisos, activo: u.activo !== false }));
+      }
+    }
+    async function inoferOpenUsersModal() {
+      if (!inoferIsAdmin()) { showToast('Solo el administrador puede gestionar usuarios'); return; }
+      inoferBuildUsersModal();
+      const m = document.getElementById('inoferUsersModal');
+      m.classList.remove('hidden'); m.classList.add('flex');
+      document.getElementById('inoferUsersModeText').textContent = inoferAuthMode === 'nube'
+        ? 'Validado en la nube: los cambios se aplican en todos los dispositivos en segundos.'
+        : (cloudApiUrl ? 'Nube con Codigo.gs viejo: los usuarios se comparten, pero conviene actualizar Codigo.gs para mayor seguridad.' : 'Modo local: los usuarios valen solo en este equipo.');
+      inoferUsersCache = []; inoferRenderUsersList();
+      try { await inoferLoadUsers(); } catch (e) { showToast(e.message); }
+      inoferFillUserForm(null);
+    }
+    function inoferUfError(msg) {
+      const el = document.getElementById('inoferUfError'); el.textContent = msg; el.classList.toggle('hidden', !msg);
+    }
+    async function inoferSaveUserForm() {
+      const usuario = (document.getElementById('inoferUfUsuario').value || '').trim().toLowerCase();
+      const data = {
+        usuario, nombre: (document.getElementById('inoferUfNombre').value || '').trim() || usuario,
+        clave: document.getElementById('inoferUfClave').value || '',
+        rol: document.getElementById('inoferUfRol').value,
+        activo: document.getElementById('inoferUfActivo').checked,
+        permisos: { ...inoferFormPerms }
+      };
+      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return inoferUfError('El usuario debe tener entre 3 y 30 letras o números, sin espacios (ej: jperez).');
+      if (!inoferEditingUser && inoferUsersCache.some(u => u.usuario === usuario)) return inoferUfError('Ya existe un usuario con ese nombre.');
+      if (!inoferEditingUser && data.clave.length < 4) return inoferUfError('La clave debe tener al menos 4 caracteres.');
+      if (data.clave && data.clave.length < 4) return inoferUfError('La clave debe tener al menos 4 caracteres.');
+      const btn = document.getElementById('inoferUfSave'); btn.disabled = true;
+      try {
+        if (inoferAuthMode === 'nube') {
+          const d = await inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: data });
+          if (!d || d.status !== 'ok') return inoferUfError((d && d.error) || 'No se pudo guardar.');
+          inoferUsersCache = d.users || [];
+        } else {
+          const users = inoferLocalUsers();
+          let u = users.find(x => x.usuario === usuario);
+          if (u && u.rol === 'admin' && (data.rol !== 'admin' || !data.activo) && !users.some(x => x.rol === 'admin' && x.activo !== false && x.usuario !== usuario)) {
+            return inoferUfError('Tiene que quedar al menos un administrador activo.');
+          }
+          if (!u) { u = { usuario }; users.push(u); }
+          u.nombre = data.nombre; u.rol = data.rol === 'admin' ? 'admin' : 'usuario'; u.activo = data.activo;
+          u.permisos = inoferNormPerms(u.rol, data.permisos);
+          if (data.clave) { u.sal = inoferNewSalt(); u.hash = await inoferHash(u.sal, data.clave); }
+          inoferSaveLocalUsers(users);
+          await inoferLoadUsers();
+        }
+        if (usuario === inoferSession.usuario) {
+          const me = inoferUsersCache.find(x => x.usuario === usuario);
+          if (me) { inoferSession.rol = me.rol; inoferSession.nombre = me.nombre; inoferSession.permisos = inoferNormPerms(me.rol, me.permisos); inoferSaveSession(); inoferApplyPermissions(); }
+        }
+        showToast(`Usuario ${usuario} guardado ✓`);
+        inoferFillUserForm(inoferUsersCache.find(x => x.usuario === usuario));
+      } catch (e) {
+        inoferUfError('Sin conexión con la nube. Probá de nuevo.');
+      } finally { btn.disabled = false; }
+    }
+    async function inoferDeleteUserFromForm() {
+      const usuario = inoferEditingUser;
+      if (!usuario || !confirm(`¿Borrar el usuario "${usuario}"? No va a poder ingresar más.`)) return;
+      try {
+        if (inoferAuthMode === 'nube') {
+          const d = await inoferCloudPost({ action: 'deleteUser', token: inoferAuthToken(), usuario });
+          if (!d || d.status !== 'ok') return inoferUfError((d && d.error) || 'No se pudo borrar.');
+          inoferUsersCache = d.users || [];
+        } else {
+          inoferSaveLocalUsers(inoferLocalUsers().filter(x => x.usuario !== usuario));
+          await inoferLoadUsers();
+        }
+        showToast('Usuario borrado');
+        inoferFillUserForm(null);
+      } catch (e) { inoferUfError('Sin conexión con la nube.'); }
+    }
+
+    // ---------- aplicar permisos en la interfaz
+    // Controles que MODIFICAN datos, por área (todo lo demás se puede usar libremente)
+    const INOFER_EDIT_CONTROLS = {
+      partes: ['#openNewEntryModalBtn', '#simSaveToRecordsBtn', '.edit-record-btn', '.delete-record-btn', '#newEntryForm input', '#newEntryForm select', '#modalSubmitBtn',
+        '#saveWeeklyCloseBtn', '#weeklyLabelInput'],
+      ordenes: ['#newOrderBtn', '#deleteCurrentOrderBtn', '#saveOrderFrontBtn', '#saveOrderBackBtn', '.del-order-log-btn', '.use-cat-btn', '#catalogQuickPicker',
+        '#orderSubViewEfficiency input', '#orderSubViewEfficiency select', '#orderSubViewEfficiency textarea', '#orderSubViewEfficiency button[type="submit"]',
+        '#orderSubViewFront input', '#orderSubViewFront select', '#orderSubViewFront textarea', '#orderSubViewFront button[type="submit"]',
+        '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea'],
+      catalogo: ['#importCatalogCsvInput', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#restoreDemoCatalogBtn', '#catalogResetFormBtn', '#catSubmitBtn', '#loadFullExcelCatalogBtn',
+        '#orderSubViewCatalog form input', '#orderSubViewCatalog form select', '#orderSubViewCatalog form textarea', '#selectAllCatalogCheckbox', 'input[data-cat-id]',
+        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input'],
+      gantt: ['#toggleAutoGanttPanelBtn', '#openGanttCatalogBtn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '#saveGanttBtn',
+        '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#runAutoGanttMonthBtn', '#autoGanttPasteArea', '#clearAutoGanttPasteBtn',
+        '.gantt-aux-input', '.gantt-item-qty-input', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '.del-gantt-item-btn', '.add-piece-to-mach-btn'],
+      ia: ['#clearInoferMemoryBtn', '#inoferTeachInput', '#inoferTeachBtn', '.del-inofer-note-btn']
+    };
+    const INOFER_ADMIN_ONLY = ['#openCloudModalBtn', '#restoreDemoDataBtn', '#clearAllRecordsBtn'];
+    const INOFER_AREA_NAMES = { partes: 'partes de horas', ordenes: 'órdenes', catalogo: 'la base de piezas', gantt: 'el plan Gantt', ia: 'la memoria de la IA' };
+
+    function inoferBlockedAreaOf(el) {
+      if (!el || !el.closest || !inoferSession) return null;
+      if (el.closest('#inoferUsersModal, #inoferLoginOverlay, #inoferUserMenu')) return null;
+      for (const area of Object.keys(INOFER_EDIT_CONTROLS)) {
+        if (inoferCan(area, 'edit')) continue;
+        for (const sel of INOFER_EDIT_CONTROLS[area]) {
+          try { if (el.closest(sel)) return area; } catch (e) { }
+        }
+      }
+      return null;
+    }
+
+    function inoferLockControls() {
+      document.querySelectorAll('[data-inofer-locked]').forEach(el => {
+        if (!inoferBlockedAreaOf(el)) { el.disabled = false; el.removeAttribute('data-inofer-locked'); el.classList.remove('inofer-locked'); }
+      });
+      if (!inoferSession) return;
+      Object.keys(INOFER_EDIT_CONTROLS).forEach(area => {
+        if (inoferCan(area, 'edit')) return;
+        INOFER_EDIT_CONTROLS[area].forEach(sel => {
+          let els = [];
+          try { els = document.querySelectorAll(sel); } catch (e) { }
+          els.forEach(el => {
+            if (el.hasAttribute('data-inofer-locked')) return;
+            el.setAttribute('data-inofer-locked', area);
+            el.classList.add('inofer-locked');
+            if ('disabled' in el) el.disabled = true;
+            el.title = '🔒 Solo lectura';
+          });
+        });
+      });
+    }
+
+    function inoferApplyPermissions() {
+      const logged = !!inoferSession;
+      document.body.classList.toggle('inofer-logged', logged);
+      const chipName = document.getElementById('inoferUserChipName');
+      if (chipName) {
+        chipName.textContent = logged ? inoferSession.nombre : '—';
+        document.getElementById('inoferUserChipRole').textContent = logged ? (inoferSession.rol === 'admin' ? 'ADMIN' : 'USUARIO') : '';
+        document.getElementById('inoferMenuUsers').classList.toggle('hidden', !inoferIsAdmin());
+        const info = document.getElementById('inoferUserMenuInfo');
+        if (logged) {
+          const ro = INOFER_AREAS.filter(a => inoferCan(a.key, 'view') && !inoferCan(a.key, 'edit')).map(a => a.label.split(' ')[0]);
+          info.innerHTML = `<b class="text-slate-200">@${inoferEsc(inoferSession.usuario)}</b> · ${inoferAuthMode === 'nube' ? 'nube' : 'local'}` +
+            (ro.length ? `<br>👁 Solo ver: ${inoferEsc(ro.join(', '))}` : '');
+        }
+      }
+      // Solapas
+      const show = (id, ok) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !ok); };
+      const canPartes = inoferCan('partes', 'view');
+      show('tabDashboardBtn', canPartes); show('tabSimulatorBtn', canPartes); show('tabRecordsBtn', canPartes);
+      show('openNewEntryModalBtn', inoferCan('partes', 'edit'));
+      show('tabOrdersBtn', inoferCan('ordenes', 'view') || inoferCan('catalogo', 'view'));
+      show('tabGanttBtn', inoferCan('gantt', 'view'));
+      show('tabAiBtn', inoferCan('ia', 'view'));
+      document.querySelectorAll('.order-subtab-btn').forEach(b => {
+        const isCat = b.dataset.orderSubtab === 'catalog';
+        b.classList.toggle('hidden', !(isCat ? inoferCan('catalogo', 'view') : inoferCan('ordenes', 'view')));
+      });
+      INOFER_ADMIN_ONLY.forEach(sel => document.querySelectorAll(sel).forEach(el => el.classList.toggle('hidden', !inoferIsAdmin())));
+      const gk = document.getElementById('geminiApiKeyInput');
+      const gkBox = gk && gk.closest('details') && gk.closest('details').parentElement;
+      if (gkBox) gkBox.classList.toggle('hidden', !inoferIsAdmin());
+      // Si la solapa actual quedó sin acceso, ir a la primera permitida
+      const tabs = [['dashboard', 'viewDashboard', canPartes], ['simulator', 'viewSimulator', canPartes], ['records', 'viewRecords', canPartes],
+        ['orders', 'viewOrders', inoferCan('ordenes', 'view') || inoferCan('catalogo', 'view')], ['gantt', 'viewGantt', inoferCan('gantt', 'view')], ['ai', 'viewAi', inoferCan('ia', 'view')]];
+      const actual = tabs.find(t => { const v = document.getElementById(t[1]); return v && !v.classList.contains('hidden'); });
+      if (logged && actual && !actual[2]) {
+        const first = tabs.find(t => t[2]);
+        if (first) { try { switchTab(first[0]); } catch (e) { } }
+        else { tabs.forEach(t => { const v = document.getElementById(t[1]); if (v) v.classList.add('hidden'); }); showToast('Tu usuario todavía no tiene permisos. Pedíselos al administrador.'); }
+      }
+      if (logged && inoferCan('catalogo', 'view') && !inoferCan('ordenes', 'view')) {
+        const catBtn = document.querySelector('.order-subtab-btn[data-order-subtab="catalog"]');
+        if (catBtn && currentOrderSubTab !== 'catalog') { try { catBtn.click(); } catch (e) { } }
+      }
+      inoferLockControls();
+    }
+
+    // Bloqueo definitivo: aunque un control no esté deshabilitado, no puede modificar sin permiso
+    ['click', 'submit', 'change', 'input', 'keydown', 'drop', 'paste'].forEach(type => {
+      document.addEventListener(type, ev => {
+        if (!inoferSession) return;
+        const area = inoferBlockedAreaOf(ev.target);
+        if (!area) return;
+        if (type === 'keydown' && /^(Tab|Shift|Control|Alt|Meta|Arrow.*|Escape)$/.test(ev.key || '')) return;
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        if (type === 'click' || type === 'submit') showToast(`🔒 Tenés permiso de solo lectura en ${INOFER_AREA_NAMES[area]}`);
+      }, true);
+    });
+
+    // Re-aplicar bloqueos cuando la pantalla dibuja filas o botones nuevos
+    let inoferLockTimer = null;
+    new MutationObserver(() => {
+      if (!inoferSession || inoferIsAdmin()) return;
+      clearTimeout(inoferLockTimer); inoferLockTimer = setTimeout(inoferLockControls, 120);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+
+    // ---------- protección de los guardados (respaldo de la interfaz)
+    function inoferWrapGuards() {
+      const origPush = window.pushCloudAction;
+      if (typeof origPush === 'function') {
+        window.pushCloudAction = function (action, payload) {
+          if (!inoferCan('partes', 'edit')) { showToast('🔒 No tenés permiso para modificar partes de horas'); return; }
+          return origPush.apply(this, arguments);
+        };
+      }
+      const MOD_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', users: 'admin' };
+      const origMod = window.pushCloudModuleState;
+      if (typeof origMod === 'function') {
+        window.pushCloudModuleState = function (key) {
+          const area = MOD_AREA[key];
+          if (key === 'users' && inoferAuthMode === 'local' && inoferIsAdmin()) return origMod.apply(this, arguments);
+          if (area === 'admin' ? !inoferIsAdmin() : (area && !inoferCan(area, 'edit'))) return; // sin permiso: no se envía
+          if (key === 'users') return;
+          return origMod.apply(this, arguments);
+        };
+      }
+      const origParse = window.tryParseChatWeeklyRecordLoad;
+      if (typeof origParse === 'function') {
+        window.tryParseChatWeeklyRecordLoad = function () {
+          if (!inoferCan('partes', 'edit')) return false;
+          return origParse.apply(this, arguments);
+        };
+      }
+      const origAi = window.handleAiUserPrompt;
+      if (typeof origAi === 'function') {
+        window.handleAiUserPrompt = function (text) {
+          if (/^\s*(record[aá] que|aprend[eé] que|ten[eé] en cuenta que|regla:|nota:|criterio:)/i.test(text || '') && !inoferCan('ia', 'edit')) {
+            showToast('🔒 Solo el administrador o usuarios autorizados pueden enseñarle reglas a la IA');
+            return;
+          }
+          return origAi.apply(this, arguments);
+        };
+      }
+    }
+
+    // ---------- arranque
+    window.addEventListener('DOMContentLoaded', async () => {
+      const st = document.createElement('style');
+      st.textContent = '.inofer-locked{opacity:.45!important;cursor:not-allowed!important;filter:grayscale(.4)} body:not(.inofer-logged) #inoferUserChip{display:none}';
+      document.head.appendChild(st);
+      inoferWrapGuards();
+      inoferBuildUserChip();
+      try { inoferSession = JSON.parse(localStorage.getItem(INOFER_SESSION_KEY) || 'null'); } catch (e) { inoferSession = null; }
+      if (inoferSession) {
+        inoferAuthMode = inoferSession.modo === 'nube' ? 'nube' : 'local';
+        if (inoferAuthMode === 'local') {
+          const me = inoferLocalUsers().find(x => x.usuario === inoferSession.usuario && x.activo !== false);
+          if (!me) inoferSession = null;
+          else { inoferSession.rol = me.rol; inoferSession.nombre = me.nombre; inoferSession.permisos = inoferNormPerms(me.rol, me.permisos); }
+        }
+        // Si se conectó una nube que valida usuarios y esta sesión es local, hay que volver a ingresar
+        if (inoferSession && inoferAuthMode === 'local' && cloudApiUrl) {
+          const modo = await inoferDetectMode();
+          if (modo === 'nube') inoferSession = null;
+          else if (modo === 'local') {
+            const me = inoferLocalUsers().find(x => x.usuario === inoferSession.usuario && x.activo !== false);
+            if (!me) inoferSession = null;
+          }
+        }
+      }
+      inoferSaveSession();
+      inoferApplyPermissions();
+      if (!inoferSession) inoferShowLogin();
+      else { try { fetchCloudRecords(true); } catch (e) { } }
+    });
+
+    // Usuarios compartidos con un Codigo.gs viejo (módulo "users")
+    const _inoferOrigApplyModules = typeof applyCloudModules === 'function' ? applyCloudModules : null;
+    if (_inoferOrigApplyModules) {
+      window.applyCloudModules = function (mods) {
+        if (mods && Array.isArray(mods.users) && inoferAuthMode === 'local') {
+          inoferSaveLocalUsers(mods.users, false);
+          if (inoferSession) {
+            const me = mods.users.find(x => x.usuario === inoferSession.usuario);
+            if (!me || me.activo === false) { inoferLogout(); }
+            else {
+              const np = inoferNormPerms(me.rol, me.permisos);
+              if (JSON.stringify(np) !== JSON.stringify(inoferSession.permisos) || me.rol !== inoferSession.rol) {
+                inoferSession.rol = me.rol; inoferSession.permisos = np; inoferSaveSession(); inoferApplyPermissions();
+              }
+            }
+          }
+        }
+        return _inoferOrigApplyModules.apply(this, arguments);
+      };
+    }
   </script>
 
   <script>
