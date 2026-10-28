@@ -4,7 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>INOFER</title>
-  <meta name="inofer-version" content="2026.10.28.05" />
+  <script>
+    // Instalación como app: se guarda el aviso del navegador para usarlo en la pantalla de ingreso
+    window.__inoferInstallEvt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault(); window.__inoferInstallEvt = e;
+      try { window.dispatchEvent(new Event('inofer-install-ready')); } catch (x) {}
+    });
+    window.addEventListener('appinstalled', function () {
+      window.__inoferInstallEvt = null; window.__inoferInstalled = true;
+      try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
+    });
+  </script>
+  <meta name="inofer-version" content="2026.10.28.06" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -9635,6 +9647,33 @@ ${lines}${trendNote}`;
             <h1 class="text-2xl font-black tracking-wide text-cyan-400">INOFER</h1>
             <p id="inoferLoginSubtitle" class="text-center text-xs text-slate-400">Ingresá con tu usuario y clave</p>
           </div>
+          <div id="inoferInstallStep" class="hidden space-y-3">
+            <div class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs text-slate-300">
+              <div class="text-sm font-extrabold text-white">📲 Paso 1: instalá la app</div>
+              <p class="mt-1">INOFER queda con su ícono en la pantalla de inicio y se abre como una app. Después iniciás sesión con tu usuario.</p>
+            </div>
+            <button id="inoferInstallBtn" type="button" class="w-full rounded-xl bg-cyan-500 py-3 text-sm font-extrabold text-slate-950 shadow-lg hover:bg-cyan-400">⬇ Instalar INOFER</button>
+            <div id="inoferInstallStepsAndroid" class="hidden rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
+              <b class="text-white">Instalación manual (Android):</b>
+              <ol class="mt-1 list-decimal space-y-1 pl-4">
+                <li>Abrí esta página en <b>Google Chrome</b>.</li>
+                <li>Tocá el menú <b>⋮</b> (arriba a la derecha).</li>
+                <li>Elegí <b>Instalar app</b> o <b>Agregar a pantalla principal</b> → <b>Instalar</b>.</li>
+              </ol>
+            </div>
+            <div id="inoferInstallStepsIos" class="hidden rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs text-slate-300">
+              <b class="text-white">En iPhone / iPad:</b>
+              <ol class="mt-1 list-decimal space-y-1 pl-4">
+                <li>Tocá el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba ⬆️).</li>
+                <li>Deslizá y elegí <b>Agregar a pantalla de inicio</b>.</li>
+                <li>Dejá el nombre <b>INOFER</b> y tocá <b>Agregar</b>.</li>
+              </ol>
+            </div>
+            <div id="inoferInstallDone" class="hidden rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-200">
+              ✅ ¡INOFER quedó instalada! Cerrá el navegador y abrí <b>INOFER</b> desde el ícono de tu pantalla de inicio para iniciar sesión.
+            </div>
+            <button id="inoferInstallSkip" type="button" class="w-full py-1 text-center text-xs text-slate-400 underline hover:text-slate-200">Ya la instalé / iniciar sesión acá</button>
+          </div>
           <form id="inoferLoginForm" class="space-y-3" autocomplete="on">
             <div id="inoferSetupFields" class="hidden space-y-3">
               <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-200">Primera vez: creá el usuario <b>administrador</b>. Con él vas a poder crear los demás usuarios y darles permisos.</div>
@@ -9688,8 +9727,61 @@ ${lines}${trendNote}`;
       el.classList.toggle('hidden', !msg);
     }
 
+    // ---------- celular: primero instalar la app, después ingresar
+    function inoferIsMobile() { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+    function inoferIsIos() { return /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+    function inoferIsStandalone() {
+      try { return window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true; } catch (e) { return false; }
+    }
+    function inoferNeedsInstallStep() {
+      if (!inoferIsMobile() || inoferIsStandalone()) return false;
+      try { if (sessionStorage.getItem('inofer_skip_install') === '1') return false; } catch (e) { }
+      return true;
+    }
+    function inoferUpdateInstallStep() {
+      const step = document.getElementById('inoferInstallStep');
+      if (!step) return;
+      const show = inoferNeedsInstallStep();
+      step.classList.toggle('hidden', !show);
+      document.getElementById('inoferLoginForm').classList.toggle('hidden', show);
+      document.getElementById('inoferLoginServerBox').classList.toggle('hidden', show);
+      const sub = document.getElementById('inoferLoginSubtitle');
+      if (show && sub) sub.textContent = 'Bienvenido';
+      if (!show) return;
+      const ios = inoferIsIos();
+      const done = !!window.__inoferInstalled;
+      document.getElementById('inoferInstallDone').classList.toggle('hidden', !done);
+      document.getElementById('inoferInstallBtn').classList.toggle('hidden', done || (ios && !window.__inoferInstallEvt));
+      document.getElementById('inoferInstallStepsIos').classList.toggle('hidden', done || !ios);
+    }
+    function inoferWireInstallStep() {
+      const btn = document.getElementById('inoferInstallBtn');
+      if (!btn || btn.dataset.wired) return;
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', async () => {
+        const evt = window.__inoferInstallEvt;
+        if (!evt) { document.getElementById('inoferInstallStepsAndroid').classList.remove('hidden'); return; }
+        evt.prompt();
+        try {
+          const r = await evt.userChoice;
+          if (r && r.outcome === 'accepted') { window.__inoferInstalled = true; window.__inoferInstallEvt = null; }
+        } catch (e) { }
+        inoferUpdateInstallStep();
+      });
+      document.getElementById('inoferInstallSkip').addEventListener('click', () => {
+        try { sessionStorage.setItem('inofer_skip_install', '1'); } catch (e) { }
+        inoferUpdateInstallStep();
+        const s = document.getElementById('inoferLoginSubtitle');
+        if (s && s.textContent === 'Bienvenido') s.textContent = 'Ingresá con tu usuario y clave';
+        try { document.getElementById('inoferLoginUser').focus(); } catch (e) { }
+      });
+      window.addEventListener('inofer-install-ready', inoferUpdateInstallStep);
+      window.addEventListener('inofer-installed', inoferUpdateInstallStep);
+    }
+
     async function inoferShowLogin(msg) {
       inoferBuildLoginUi();
+      inoferWireInstallStep();
       const o = document.getElementById('inoferLoginOverlay');
       o.classList.remove('hidden'); o.classList.add('flex');
       document.getElementById('inoferLoginServerUrl').value = cloudApiUrl || '';
@@ -9717,7 +9809,8 @@ ${lines}${trendNote}`;
       btn.textContent = needsSetup ? 'Crear administrador e ingresar' : 'Ingresar';
       document.getElementById('inoferLoginSubtitle').textContent = needsSetup ? 'Configuración inicial' : 'Ingresá con tu usuario y clave';
       document.getElementById('inoferLoginModeBadge').textContent = inoferAuthMode === 'nube' ? 'Nube conectada ✓' : (cloudApiUrl ? (modo === 'offline' ? 'Sin conexión' : 'Nube sin usuarios (Codigo.gs viejo)') : 'Solo este equipo');
-      setTimeout(() => { try { document.getElementById(needsSetup ? 'inoferSetupName' : 'inoferLoginUser').focus(); } catch (e) { } }, 50);
+      inoferUpdateInstallStep();
+      if (!inoferNeedsInstallStep()) setTimeout(() => { try { document.getElementById(needsSetup ? 'inoferSetupName' : 'inoferLoginUser').focus(); } catch (e) { } }, 50);
     }
 
     function inoferHideLogin() {
