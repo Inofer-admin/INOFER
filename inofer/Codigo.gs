@@ -5,27 +5,38 @@
  * La lógica del servidor (usuarios, permisos, partes, órdenes, Gantt...) se descarga sola
  * desde la app publicada en GitHub, así que cada mejora se aplica automáticamente.
  * Si GitHub no responde, se usa la última versión guardada en la hoja "BD_Servidor".
+ * Para autorizar o probar: elegí "doGet" en el menú de funciones y tocá Ejecutar.
  */
-const INOFER_SERVIDOR_URL = 'https://inofer-admin.github.io/INOFER/inofer/servidor.js';
+const INOFER_SERVIDOR_URLS = [
+  'https://raw.githubusercontent.com/Inofer-admin/INOFER/main/inofer/servidor.js',
+  'https://inofer-admin.github.io/INOFER/inofer/servidor.js'
+];
 const INOFER_CACHE_SEGUNDOS = 120;
 
 function inoferServidor_() {
   if (globalThis.__inoferSrv) return globalThis.__inoferSrv;
   const cache = CacheService.getScriptCache();
   let code = cache.get('inofer_srv');
+  const errores = [];
   if (!code) {
-    try {
-      const r = UrlFetchApp.fetch(INOFER_SERVIDOR_URL + '?t=' + Date.now(), { muteHttpExceptions: true, followRedirects: true });
-      const txt = r.getResponseCode() === 200 ? r.getContentText() : '';
-      if (txt.indexOf('INOFER_SERVIDOR_OK') !== -1) {
-        code = txt;
-        try { cache.put('inofer_srv', code, INOFER_CACHE_SEGUNDOS); } catch (e) {}
-        inoferGuardarCopia_(code);
+    for (let i = 0; i < INOFER_SERVIDOR_URLS.length && !code; i++) {
+      try {
+        const r = UrlFetchApp.fetch(INOFER_SERVIDOR_URLS[i] + '?t=' + Date.now(), { muteHttpExceptions: true, followRedirects: true });
+        const txt = r.getResponseCode() === 200 ? r.getContentText() : '';
+        if (txt.indexOf('INOFER_SERVIDOR_OK') !== -1) code = txt;
+        else errores.push(INOFER_SERVIDOR_URLS[i] + ' -> HTTP ' + r.getResponseCode());
+      } catch (e) {
+        errores.push(INOFER_SERVIDOR_URLS[i] + ' -> ' + e.message);
       }
-    } catch (e) {}
-    if (!code) code = inoferLeerCopia_();
+    }
+    if (code) {
+      try { cache.put('inofer_srv', code, INOFER_CACHE_SEGUNDOS); } catch (e) {}
+      inoferGuardarCopia_(code);
+    } else {
+      code = inoferLeerCopia_();
+    }
   }
-  if (!code) throw new Error('No se pudo cargar el servidor de INOFER (sin conexión con GitHub y sin copia guardada).');
+  if (!code) throw new Error('No se pudo cargar el servidor de INOFER. Detalle: ' + errores.join(' | '));
   globalThis.__inoferSrv = new Function(code)();
   return globalThis.__inoferSrv;
 }
