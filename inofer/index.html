@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.24" />
+  <meta name="inofer-version" content="2026.10.29.25" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -249,6 +249,16 @@
               <option value="Noche">Turno Noche</option>
               <option value="Día Completo">Día Completo (24h)</option>
               <option value="Semana Completa">Semana Completa</option>
+            </select>
+          </div>
+
+          <!-- Fuente de los datos -->
+          <div>
+            <label for="filterFuente" class="block text-xs font-medium text-slate-400 mb-1">Datos de</label>
+            <select id="filterFuente" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none">
+              <option value="ALL">Partes manuales + Órdenes</option>
+              <option value="MANUAL">Solo partes de horas manuales</option>
+              <option value="OP">Solo Órdenes de Producción</option>
             </select>
           </div>
 
@@ -9285,7 +9295,7 @@ ${lines}${trendNote}`;
       });
 
       // Filter listeners
-      ['filterMachine', 'filterShift', 'filterDateFrom', 'filterDateTo', 'targetUtilizationInput', 'chartMetricToggle'].forEach(id => {
+      ['filterMachine', 'filterShift', 'filterFuente', 'filterDateFrom', 'filterDateTo', 'targetUtilizationInput', 'chartMetricToggle'].forEach(id => {
         document.getElementById(id).addEventListener('input', refreshAll);
         document.getElementById(id).addEventListener('change', refreshAll);
       });
@@ -9293,6 +9303,7 @@ ${lines}${trendNote}`;
       document.getElementById('resetFiltersBtn').addEventListener('click', () => {
         document.getElementById('filterMachine').value = 'ALL';
         document.getElementById('filterShift').value = 'ALL';
+        if (document.getElementById('filterFuente')) document.getElementById('filterFuente').value = 'ALL';
         document.getElementById('filterDateFrom').value = '';
         document.getElementById('filterDateTo').value = '';
         document.getElementById('targetUtilizationInput').value = '80';
@@ -13764,11 +13775,18 @@ Pedido: ${frase}`;
       window.inoferRegistrosDeOrdenes = registrosDeOrdenes;
       if (typeof window.getFilteredRecords === 'function') {
         const gf = window.getFilteredRecords;
+        // Datos de ejemplo que trae la app: no cuentan en el tablero
+        const DEMO_REC = new Set((typeof INITIAL_RECORDS !== 'undefined' ? INITIAL_RECORDS : []).map(r => String(r.id)));
+        const DEMO_ORD = new Set((typeof INITIAL_ORDERS !== 'undefined' ? INITIAL_ORDERS : []).map(o => String(o.id)));
+        window.inoferEsDemo = r => r && (r.fromOrder ? DEMO_ORD.has(String(r.ordId)) : DEMO_REC.has(String(r.id)));
         window.getFilteredRecords = function () {
-          const base = gf.apply(this, arguments);
+          const fuente = ($('filterFuente') || {}).value || 'ALL';
+          const base = fuente === 'OP' ? [] : gf.apply(this, arguments).filter(r => !inoferEsDemo(r));
+          if (fuente === 'MANUAL') return base;
           const machine = ($('filterMachine') || {}).value || 'ALL', shift = ($('filterShift') || {}).value || 'ALL';
           const from = ($('filterDateFrom') || {}).value, to = ($('filterDateTo') || {}).value;
           const deriv = registrosDeOrdenes().filter(r => {
+            if (inoferEsDemo(r)) return false;
             if (machine !== 'ALL' && r.machine !== machine) return false;
             if (shift !== 'ALL' && r.shift !== shift) return false;
             if (from && r.date < from) return false;
@@ -13822,7 +13840,15 @@ Pedido: ${frase}`;
         const ap2 = window.inoferApplyPermissions;
         window.inoferApplyPermissions = function () { const r = ap2.apply(this, arguments); try { sinCargaAparte(); } catch (e) { } return r; };
       }
-      function iniciar() { arrancarObs(); try { sinCargaAparte(); aplicarOcultos(); refreshAll(); } catch (e) { } }
+      // el filtro de turno también ofrece los turnos configurados (ej: "Día" en 2 turnos de 12 h)
+      function turnosEnFiltro() {
+        const sel = $('filterShift'); if (!sel) return;
+        const ya = new Set([...sel.options].map(o => o.value));
+        const nombres = new Set();
+        try { const c = inoferTurnosConfig(); (c.esquemas || []).forEach(e => (e.turnos || []).forEach(t => t.nombre && nombres.add(t.nombre))); } catch (e) { }
+        nombres.forEach(n => { if (!ya.has(n)) { const o = document.createElement('option'); o.value = n; o.textContent = 'Turno ' + n; sel.appendChild(o); } });
+      }
+      function iniciar() { arrancarObs(); try { turnosEnFiltro(); sinCargaAparte(); aplicarOcultos(); refreshAll(); } catch (e) { } }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
     })();
   </script>
