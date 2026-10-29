@@ -121,3 +121,8 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Autenticación Gemini: `iaPedirGemini_` prueba en orden header x-goog-api-key → ?key= → Authorization Bearer → endpoint compatible OpenAI (Bearer); recuerda el que funcionó en IA_AUTH_MODO.
 - Modelos Gemini verificados con la clave real (plan gratuito, AQ., encabezado x-goog-api-key OK): gemini-3.5-flash (~2-4 s, JSON OK), gemini-3-flash-preview, gemini-3.1-flash-lite. gemini-3.7/3.8-flash quedan colgados; gemini-2.5-flash "no disponible para usuarios nuevos"; flash-latest suele dar 503. Caché de modelos: IA_MODELOS_CACHE2. 429/5xx prueban el siguiente modelo. Se ignoran las partes "thought".
 - IA activada en producción el 29/10/2026 (clave Gemini AQ en Script Properties IA_KEY, proveedor gemini). Verificado: pregunta al asistente del Gantt respondida por gemini-3.5-flash vía nube en ~4-6 s (prompt ~21k tokens). inoferLLM reintenta una vez si Google está saturado.
+
+## Presentación en pantalla (bloque "Presentación en pantalla")
+- Módulo de nube `presentacion` (admin edita, todos lo reciben): {titulo, intervalo (seg), diapositivas:[{id,tipo,activo,segundos?,opciones}]}. Tipos: tablero (velocímetro, periodo/máquina), maquinas, paradas, kpis (4 tiles), kpi (gráfico 12 meses con inoferKpiDibujar), gantt (semana actual por fecha), ordenes (abiertas), facturacion (si precios_ver), mensaje (texto).
+- Botón 📺 en el encabezado: admin abre la configuración (#presCfg); otros reproducen. Reproductor #presPlayer pantalla completa con reloj, puntos y barra de tiempo; ← → espacio F Esc.
+- Usuario de pantalla: permisos.detalle.pantalla = true (preset "📺 Pantalla" o casilla en Usuarios y permisos); al iniciar sesión arranca solo la presentación. Excluye datos de ejemplo.

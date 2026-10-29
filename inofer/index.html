@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.36" />
+  <meta name="inofer-version" content="2026.10.29.37" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14566,6 +14566,373 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           return orig.apply(this, arguments);
         };
       }
+    })();
+  </script>
+  <script>
+    // ===== Presentación en pantalla (usuario "pantalla" + diapositivas elegidas por el administrador) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const KEY = 'tablero_inyectoras_presentacion_v1';
+      const TIPOS = {
+        tablero: { nombre: '⏱️ Utilización de máquinas (velocímetro)', ops: ['periodo', 'maquina'] },
+        maquinas: { nombre: '🏭 Utilización por máquina', ops: ['periodo'] },
+        paradas: { nombre: '🛑 Paradas por motivo', ops: ['periodo', 'maquina'] },
+        kpis: { nombre: '📊 Indicadores (resumen de los 4)', ops: [] },
+        kpi: { nombre: '📈 Gráfico de un indicador', ops: ['kpi'] },
+        gantt: { nombre: '📅 Plan de la semana (Gantt)', ops: [] },
+        ordenes: { nombre: '📋 Avance de órdenes de producción', ops: [] },
+        facturacion: { nombre: '💲 Facturación de la semana', ops: [] },
+        mensaje: { nombre: '💬 Mensaje / aviso', ops: ['texto'] }
+      };
+      const PERIODOS = { hoy: 'Hoy', '7d': 'Últimos 7 días', '30d': 'Últimos 30 días', mes: 'Mes actual' };
+      const DEF = { titulo: 'INOFER · Indicadores de planta', intervalo: 300, diapositivas: [
+        { id: 'd1', tipo: 'tablero', activo: true, opciones: { periodo: '7d', maquina: 'ALL' } },
+        { id: 'd2', tipo: 'maquinas', activo: true, opciones: { periodo: '7d' } },
+        { id: 'd3', tipo: 'kpis', activo: true, opciones: {} },
+        { id: 'd4', tipo: 'kpi', activo: true, opciones: { kpi: 'inyeccion' } },
+        { id: 'd5', tipo: 'kpi', activo: true, opciones: { kpi: 'scrap' } },
+        { id: 'd6', tipo: 'gantt', activo: true, opciones: {} },
+        { id: 'd7', tipo: 'ordenes', activo: true, opciones: {} },
+        { id: 'd8', tipo: 'paradas', activo: false, opciones: { periodo: '7d', maquina: 'ALL' } },
+        { id: 'd9', tipo: 'facturacion', activo: false, opciones: {} }
+      ] };
+      let cfg;
+      try { cfg = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { cfg = null; }
+      if (!cfg || !Array.isArray(cfg.diapositivas)) cfg = JSON.parse(JSON.stringify(DEF));
+      const guardar = subir => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { } if (subir) { try { pushCloudModuleState('presentacion', cfg); } catch (e) { } } };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : []);
+      const esPantalla = () => !!(typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol !== 'admin' && inoferSession.permisos && inoferSession.permisos.detalle && inoferSession.permisos.detalle.pantalla);
+
+      // conservar la marca "pantalla" en los permisos
+      if (typeof window.inoferNormPerms === 'function') {
+        const np = window.inoferNormPerms;
+        window.inoferNormPerms = function (rol, p) { const out = np.apply(this, arguments); if (p && p.detalle && p.detalle.pantalla) { out.detalle = Object.assign({}, out.detalle || {}, { pantalla: true }); } return out; };
+      }
+      // recibir la configuración desde la nube
+      if (typeof window.applyCloudModules === 'function') {
+        const am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const out = am.apply(this, arguments);
+          try { if (mods && mods.presentacion && Array.isArray(mods.presentacion.diapositivas) && JSON.stringify(mods.presentacion) !== JSON.stringify(cfg)) { cfg = mods.presentacion; guardar(false); if (!$('presCfg') || $('presCfg').classList.contains('hidden')) { } } } catch (e) { }
+          return out;
+        };
+      }
+
+      // ---------- datos ----------
+      const hoyIso = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      function desdeDe(periodo) {
+        const d = new Date();
+        if (periodo === 'hoy') return hoyIso();
+        if (periodo === 'mes') return hoyIso().slice(0, 8) + '01';
+        d.setDate(d.getDate() - (periodo === '30d' ? 29 : 6));
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      }
+      function registros(periodo, maquina) {
+        const desde = desdeDe(periodo || '7d'), hasta = hoyIso();
+        const manual = (typeof records !== 'undefined' ? records : []).filter(r => !(typeof inoferEsDemo === 'function' && inoferEsDemo(r)));
+        const op = typeof inoferRegistrosDeOrdenes === 'function' ? inoferRegistrosDeOrdenes().filter(r => !(typeof inoferEsDemo === 'function' && inoferEsDemo(r))) : [];
+        return manual.concat(op).filter(r => r.date >= desde && r.date <= hasta && (!maquina || maquina === 'ALL' || r.machine === maquina));
+      }
+      function semanaActual() {
+        const h = hoyIso();
+        const w = Object.values(typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {}).find(x => {
+          if (!x.startDate) return false; const ini = new Date(x.startDate + 'T00:00:00'), fin = new Date(ini); fin.setDate(fin.getDate() + 6);
+          const d = new Date(h + 'T00:00:00'); return d >= ini && d <= fin;
+        });
+        return w || (typeof getActiveGanttWeek === 'function' ? getActiveGanttWeek() : null);
+      }
+      const color = pct => pct >= 85 ? '#22c55e' : (pct >= 65 ? '#f59e0b' : '#ef4444');
+
+      // ---------- dibujos ----------
+      function gauge(pct, etiqueta) {
+        const p = Math.max(0, Math.min(100, pct || 0));
+        const a = Math.PI * (1 - p / 100), x = 200 + 160 * Math.cos(a), y = 200 - 160 * Math.sin(a);
+        return `<svg viewBox="0 0 400 230" class="w-full max-w-2xl">
+          <path d="M40 200 A160 160 0 0 1 360 200" fill="none" stroke="#1e293b" stroke-width="34" stroke-linecap="round"/>
+          <path d="M40 200 A160 160 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)}" fill="none" stroke="${color(p)}" stroke-width="34" stroke-linecap="round"/>
+          <text x="200" y="185" text-anchor="middle" font-size="64" font-weight="900" fill="#fff">${p.toFixed(1)}%</text>
+          <text x="200" y="222" text-anchor="middle" font-size="18" fill="#94a3b8">${esc(etiqueta || '')}</text></svg>`;
+      }
+      function barras(items, sufijo) {
+        const max = Math.max(1, ...items.map(i => i.v));
+        return items.map(i => `<div class="flex items-center gap-4"><div class="w-56 shrink-0 text-right text-2xl font-bold text-slate-200">${esc(i.n)}</div>
+          <div class="h-10 flex-1 overflow-hidden rounded-xl bg-slate-800"><div class="flex h-full items-center justify-end rounded-xl pr-3 text-xl font-black text-slate-950" style="width:${Math.max(4, i.v / max * 100)}%;background:${i.c || '#38bdf8'}">${esc(i.t != null ? i.t : (Math.round(i.v * 10) / 10 + (sufijo || '')))}</div></div></div>`).join('');
+      }
+      let graficos = [];
+      function render(d, cont) {
+        graficos.forEach(g => { try { g.destroy(); } catch (e) { } }); graficos = [];
+        const o = d.opciones || {};
+        const tit = (t, sub) => `<div class="mb-6"><div class="text-5xl font-black text-white">${t}</div>${sub ? `<div class="mt-1 text-2xl text-slate-400">${sub}</div>` : ''}</div>`;
+        if (d.tipo === 'tablero' || d.tipo === 'paradas' || d.tipo === 'maquinas') {
+          const regs = registros(o.periodo, o.maquina);
+          const per = PERIODOS[o.periodo || '7d'] + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
+          if (!regs.length) { cont.innerHTML = tit(TIPOS[d.tipo].nombre.replace(/^\S+\s/, ''), per) + '<div class="text-3xl text-slate-400">Todavía no hay horas cargadas en este período.</div>'; return; }
+          const agg = computeAggregates(regs);
+          if (d.tipo === 'tablero') {
+            cont.innerHTML = tit('Utilización de máquinas', per) + `<div class="grid flex-1 grid-cols-1 items-center gap-10 lg:grid-cols-2">
+              <div class="flex justify-center">${gauge(agg.utilizationPct, 'utilización')}</div>
+              <div class="space-y-5 text-3xl"><div class="flex justify-between border-b border-slate-800 pb-3"><span class="text-slate-400">Horas disponibles</span><b class="text-white">${agg.totalAvailable.toFixed(1)} h</b></div>
+                <div class="flex justify-between border-b border-slate-800 pb-3"><span class="text-slate-400">Horas productivas</span><b class="text-emerald-400">${agg.productiveHours.toFixed(1)} h</b></div>
+                <div class="flex justify-between border-b border-slate-800 pb-3"><span class="text-slate-400">Horas de parada</span><b class="text-rose-400">${agg.totalStoppages.toFixed(1)} h</b></div>
+                <div class="flex justify-between"><span class="text-slate-400">Registros</span><b class="text-white">${regs.length}</b></div></div></div>`;
+          } else if (d.tipo === 'paradas') {
+            const items = (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).map(c => ({ n: c.shortLabel || c.label, v: agg.byCategory[c.key] || 0, c: c.color })).filter(i => i.v > 0).sort((a, b) => b.v - a.v);
+            cont.innerHTML = tit('Paradas por motivo', per + ' · ' + agg.totalStoppages.toFixed(1) + ' h en total') + `<div class="space-y-4">${items.length ? barras(items, ' h') : '<div class="text-3xl text-emerald-400">Sin paradas registradas 👏</div>'}</div>`;
+          } else {
+            const items = MAQS().map(m => { const a = computeAggregates(regs.filter(r => r.machine === m.name)); return { n: m.short || m.id, v: a.utilizationPct, c: color(a.utilizationPct), t: a.totalAvailable ? a.utilizationPct.toFixed(1) + '%' : 'sin datos' }; });
+            cont.innerHTML = tit('Utilización por máquina', PERIODOS[o.periodo || '7d']) + `<div class="space-y-5">${barras(items)}</div>`;
+          }
+          return;
+        }
+        if (d.tipo === 'kpis') {
+          const defs = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
+          cont.innerHTML = tit('Indicadores de planta', 'Último mes cargado vs. meta') + `<div class="grid flex-1 grid-cols-2 gap-6">${defs.map(k => {
+            const o2 = inoferKpiData(k.key); const ult = o2.datos[o2.datos.length - 1]; const ant = o2.datos[o2.datos.length - 2];
+            const v = ult ? Number(ult.valor) : null, meta = Number(o2.meta);
+            const ok = v == null ? null : (k.mayorEsMejor ? v >= meta : v <= meta);
+            const tend = v != null && ant ? (Number(ult.valor) - Number(ant.valor)) : null;
+            return `<div class="flex flex-col justify-center rounded-3xl border-2 ${ok == null ? 'border-slate-700' : (ok ? 'border-emerald-500/60 bg-emerald-500/5' : 'border-rose-500/60 bg-rose-500/5')} p-6">
+              <div class="text-3xl font-bold text-slate-300">${k.icono} ${esc(k.corto)}</div>
+              <div class="mt-2 text-7xl font-black ${ok == null ? 'text-slate-400' : (ok ? 'text-emerald-400' : 'text-rose-400')}">${v == null ? '—' : inoferPct(v)}</div>
+              <div class="mt-2 text-2xl text-slate-400">${ult ? inoferMesTxt(ult.mes) : 'sin datos'} · meta ${inoferPct(meta)}${tend != null ? ` · ${tend >= 0 ? '▲' : '▼'} ${Math.abs(tend).toFixed(2)} pts` : ''}</div></div>`; }).join('')}</div>`;
+          return;
+        }
+        if (d.tipo === 'kpi') {
+          const k = o.kpi || 'inyeccion'; const def = (INOFER_KPI_DEF || []).find(x => x.key === k) || {};
+          const o2 = inoferKpiData(k);
+          cont.innerHTML = tit(`${def.icono || ''} ${esc(def.titulo || k)}`, `Últimos 12 meses · meta ${inoferPct(o2.meta)}`) + '<div class="relative min-h-0 flex-1 rounded-3xl p-4" style="background:#5b9bd5"><canvas id="presKpiCanvas"></canvas></div>';
+          const cv = $('presKpiCanvas');
+          if (o2.datos.length && typeof inoferKpiDibujar === 'function') { try { const g = inoferKpiDibujar(cv, k, { datos: o2.datos.slice(-12), grande: true }); if (g) graficos.push(g); } catch (e) { } }
+          else cv.parentElement.innerHTML = '<div class="p-10 text-3xl text-white">Sin datos cargados.</div>';
+          return;
+        }
+        if (d.tipo === 'gantt') {
+          const w = semanaActual();
+          if (!w) { cont.innerHTML = tit('Plan de la semana') + '<div class="text-3xl text-slate-400">No hay Gantt cargado.</div>'; return; }
+          const dias = [1, 2, 3, 4, 5, 6];
+          const nombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+          const filas = MAQS().map(m => {
+            const its = ((w.machines[m.id] || {}).items || []).filter(i => !i.isSharedCompanion && (i.dailyQty || []).some(q => Number(q) > 0));
+            return `<tr class="border-t border-slate-800"><td class="py-2 pr-4 align-top text-3xl font-black text-amber-300">${esc(m.short || m.id)}</td>
+              <td class="py-2">${its.length ? its.map(i => `<div class="flex items-center gap-3 py-0.5 text-xl"><span class="w-44 shrink-0 font-bold text-white">${esc(i.part)}</span>${dias.map(dd => `<span class="w-24 text-center ${Number(i.dailyQty[dd]) > 0 ? 'rounded bg-sky-500/20 font-bold text-sky-200' : 'text-slate-700'}">${Number(i.dailyQty[dd]) > 0 ? Number(i.dailyQty[dd]).toLocaleString('es-AR') : '·'}</span>`).join('')}</div>`).join('') : '<span class="text-xl text-slate-500">Sin piezas programadas</span>'}</td></tr>`;
+          }).join('');
+          cont.innerHTML = tit('Plan de inyección', esc(w.name || w.code)) + `<div class="overflow-hidden"><table class="w-full"><thead><tr><th></th><th class="text-left"><div class="flex gap-3 text-lg text-slate-400"><span class="w-44 shrink-0">Pieza</span>${dias.map(dd => `<span class="w-24 text-center">${nombres[dd]}</span>`).join('')}</div></th></tr></thead><tbody>${filas}</tbody></table></div>`;
+          return;
+        }
+        if (d.tipo === 'ordenes') {
+          const ords = (typeof productionOrders !== 'undefined' ? productionOrders : []).filter(o3 => !(typeof inoferEsDemo === 'function' && inoferEsDemo({ fromOrder: true, ordId: o3.id }))).map(o3 => { let pct = 0; try { pct = Math.min(100, Math.round(computeOrderMetrics(o3).progressPct || 0)); } catch (e) { } return { o: o3, pct }; })
+            .filter(x => x.o.status !== 'Completada' && x.pct < 100).slice(0, 10);
+          cont.innerHTML = tit('Órdenes de producción en curso', ords.length + ' abiertas') + (ords.length ? `<div class="grid grid-cols-2 gap-5">${ords.map(x => `<div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+            <div class="flex items-baseline justify-between"><span class="text-3xl font-black text-white">${esc(x.o.part)}</span><span class="text-2xl text-slate-400">${esc(x.o.machine || '')}</span></div>
+            <div class="mt-3 h-6 overflow-hidden rounded-full bg-slate-800"><div class="h-full rounded-full" style="width:${x.pct}%;background:${color(x.pct)}"></div></div>
+            <div class="mt-2 flex justify-between text-xl text-slate-400"><span>OP ${esc(x.o.ordNumber)}</span><b class="text-white">${x.pct}%</b></div></div>`).join('')}</div>` : '<div class="text-3xl text-slate-400">No hay órdenes abiertas.</div>');
+          return;
+        }
+        if (d.tipo === 'facturacion') {
+          const w = semanaActual();
+          if (!w || typeof inoferFacturacion !== 'function' || (typeof inoferPuede === 'function' && !inoferPuede('precios_ver'))) { cont.innerHTML = tit('Facturación de la semana') + '<div class="text-3xl text-slate-400">Sin datos de facturación.</div>'; return; }
+          const f = inoferFacturacion(w);
+          const items = MAQS().map(m => ({ n: m.short || m.id, v: f.porMaq[m.id] || 0, t: inoferPlata(f.porMaq[m.id] || 0), c: '#a3e635' }));
+          cont.innerHTML = tit('Facturación programada', esc(w.name || w.code) + ' · sin IVA') + `<div class="mb-8 text-8xl font-black text-lime-300">${inoferPlata(f.total)}</div><div class="space-y-4">${barras(items)}</div>`;
+          return;
+        }
+        if (d.tipo === 'mensaje') {
+          cont.innerHTML = `<div class="flex flex-1 items-center justify-center p-10 text-center"><div class="whitespace-pre-wrap text-6xl font-black leading-tight text-white">${esc(o.texto || '')}</div></div>`;
+          return;
+        }
+        cont.innerHTML = '';
+      }
+
+      // ---------- reproductor ----------
+      const play = { on: false, idx: 0, t: null, inicio: 0, pausa: false, reloj: null };
+      const activas = () => (cfg.diapositivas || []).filter(d => d.activo !== false && TIPOS[d.tipo]);
+      function montarPlayer() {
+        if ($('presPlayer')) return;
+        const p = document.createElement('div');
+        p.id = 'presPlayer';
+        p.className = 'fixed inset-0 z-[99990] hidden flex-col bg-slate-950 text-white';
+        p.style.zIndex = '99990';
+        p.innerHTML = `<div class="flex items-center justify-between border-b border-slate-800 px-8 py-4">
+            <div class="flex items-center gap-4"><span class="rounded-lg bg-cyan-500/20 px-3 py-1 text-xl font-black text-cyan-300">INOFER</span><span id="presTitulo" class="text-2xl font-bold text-slate-300"></span></div>
+            <div class="flex items-center gap-6"><span id="presPuntos" class="flex gap-2"></span><span id="presReloj" class="text-3xl font-black tabular-nums text-white"></span>
+              <button type="button" id="presSalir" class="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-400 hover:text-white" title="Salir (Esc)">✕</button></div>
+          </div>
+          <div id="presCuerpo" class="flex min-h-0 flex-1 flex-col px-10 py-8"></div>
+          <div class="h-1.5 bg-slate-900"><div id="presBarra" class="h-full bg-cyan-500" style="width:0%"></div></div>
+          <div id="presAyuda" class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-slate-800/90 px-4 py-2 text-sm text-slate-300 transition-opacity">← → cambiar · espacio pausa · F pantalla completa · Esc salir</div>`;
+        document.body.appendChild(p);
+        $('presSalir').addEventListener('click', detener);
+        p.addEventListener('click', e => { if (e.target.closest('#presSalir')) return; pantallaCompleta(); });
+      }
+      function pantallaCompleta() { try { if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); } catch (e) { } }
+      function mostrar(i) {
+        const lista = activas();
+        if (!lista.length) { $('presCuerpo').innerHTML = '<div class="m-auto text-4xl text-slate-400">No hay diapositivas activas. El administrador las elige en 📺 Presentación.</div>'; return; }
+        play.idx = ((i % lista.length) + lista.length) % lista.length;
+        const d = lista[play.idx];
+        $('presTitulo').textContent = cfg.titulo || '';
+        $('presPuntos').innerHTML = lista.map((x, j) => `<span class="h-3 w-3 rounded-full ${j === play.idx ? 'bg-cyan-400' : 'bg-slate-700'}"></span>`).join('');
+        try { render(d, $('presCuerpo')); } catch (e) { $('presCuerpo').innerHTML = '<div class="text-2xl text-rose-300">No se pudo mostrar esta diapositiva.</div>'; console.error(e); }
+        play.inicio = Date.now();
+        clearTimeout(play.t);
+        const seg = Math.max(5, Number(d.segundos) || Number(cfg.intervalo) || 300);
+        if (!play.pausa) play.t = setTimeout(() => mostrar(play.idx + 1), seg * 1000);
+        play.dur = seg;
+      }
+      function tic() {
+        const r = $('presReloj'); if (r) r.textContent = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        const b = $('presBarra'); if (b && play.dur) b.style.width = (play.pausa ? b.style.width : Math.min(100, (Date.now() - play.inicio) / (play.dur * 1000) * 100) + '%');
+      }
+      function iniciarPres() {
+        montarPlayer();
+        const p = $('presPlayer'); p.classList.remove('hidden'); p.classList.add('flex');
+        play.on = true; play.pausa = false; mostrar(0);
+        clearInterval(play.reloj); play.reloj = setInterval(tic, 1000); tic();
+        setTimeout(() => { const a = $('presAyuda'); if (a) a.style.opacity = '0'; }, 6000);
+        try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => { }); } catch (e) { }
+      }
+      function detener() {
+        play.on = false; clearTimeout(play.t); clearInterval(play.reloj);
+        const p = $('presPlayer'); if (p) { p.classList.add('hidden'); p.classList.remove('flex'); }
+        try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { }
+      }
+      document.addEventListener('keydown', e => {
+        if (!play.on) return;
+        if (e.key === 'ArrowRight') mostrar(play.idx + 1);
+        else if (e.key === 'ArrowLeft') mostrar(play.idx - 1);
+        else if (e.key === ' ') { e.preventDefault(); play.pausa = !play.pausa; if (play.pausa) clearTimeout(play.t); else mostrar(play.idx); showToast(play.pausa ? '⏸ Pausada' : '▶ Continúa'); }
+        else if (e.key === 'f' || e.key === 'F') pantallaCompleta();
+        else if (e.key === 'Escape' && !document.fullscreenElement) detener();
+      });
+      window.inoferPresentacion = { iniciar: iniciarPres, detener, config: () => cfg };
+
+      // ---------- configuración (administrador) ----------
+      function montarCfg() {
+        if ($('presCfg')) return;
+        const m = document.createElement('div');
+        m.id = 'presCfg';
+        m.className = 'fixed inset-0 z-[9985] hidden items-start justify-center overflow-y-auto bg-slate-950/80 p-3 sm:p-6';
+        m.style.zIndex = '9985';
+        m.innerHTML = '<div class="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"><div id="presCfgCuerpo"></div></div>';
+        document.body.appendChild(m);
+        m.addEventListener('click', onCfgClick);
+        m.addEventListener('change', onCfgChange);
+      }
+      function renderCfg() {
+        const c = $('presCfgCuerpo'); if (!c) return;
+        const kpis = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white';
+        const min = Math.floor((cfg.intervalo || 300) / 60), sec = (cfg.intervalo || 300) % 60;
+        c.innerHTML = `<div class="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+            <div><h3 class="text-base font-extrabold text-white">📺 Presentación en pantalla</h3><p class="text-[11px] text-slate-400">Elegí qué se proyecta y cada cuánto cambia. Se guarda en la nube: la pantalla lo toma sola.</p></div>
+            <button type="button" data-a="cerrar" class="rounded-lg px-2 py-1 text-xl text-slate-400 hover:bg-slate-800 hover:text-white">×</button></div>
+          <div class="space-y-4 p-5">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="text-[11px] font-semibold text-slate-400">Título en pantalla<input data-c="titulo" value="${esc(cfg.titulo || '')}" class="mt-1 w-full ${inp}"></label>
+              <div class="text-[11px] font-semibold text-slate-400">Cada diapositiva dura<div class="mt-1 flex items-center gap-2"><input type="number" min="0" data-c="min" value="${min}" class="w-20 ${inp}"> min <input type="number" min="0" max="59" data-c="sec" value="${sec}" class="w-20 ${inp}"> seg</div></div>
+            </div>
+            <div class="space-y-2">${(cfg.diapositivas || []).map((d, i) => {
+              const t = TIPOS[d.tipo] || { nombre: d.tipo, ops: [] }; const o = d.opciones || {};
+              return `<div class="rounded-xl border ${d.activo !== false ? 'border-cyan-500/40 bg-cyan-500/5' : 'border-slate-800'} p-3"><div class="flex flex-wrap items-center gap-2">
+                <label class="flex flex-1 items-center gap-2 text-sm font-bold text-white"><input type="checkbox" data-d="${i}" data-k="activo" ${d.activo !== false ? 'checked' : ''} class="accent-cyan-500"> ${esc(t.nombre)}</label>
+                ${t.ops.includes('periodo') ? `<select data-d="${i}" data-k="periodo" class="${inp}">${Object.keys(PERIODOS).map(p => `<option value="${p}" ${o.periodo === p ? 'selected' : ''}>${PERIODOS[p]}</option>`).join('')}</select>` : ''}
+                ${t.ops.includes('maquina') ? `<select data-d="${i}" data-k="maquina" class="${inp}"><option value="ALL">Todas</option>${MAQS().map(mq => `<option value="${esc(mq.name)}" ${o.maquina === mq.name ? 'selected' : ''}>${esc(mq.short || mq.id)}</option>`).join('')}</select>` : ''}
+                ${t.ops.includes('kpi') ? `<select data-d="${i}" data-k="kpi" class="${inp}">${kpis.map(k => `<option value="${k.key}" ${o.kpi === k.key ? 'selected' : ''}>${esc(k.corto)}</option>`).join('')}</select>` : ''}
+                <input type="number" min="0" data-d="${i}" data-k="segundos" value="${d.segundos || ''}" placeholder="seg (opc.)" title="Duración propia de esta diapositiva, en segundos" class="w-24 ${inp}">
+                <button type="button" data-a="subir" data-d="${i}" class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300">↑</button>
+                <button type="button" data-a="bajar" data-d="${i}" class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300">↓</button>
+                <button type="button" data-a="borrar" data-d="${i}" class="rounded border border-rose-500/40 px-2 py-1 text-xs text-rose-300">✕</button></div>
+                ${t.ops.includes('texto') ? `<textarea data-d="${i}" data-k="texto" rows="2" placeholder="Ej: ¡Felicitaciones al turno noche por el récord!" class="mt-2 w-full ${inp}">${esc(o.texto || '')}</textarea>` : ''}
+              </div>`; }).join('')}</div>
+            <div class="flex flex-wrap items-center gap-2"><select id="presNuevoTipo" class="${inp}">${Object.keys(TIPOS).map(k => `<option value="${k}">${esc(TIPOS[k].nombre)}</option>`).join('')}</select>
+              <button type="button" data-a="agregar" class="rounded-lg border border-cyan-500/50 px-3 py-1.5 text-xs font-bold text-cyan-200">+ Agregar diapositiva</button></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">Para la pantalla: creá un usuario en <b>🛡️ Usuarios y permisos</b> con el botón <b>📺 Pantalla</b>. Cuando ese usuario entra, la presentación arranca sola.</div>
+            <div class="flex justify-end gap-2"><button type="button" data-a="ver" class="rounded-lg bg-cyan-500 px-4 py-2 text-xs font-extrabold text-slate-950">▶ Ver presentación</button></div>
+          </div>`;
+      }
+      function onCfgClick(e) {
+        const b = e.target.closest('[data-a]'); if (!b) { if (e.target.id === 'presCfg') cerrarCfg(); return; }
+        const i = Number(b.dataset.d), L = cfg.diapositivas;
+        if (b.dataset.a === 'cerrar') return cerrarCfg();
+        if (b.dataset.a === 'ver') { cerrarCfg(); return iniciarPres(); }
+        if (b.dataset.a === 'subir' && i > 0) [L[i - 1], L[i]] = [L[i], L[i - 1]];
+        else if (b.dataset.a === 'bajar' && i < L.length - 1) [L[i + 1], L[i]] = [L[i], L[i + 1]];
+        else if (b.dataset.a === 'borrar') L.splice(i, 1);
+        else if (b.dataset.a === 'agregar') { const t = $('presNuevoTipo').value; L.push({ id: 'd' + Date.now(), tipo: t, activo: true, opciones: t === 'kpi' ? { kpi: 'inyeccion' } : (TIPOS[t].ops.includes('periodo') ? { periodo: '7d', maquina: 'ALL' } : {}) }); }
+        else return;
+        guardar(true); renderCfg();
+      }
+      function onCfgChange(e) {
+        const el = e.target;
+        if (el.dataset.c === 'titulo') cfg.titulo = el.value;
+        else if (el.dataset.c === 'min' || el.dataset.c === 'sec') {
+          const mm = Number(document.querySelector('#presCfg [data-c="min"]').value) || 0, ss = Number(document.querySelector('#presCfg [data-c="sec"]').value) || 0;
+          cfg.intervalo = Math.max(5, mm * 60 + ss);
+        } else if (el.dataset.d != null) {
+          const d = cfg.diapositivas[Number(el.dataset.d)]; if (!d) return;
+          const k = el.dataset.k;
+          if (k === 'activo') d.activo = el.checked;
+          else if (k === 'segundos') { const v = Number(el.value) || 0; if (v) d.segundos = Math.max(5, v); else delete d.segundos; }
+          else { d.opciones = d.opciones || {}; d.opciones[k] = el.value; }
+        } else return;
+        guardar(true); renderCfg();
+      }
+      function abrirCfg() { montarCfg(); renderCfg(); const m = $('presCfg'); m.classList.remove('hidden'); m.classList.add('flex'); }
+      function cerrarCfg() { const m = $('presCfg'); if (m) { m.classList.add('hidden'); m.classList.remove('flex'); } }
+      window.inoferPresentacionConfig = abrirCfg;
+
+      // botón en el encabezado (admin: configurar; todos: ver)
+      function boton() {
+        if ($('presBtn')) { $('presBtn').classList.toggle('hidden', !(typeof inoferSession !== 'undefined' && inoferSession)); return; }
+        const chip = $('inoferUserChip'); if (!chip) return;
+        const b = document.createElement('button');
+        b.id = 'presBtn'; b.type = 'button'; b.title = 'Presentación en pantalla';
+        b.className = 'inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20';
+        b.innerHTML = '📺<span class="hidden sm:inline">Presentación</span>';
+        b.addEventListener('click', () => (typeof inoferIsAdmin === 'function' && inoferIsAdmin()) ? abrirCfg() : iniciarPres());
+        chip.parentElement.parentElement.insertBefore(b, chip.parentElement);
+      }
+
+      // usuario "pantalla": preset y casilla en Usuarios y permisos
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('#inoferPresetPantalla'); if (!b) return;
+        inoferFormPerms = { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'view', ia: 'none', indicadores: 'view', detalle: { pantalla: true } };
+        inoferRefreshPermUi();
+      });
+      document.addEventListener('change', e => {
+        if (e.target.id !== 'inoferUfPantalla') return;
+        inoferFormPerms.detalle = Object.assign({}, inoferFormPerms.detalle || {}, { pantalla: e.target.checked });
+        if (!e.target.checked) delete inoferFormPerms.detalle.pantalla;
+      });
+      function extrasUsuarios() {
+        const ref = document.querySelector('#inoferUsersModal [data-preset="operario"]');
+        if (ref && !$('inoferPresetPantalla')) {
+          const b = document.createElement('button'); b.type = 'button'; b.id = 'inoferPresetPantalla';
+          b.className = 'rounded border border-cyan-500/50 px-2 py-1 text-cyan-300 hover:bg-cyan-500/10'; b.textContent = '📺 Pantalla';
+          ref.parentElement.insertBefore(b, ref);
+        }
+        const act = $('inoferUfActivo');
+        if (act && !$('inoferUfPantalla')) {
+          act.closest('label').insertAdjacentHTML('afterend', '<label class="ml-4 inline-flex items-center gap-2 text-xs text-cyan-200"><input id="inoferUfPantalla" type="checkbox" class="accent-cyan-500" /> Usuario de pantalla (abre directo la presentación)</label>');
+        }
+        const c = $('inoferUfPantalla');
+        if (c) c.checked = !!(inoferFormPerms && inoferFormPerms.detalle && inoferFormPerms.detalle.pantalla);
+      }
+      if (typeof window.inoferRefreshPermUi === 'function') {
+        const rp = window.inoferRefreshPermUi;
+        window.inoferRefreshPermUi = function () { const r = rp.apply(this, arguments); try { extrasUsuarios(); } catch (e) { } return r; };
+      }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        let arrancada = false;
+        window.inoferApplyPermissions = function () {
+          const r = ap.apply(this, arguments);
+          try { boton(); if (esPantalla() && !arrancada) { arrancada = true; setTimeout(iniciarPres, 2500); } if (!inoferSession) arrancada = false; } catch (e) { }
+          return r;
+        };
+      }
+      setTimeout(boton, 2000);
     })();
   </script>
   <script>
