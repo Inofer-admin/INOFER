@@ -32,6 +32,8 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Catálogo: campo `portamolde` (molde base compartido). Piezas con el mismo portamolde no pueden estar en máquinas distintas el
   mismo día: el auto-armado los pone en la misma máquina y salta días ocupados; a mano se bloquea (inoferChoqueManual).
 - `armada: true` marca la versión montada hoy en cada portamolde (panel en la base de datos); el Gantt avisa cambios de versión.
+- `INOFER_MOLDES_BASE` (index.html) = listado oficial molde base → versión (MOLDES_BASE_Y_VERSIONES.xlsx). Se aplica solo una
+  vez por equipo tras sincronizar (flag `tablero_inyectoras_moldesbase_v1`), completando solo portamoldes vacíos.
 - Piezas `-R` (inoferEsPiezaR) no se inyectan: fuera del análisis/auto-armado, bloqueadas a mano, aviso para quitarlas.
 
 ## Cómo aplicar un pedido del usuario
