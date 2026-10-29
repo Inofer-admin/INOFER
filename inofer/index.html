@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.06" />
+  <meta name="inofer-version" content="2026.10.29.07" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1589,7 +1589,7 @@
               </div>
               <div>
                 <label class="block text-[11px] font-bold text-sky-300 mb-1">⚙️ Diámetro de pistón (mm)</label>
-                <input type="number" id="cat_piston" min="0" step="1" placeholder="Ej: 70" class="w-full rounded-lg border border-sky-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-sky-300" />
+                <select id="cat_piston" class="w-full rounded-lg border border-sky-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-sky-300"><option value="">Sin definir</option><option value="40">40 mm</option><option value="45">45 mm</option><option value="50">50 mm</option><option value="55">55 mm</option><option value="65">65 mm</option></select>
               </div>
               <div class="flex items-end">
                 <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
@@ -5426,7 +5426,7 @@ ${lines}${trendNote}`;
             <div class="mt-1 flex items-center gap-1">
               <span class="text-[10px] text-orange-300 font-semibold">🧩 Portamolde:</span>
               <span class="ml-1 text-[10px] text-sky-300 font-semibold">⚙️</span>
-              <input type="number" min="0" step="1" data-inline-piston="${item.id}" value="${item.pistonMm || ''}" placeholder="mm" class="inline-piston-input w-14 rounded border ${item.pistonMm ? 'border-sky-500/60 bg-sky-950/40 text-sky-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1 py-0.5 text-[11px] font-bold focus:border-sky-400 focus:outline-none" title="Diámetro del pistón (mm) con que se inyecta" />
+              <select data-inline-piston="${item.id}" class="inline-piston-input rounded border ${item.pistonMm ? 'border-sky-500/60 bg-sky-950/40 text-sky-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1 py-0.5 text-[11px] font-bold focus:border-sky-400 focus:outline-none" title="Diámetro del pistón con que se inyecta">${[['', '— mm'], [40, '40'], [45, '45'], [50, '50'], [55, '55'], [65, '65']].concat(item.pistonMm && ![40, 45, 50, 55, 65].includes(Number(item.pistonMm)) ? [[item.pistonMm, item.pistonMm]] : []).map(([v, t]) => `<option value="${v}" ${String(item.pistonMm || '') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select>
               <input type="text" data-inline-portamolde="${item.id}" value="${item.portamolde || ''}" list="inoferPortamoldeList" placeholder="Único" class="inline-portamolde-input w-24 rounded border ${item.portamolde ? 'border-orange-500/60 bg-orange-950/40 text-orange-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-[11px] font-bold focus:border-orange-400 focus:outline-none" title="Piezas con el mismo portamolde no pueden estar en máquina a la vez" />
             </div>
             ${typeof inoferPortamoldeHermanas === 'function' && item.portamolde ? (() => { const h = inoferPortamoldeHermanas(item); return h.length ? `<div class="mt-0.5 text-[10px] text-orange-200/80">Mismo portamolde que: <b>${h.map(x => x.part).join(', ')}</b></div>` : ''; })() : ''}
@@ -5561,7 +5561,11 @@ ${lines}${trendNote}`;
           const pmInp = document.getElementById('cat_portamolde');
           if (pmInp) { pmInp.value = item.portamolde || ''; pmInp.dispatchEvent(new Event('input')); }
           const pisInp = document.getElementById('cat_piston');
-          if (pisInp) pisInp.value = item.pistonMm || '';
+          if (pisInp) {
+            const v = item.pistonMm ? String(item.pistonMm) : '';
+            if (v && !Array.from(pisInp.options).some(op => op.value === v)) { const op = document.createElement('option'); op.value = v; op.textContent = v + ' mm'; pisInp.appendChild(op); }
+            pisInp.value = v;
+          }
           const formEl = document.getElementById('catalogForm');
           if (formEl && typeof formEl.scrollIntoView === 'function') {
             formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -11053,7 +11057,12 @@ ${lines}${trendNote}`;
       return out;
     }
     function inoferPistonDe(part) { const c = typeof inoferCatDe === 'function' ? inoferCatDe(part) : null; return c ? (Number(c.pistonMm) || 0) : 0; }
-    function inoferDisponibles(m) { return ((inoferPistones.maquinas[m] || {}).disponibles || []).map(Number).filter(x => x > 0); }
+    // Diámetros de pistón usados en la planta
+    const INOFER_DIAMETROS_PISTON = [40, 45, 50, 55, 65];
+    function inoferDisponibles(m) {
+      const d = ((inoferPistones.maquinas[m] || {}).disponibles || []).map(Number).filter(x => x > 0);
+      return d.length ? d : (inoferTienePistonVariable(m) ? INOFER_DIAMETROS_PISTON.slice() : []);
+    }
     function inoferMaquinaAdmitePiston(m, mm) {
       if (!mm || !inoferTienePistonVariable(m)) return true;
       const d = inoferDisponibles(m);

@@ -37,7 +37,7 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Piezas `-R` (inoferEsPiezaR) no se inyectan: fuera del análisis/auto-armado, bloqueadas a mano, aviso para quitarlas.
 
 ## Pistones
-- Pieza: `pistonMm` (diámetro de pistón). Módulo `pistones` (área gantt): disponibles y montado por máquina + horasCambio.
+- Pieza: `pistonMm` (diámetro de pistón; planta usa 40/45/50/55/65 mm = INOFER_DIAMETROS_PISTON, default de 200V/200N/180). Módulo `pistones` (área gantt): disponibles y montado por máquina + horasCambio.
 - Auto-armado: inoferOrdenarPorPiston agrupa piezas del mismo pistón dentro de cada nivel de urgencia (ahorro de SET-UP);
   prefiere la máquina que lo tiene montado y suma CPIS al cambiar. Solo 200V/200N/180 cambian pistón (H50 y Z30: único).
 - Gantt: panel "⚙️ Pistones por máquina", avisos de cambios y de pistón faltante; carga manual bloqueada si la máquina no lo tiene.
