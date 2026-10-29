@@ -100,7 +100,13 @@ public final class ServidorLocal {
                 return;
             }
 
-            if (ruta.equals("/api/version")) {
+            if (ruta.equals("/api/actualizar")) {
+                // la pantalla pide revisar GitHub ya mismo (descarga la versión nueva si la hay)
+                actualizador.buscar(15000, false);
+                String v = actualizador.versionPaginaActual();
+                String json = "{\"web\":\"" + v + "\",\"programa\":\"" + Main.VERSION + "\",\"programaPendiente\":" + actualizador.isJarPendiente() + "}";
+                responder(ex, 200, TIPOS.get("json"), json.getBytes(StandardCharsets.UTF_8));
+            } else if (ruta.equals("/api/version")) {
                 String v = actualizador.versionPaginaActual();
                 String json = "{\"web\":\"" + v + "\",\"programa\":\"" + Main.VERSION + "\",\"programaPendiente\":" + actualizador.isJarPendiente() + "}";
                 responder(ex, 200, TIPOS.get("json"), json.getBytes(StandardCharsets.UTF_8));

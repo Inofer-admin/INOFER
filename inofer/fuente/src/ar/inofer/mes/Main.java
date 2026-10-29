@@ -26,7 +26,7 @@ import java.nio.file.Path;
  */
 public final class Main {
 
-    public static final String VERSION = "2.5";
+    public static final String VERSION = "2.6";
     private static final int PUERTO_BASE = 47821;
 
     private static ServidorLocal servidor;
@@ -83,13 +83,13 @@ public final class Main {
             if (ventanaNavegador != null && ventanaNavegador.isAlive()) ventanaNavegador.destroy();
         }));
 
-        // Actualizaciones: revisión rápida al abrir (máx. 4 s) y luego cada 15 minutos
+        // Actualizaciones: revisión rápida al abrir (máx. 4 s) y luego cada 5 minutos
         actualizador.buscar(4000, false);
         Thread revisor = new Thread(() -> {
             try { Thread.sleep(20000); } catch (InterruptedException e) { return; }
             while (true) {
                 actualizador.buscar(15000, true);
-                try { Thread.sleep(15 * 60 * 1000L); } catch (InterruptedException e) { return; }
+                try { Thread.sleep(5 * 60 * 1000L); } catch (InterruptedException e) { return; }
             }
         }, "actualizaciones");
         revisor.setDaemon(true);
