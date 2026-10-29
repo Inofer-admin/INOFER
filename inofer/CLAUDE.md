@@ -130,3 +130,9 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Presentación: Wake Lock (pantalla encendida) y arranque automático con `?tv` en la URL (cualquier usuario con sesión).
 - Mensajería con permisos: permisos.detalle.chat_usar / chat_recibir (false = no). Servidor `chatPuedeUsar_`/`chatPuedeRecibir_`: sin chat_usar → msgEstado devuelve chatBloqueado (solo solicitudes); el directorio solo muestra a quienes pueden recibir; no se crean chats ni se envía a quien no recibe. Casillas en Usuarios y permisos (#inoferUfChatBox).
 - Supervisión (admin): msgAdminListar / msgAdminLeer leen todos los chats sin marcarlos leídos; pestaña 🛡️ Supervisión en el panel, solo lectura, con borrar chat/mensaje. Aviso visible a todos: "Los chats de INOFER son de uso laboral. El administrador puede revisarlos."
+
+## Instalador de Windows (INOFER-Setup.exe)
+- `fuente/instalador/INOFER.nsi` + `fuente/armar_instalador.sh` (NSIS para Linux y 7-Zip bajados de GitHub; JRE Temurin 21 Windows x64 de GitHub releases). Instala por usuario, sin admin, en %LOCALAPPDATA%\INOFER (mismo lugar que el autoinstalador del jar → la autoactualización sigue igual), con Java en `runtime\`, accesos en Escritorio e Inicio, entrada en "Agregar o quitar programas" y desinstalador (no borra %APPDATA%\INOFER_MES). Cierra antes solo los procesos javaw/java cuyo comando incluya INOFER*.jar.
+- publicar.sh lo rearma solo cuando cambia la versión del programa (Main.VERSION vs inofer/instalador.version). No está firmado: Windows SmartScreen pide "Más información → Ejecutar de todas formas".
+- La landing (index.html raíz) ofrece INOFER-Setup.exe; INOFER-PC.zip queda por compatibilidad.
+- Presentación: editor tipo diapositivas (lista + edición + vista previa 16:9 escalada, duración propia mm:ss, duplicar, ver desde acá).

@@ -57,4 +57,8 @@ RAIZ="$(cd "$OUT/.." && pwd)"
 cp "$OUT/INOFER.jar" "$RAIZ/INOFER.jar"
 printf '{\n  "jar": "%s",\n  "jarSha256": "%s"\n}\n' "$VJAR" "$SHA" > "$RAIZ/version.json"
 rm -rf "$B"
+# Instalador de Windows (.exe con Java incluido): se rearma solo cuando cambia la versión del programa
+if [ "$(cat "$OUT/instalador.version" 2>/dev/null)" != "$VJAR" ] || [ ! -f "$OUT/INOFER-Setup.exe" ]; then
+  bash "$SRC/armar_instalador.sh" >/dev/null && echo "instalador=$VJAR"
+fi
 echo "web=$VWEB jar=$VJAR sha=$SHA"

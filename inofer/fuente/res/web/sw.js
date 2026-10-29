@@ -24,7 +24,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.pathname.startsWith("/api/")) return; // datos de la app Java
-  if (/version\.json$|\.jar$/.test(url.pathname)) return; // control de actualizaciones: siempre de internet
+  if (/version\.json$|\.jar$|\.exe$|\.zip$/.test(url.pathname)) return; // control de actualizaciones: siempre de internet
   // Solo se cachea la propia app y las librerías conocidas; todo lo demás va directo a internet
   if (url.origin !== self.location.origin && !LIBS.includes(req.url) && !/fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) return;
   if (/script\.google|googleusercontent|generativelanguage/.test(url.hostname)) return; // datos en vivo
