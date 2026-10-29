@@ -904,9 +904,16 @@ function iaLlamar_(clave, cuerpo) {
   if (iaProveedor_(clave) === 'claude') return iaLlamarClaude_(clave, cuerpo);
   let ultimo = 'sin respuesta';
   for (let i = 0; i < IA_MODELOS.length; i++) {
-    const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent?key=' + encodeURIComponent(clave), {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true
+    // las claves nuevas (AQ.…) y las viejas (AIza…) van en el encabezado x-goog-api-key
+    let r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent', {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true, headers: { 'x-goog-api-key': clave }
     });
+    if (r.getResponseCode() === 401 || r.getResponseCode() === 403) {
+      const r2 = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent?key=' + encodeURIComponent(clave), {
+        method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true
+      });
+      if (r2.getResponseCode() === 200) r = r2;
+    }
     const code = r.getResponseCode();
     let d = {};
     try { d = JSON.parse(r.getContentText()); } catch (e) {}
@@ -919,6 +926,8 @@ function iaLlamar_(clave, cuerpo) {
     }
     const msg = String((d.error && d.error.message) || code);
     if (code === 400 && /api key/i.test(msg)) return { ok: false, error: 'la clave de Gemini no es válida' };
+    if (code === 401) return { ok: false, error: 'Google rechazó la clave (' + msg.slice(0, 120) + ')' };
+    if (code === 429) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
     if (code === 403) return { ok: false, error: 'la clave de Gemini no tiene permiso' };
     ultimo = msg;
   }

@@ -116,3 +116,4 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - IA INOFER: pedidos de cambio (verbo de acción + algo del plan) se ejecutan con `inoferGanttEjecutar`; el resto sigue con el análisis de siempre.
 - Test: gas_mock_server.js simula Gemini con /tmp/work/gemini_fake.js.
 - IA: el servidor acepta clave de Claude (sk-ant-…, API de Anthropic, modelos claude-sonnet-5-5 → claude-haiku-5-5) o de Gemini (AIza…); Script Property `IA_KEY`. `iaLlamarClaude_` convierte el formato Gemini (systemInstruction/contents/generationConfig) a Messages API. La clave de Claude nunca se guarda en el equipo; `inoferLLM` usa primero la nube.
+- Claves Gemini nuevas "AQ.…": se mandan en el encabezado `x-goog-api-key` (servidor y cliente); si da 401/403 el servidor reintenta con ?key=. Cuando el admin guarda una clave con nube, la prueba y la guarda la nube (iaConfig) y no queda en el equipo.
