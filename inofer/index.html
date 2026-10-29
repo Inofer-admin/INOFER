@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.16" />
+  <meta name="inofer-version" content="2026.10.29.17" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -12513,11 +12513,11 @@ Pedido: ${frase}`;
                   <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${st.parada ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="1">Sí</button>
                 </div>
                 <div id="crParadaBox" class="${st.parada ? '' : 'hidden'} mt-2 space-y-2">
-                  <select id="crCodigo" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white">
-                    <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
-                  </select>
-                  <div class="grid grid-cols-4 gap-2">${[15, 30, 60, 120].map(m => `<button type="button" class="cr-min rounded-lg border border-slate-700 bg-slate-950 py-2 text-xs font-bold text-slate-200" data-m="${m}">${m < 60 ? m + ' min' : (m / 60) + ' h'}</button>`).join('')}</div>
-                  <input id="crMinutos" type="number" inputmode="numeric" min="0" placeholder="Minutos parada" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">
+                  <div id="crParadasList" class="space-y-2">${st.parada ? filaParada() : ''}</div>
+                  <div class="flex items-center justify-between gap-2">
+                    <button type="button" id="crAddParada" class="rounded-xl border-2 border-dashed border-rose-500/40 px-3 py-2 text-xs font-bold text-rose-200">+ Agregar otra parada</button>
+                    <span id="crParadasTotal" class="text-xs text-slate-400"></span>
+                  </div>
                 </div>
               </div>
               <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Operario</span>
@@ -12627,6 +12627,36 @@ Pedido: ${frase}`;
         return o;
       }
 
+      // ---------- paradas (varias por turno, sin límite de duración) ----------
+      function filaParada() {
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-center text-base font-bold text-white';
+        return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2">
+          <div class="flex gap-2">
+            <select class="cr-pcod flex-1 rounded-lg border-2 border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-white">
+              <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+            </select>
+            <button type="button" class="cr-pdel rounded-lg border border-slate-700 px-3 text-sm text-rose-300" title="Quitar">✕</button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-ph ${inp}" style="width:4.5rem" placeholder="0"> h</label>
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-pm ${inp}" style="width:4.5rem" placeholder="0"> min</label>
+            <span class="flex gap-1">${[15, 30, 60].map(m => `<button type="button" class="cr-padd rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200" data-m="${m}">+${m < 60 ? m + ' min' : '1 h'}</button>`).join('')}</span>
+          </div>
+        </div>`;
+      }
+      const minFila = r => (Number(r.querySelector('.cr-ph').value) || 0) * 60 + (Number(r.querySelector('.cr-pm').value) || 0);
+      const fmtMin = m => { const h = Math.floor(m / 60), r = m % 60; return h ? (h + ' h' + (r ? ' ' + r + ' min' : '')) : (r + ' min'); };
+      function leerParadas() {
+        return [...document.querySelectorAll('#crParadasList .cr-prow')].map(r => ({ codigo: r.querySelector('.cr-pcod').value, min: minFila(r) })).filter(p => p.codigo || p.min);
+      }
+      function totalParadas() {
+        const el = $('crParadasTotal'); if (!el) return;
+        const ps = leerParadas(); const tot = ps.reduce((a, p) => a + p.min, 0);
+        const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+        const dur = ($('crIni') && $('crFin')) ? (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440 || 1440) : 1440;
+        el.innerHTML = ps.length ? `${ps.length} parada${ps.length > 1 ? 's' : ''} · total <b class="${tot > dur ? 'text-rose-400' : 'text-white'}">${fmtMin(tot)}</b>${tot > dur ? ' (más que el turno)' : ''}` : '';
+      }
+
       function guardarTurno() {
         const o = productionOrders.find(x => x.id === st.ordId);
         if (!o) return;
@@ -12635,14 +12665,19 @@ Pedido: ${frase}`;
         const t = turnos().find(x => x.id === st.turno) || turnos()[0];
         const operario = $('crOperario').value.trim();
         if (!operario) { showToast('Poné tu nombre'); $('crOperario').focus(); return; }
-        const codigo = st.parada ? $('crCodigo').value : '';
-        const min = st.parada ? Number($('crMinutos').value) || 0 : 0;
-        if (st.parada && !codigo) { showToast('Elegí el motivo de la parada'); return; }
-        const obs = [codigo ? `Cód ${codigo.split('-')[0]}${min ? ' · ' + min + ' min' : ''}` : '', ($('crObs') || {}).value || ''].filter(Boolean).join(' — ');
+        const paradas = st.parada ? leerParadas() : [];
+        if (st.parada && !paradas.length) { showToast('Cargá al menos una parada o marcá "No"'); return; }
+        if (paradas.some(p => !p.codigo)) { showToast('Elegí el motivo de cada parada'); return; }
+        if (paradas.some(p => !p.min)) { showToast('Poné cuánto duró cada parada'); return; }
+        const durTurno = (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440) || 1440;
+        const min = paradas.reduce((a, p) => a + p.min, 0);
+        if (min > durTurno && !confirm(`Las paradas suman ${fmtMin(min)} y el turno dura ${fmtMin(durTurno)}. ¿Guardar igual?`)) return;
+        const codigo = paradas.length ? paradas[0].codigo : '';
+        const obs = [paradas.map(p => `Cód ${p.codigo.split('-')[0]} · ${fmtMin(p.min)}`).join('; '), ($('crObs') || {}).value || ''].filter(Boolean).join(' — ');
         if (!o.logs) o.logs = [];
         o.logs.push({
           id: 'lg-' + Date.now(), date: $('crFecha').value || hoy(), operator: operario, startTime: $('crIni').value || t.ini, endTime: $('crFin').value || t.fin,
-          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, obs, turno: t.nombre,
+          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, paradas, obs, turno: t.nombre,
           cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString()
         });
         pref.operario = operario; guardarPref();
@@ -12711,13 +12746,18 @@ Pedido: ${frase}`;
           else if ((el = g('.cr-parada'))) {
             st.parada = el.dataset.p === '1';
             $('crParadaBox').classList.toggle('hidden', !st.parada);
+            if (st.parada && !document.querySelector('#crParadasList .cr-prow')) $('crParadasList').insertAdjacentHTML('beforeend', filaParada());
+            totalParadas();
             v.querySelectorAll('.cr-parada').forEach(b => { const on = (b.dataset.p === '1') === st.parada; const c = b.dataset.p === '1' ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
           }
-          else if ((el = g('.cr-min'))) { $('crMinutos').value = el.dataset.m; }
+          else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
+          else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
+          else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
           else if (g('#crOtroTurno')) { st.paso = 'turno'; render(); }
           else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
         });
-        v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); });
+        v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
+        v.addEventListener('change', e => { if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
         v.addEventListener('submit', e => {
           e.preventDefault();
           if (!puedeEditar()) { showToast('Tu usuario no puede cargar órdenes'); return; }
