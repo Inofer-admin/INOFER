@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.09" />
+  <meta name="inofer-version" content="2026.10.29.12" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -11240,7 +11240,11 @@ ${lines}${trendNote}`;
     const INOFER_KPI_KEY = 'tablero_inyectoras_kpis_v1';
     const INOFER_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
     // Datos de partida del gráfico "Eficiencia de conteo" que pasó la planta (se pueden editar)
+    // Datos históricos de las planillas REBABADO.xlsx, INYECCION.xlsx y SCRAP.xlsx (jun-25 a sept-26)
     const INOFER_KPI_INICIAL = {
+      rebabado: { datos: [["2025-06", 68.0], ["2025-07", 70.0], ["2025-08", 68.0], ["2025-09", 71.0], ["2025-10", 66.0], ["2025-11", 65.0], ["2025-12", 66.0], ["2026-01", 64.0], ["2026-02", 66.0], ["2026-03", 69.0], ["2026-04", 64.0], ["2026-05", 69.0], ["2026-06", 61.0], ["2026-07", 68.0], ["2026-08", 64.0], ["2026-09", 62.5]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
+      inyeccion: { datos: [["2025-06", 88.0], ["2025-07", 89.0], ["2025-08", 89.0], ["2025-09", 89.0], ["2025-10", 92.0], ["2025-11", 90.0], ["2025-12", 91.0], ["2026-01", 86.0], ["2026-02", 84.0], ["2026-03", 89.0], ["2026-04", 93.0], ["2026-05", 90.0], ["2026-06", 91.0], ["2026-07", 90.0], ["2026-08", 90.0], ["2026-09", 87.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
+      scrap: { datos: [["2025-06", 7.0], ["2025-07", 13.0], ["2025-08", 9.0], ["2025-09", 17.0], ["2025-10", 8.0], ["2025-11", 10.0], ["2025-12", 16.0], ["2026-01", 9.0], ["2026-02", 6.0], ["2026-03", 8.0], ["2026-04", 2.0], ["2026-05", 6.0], ["2026-06", 5.0], ["2026-07", 6.0], ["2026-08", 7.0], ["2026-09", 4.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
       recuento: { meta: 98, datos: [['2025-09', 99.24], ['2025-10', 98.00], ['2025-11', 99.12], ['2025-12', 98.15], ['2026-01', 96.63], ['2026-02', 100], ['2026-03', 95.61], ['2026-04', 99.17], ['2026-05', 100], ['2026-06', 100], ['2026-07', 98.81], ['2026-08', 99.17], ['2026-09', 98.68]].map(([mes, valor]) => ({ mes, valor, nota: '' })) }
     };
     let inoferKpis = {};
@@ -11322,7 +11326,10 @@ ${lines}${trendNote}`;
       const def = inoferKpiDef(k), o = inoferKpiData(k), datos = (opts && opts.datos) || inoferKpiFiltrados(k);
       const vals = datos.map(x => Number(x.valor));
       const meta = Number(o.meta);
-      let lo = Math.min(...vals, meta), hi = Math.max(...vals, meta);
+      // la meta entra en la escala solo si está cerca de los datos (si no, aplasta la curva)
+      const dMin = Math.min(...vals), dMax = Math.max(...vals), rango = Math.max(dMax - dMin, 2);
+      const metaVisible = isFinite(meta) && meta >= dMin - rango && meta <= dMax + rango;
+      let lo = metaVisible ? Math.min(dMin, meta) : dMin, hi = metaVisible ? Math.max(dMax, meta) : dMax;
       if (!isFinite(lo)) { lo = 0; hi = 100; }
       const margen = Math.max(1, (hi - lo) * 0.15);
       lo = Math.max(def.min, Math.floor(lo - margen)); hi = Math.min(def.max, Math.ceil(hi + margen));
@@ -11335,7 +11342,7 @@ ${lines}${trendNote}`;
           labels: datos.map(x => inoferMesTxt(x.mes)),
           datasets: [
             { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false },
-            { label: 'Meta ' + inoferPct(meta), data: datos.map(() => meta), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false }
+            { label: 'Meta ' + inoferPct(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false }
           ]
         },
         options: {
@@ -11351,7 +11358,7 @@ ${lines}${trendNote}`;
             y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 }, callback: v => inoferPct(v) } }
           }
         },
-        plugins: [inoferKpiEtiquetas, { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
+        plugins: [...(opts && opts.sinEtiquetas ? [] : [inoferKpiEtiquetas]), { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
       });
       canvas.__chart = chart;
       return chart;
@@ -11428,7 +11435,7 @@ ${lines}${trendNote}`;
           ${inoferKpiTarjetaStats(d.key)}
         </div>`).join('')}</div>`;
       body.querySelectorAll('[data-kpi-ir]').forEach(b => b.addEventListener('click', () => { inoferKpiActual = b.dataset.kpiIr; inoferRenderKpi(); }));
-      INOFER_KPI_DEF.forEach(d => { const c = document.getElementById('kpiMini_' + d.key); if (c) inoferKpiCharts['m' + d.key] = inoferKpiDibujar(c, d.key); });
+      INOFER_KPI_DEF.forEach(d => { const c = document.getElementById('kpiMini_' + d.key); if (c) inoferKpiCharts['m' + d.key] = inoferKpiDibujar(c, d.key, { sinEtiquetas: inoferKpiFiltrados(d.key).length > 8 }); });
     }
 
     function inoferRenderKpiDetalle(body, k) {
@@ -11639,6 +11646,16 @@ ${lines}${trendNote}`;
             const a = document.activeElement;
             const v = document.getElementById('viewKpi');
             if (v && !v.classList.contains('hidden') && !(a && a.classList && a.classList.contains('kpi-edit'))) inoferRenderKpi();
+          }
+          let cargaHecha = false; try { cargaHecha = localStorage.getItem('tablero_inyectoras_kpis_carga_v2') === '1'; } catch (e) { }
+          if (!cargaHecha && inoferSession && inoferCan('indicadores', 'edit')) {
+            let agregados = 0;
+            Object.keys(INOFER_KPI_INICIAL).forEach(k => {
+              const o = inoferKpiData(k);
+              INOFER_KPI_INICIAL[k].datos.forEach(x => { if (!o.datos.some(y => y.mes === x.mes)) { o.datos.push({ ...x }); agregados++; } });
+            });
+            try { localStorage.setItem('tablero_inyectoras_kpis_carga_v2', '1'); } catch (e) { }
+            if (agregados || (mods && !mods.kpis)) { inoferGuardarKpis(); const v = document.getElementById('viewKpi'); if (v && !v.classList.contains('hidden')) inoferRenderKpi(); }
           } else if (mods && !mods.kpis && inoferSession && inoferCan('indicadores', 'edit') && Object.keys(inoferKpis).length) {
             // la nube todavía no tiene indicadores: se suben los de este equipo (incluye los datos iniciales)
             inoferGuardarKpis();
