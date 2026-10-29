@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.44" />
+  <meta name="inofer-version" content="2026.10.29.45" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -15135,6 +15135,162 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         };
       }
       setTimeout(boton, 2000);
+    })();
+  </script>
+  <script>
+    // ===== Desglose detallado: clic en una fila para ver motivos, días, máquinas, turnos y registros =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const h2 = v => (Math.round((Number(v) || 0) * 100) / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' h';
+      const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+      const fechaTxt = iso => { try { const d = new Date(iso + 'T00:00:00'); return DIAS[d.getDay()] + ' ' + String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0'); } catch (e) { return iso; } };
+      const catDeCodigo = cod => { const n = parseInt(String(cod || ''), 10); return (window.INOFER_CODIGO_CATEGORIA || {})[n] || 'otros'; };
+      const st = { cat: null, filtro: null };
+
+      function paradasDe(r) {
+        if (r.fromOrder) {
+          const o = (productionOrders || []).find(x => x.id === r.ordId);
+          const l = o && (o.logs || []).find(x => x.id === r.logId);
+          if (!l) return [];
+          return Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
+        }
+        return Array.isArray(r.paradas) ? r.paradas : [];
+      }
+      const origen = r => r.fromOrder ? `OP ${r.ordNumber || ''} · ${r.part || ''}` : 'Parte manual';
+
+      // ---------- cálculo ----------
+      function calcular(cat) {
+        const regs = getFilteredRecords();
+        const out = { regs: [], motivos: {}, dias: {}, maquinas: {}, turnos: {}, total: 0, disp: 0 };
+        regs.forEach(r => {
+          const disp = Number(r.available) || 0;
+          out.disp += disp;
+          if (cat === 'util') {
+            let paradas = 0; (CATEGORIES || []).forEach(c => { paradas += Number(r[c.key]) || 0; });
+            const prod = Math.max(0, disp - paradas);
+            const add = (obj, k) => { obj[k] = obj[k] || { h: 0, d: 0 }; obj[k].h += prod; obj[k].d += disp; };
+            add(out.dias, r.date); add(out.maquinas, r.machine || '—'); add(out.turnos, r.shift || '—');
+            out.total += prod;
+            if (disp) out.regs.push({ r, h: prod, det: `${h2(prod)} de ${h2(disp)} (${disp ? (prod / disp * 100).toFixed(1) : 0}%)` });
+            return;
+          }
+          const hs = Number(r[cat]) || 0;
+          if (!hs) return;
+          out.total += hs;
+          const add = (obj, k, v) => { obj[k] = obj[k] || { h: 0, n: 0 }; obj[k].h += v; obj[k].n++; };
+          add(out.dias, r.date, hs); add(out.maquinas, r.machine || '—', hs); add(out.turnos, r.shift || '—', hs);
+          const ps = paradasDe(r).filter(p => catDeCodigo(p.codigo) === cat);
+          let explicado = 0;
+          ps.forEach(p => { const v = (Number(p.min) || 0) / 60; explicado += v; add(out.motivos, p.codigo, v); });
+          const resto = hs - explicado;
+          if (resto > 0.009) add(out.motivos, 'Sin código (cargado por categoría)', resto);
+          out.regs.push({ r, h: hs, motivos: ps.map(p => p.codigo.split('-')[0] + ' ' + String(p.codigo).split('-').slice(1).join('-')).join(', ') || (resto > 0.009 ? 'sin código' : '') });
+        });
+        return out;
+      }
+
+      // ---------- vista ----------
+      function barras(obj, tipo, color, util, orden) {
+        let ks = Object.keys(obj);
+        if (orden === 'fecha') ks.sort(); else ks.sort((a, b) => (util ? (obj[b].h / (obj[b].d || 1)) - (obj[a].h / (obj[a].d || 1)) : obj[b].h - obj[a].h));
+        if (!ks.length) return '<p class="text-xs text-slate-500">Sin datos.</p>';
+        const max = Math.max(...ks.map(k => util ? 100 : obj[k].h), 0.01);
+        return ks.map(k => {
+          const v = util ? (obj[k].d ? obj[k].h / obj[k].d * 100 : 0) : obj[k].h;
+          const sel = st.filtro && st.filtro.tipo === tipo && st.filtro.valor === k;
+          const nom = tipo === 'dia' ? fechaTxt(k) : k;
+          return `<button type="button" data-filtro-tipo="${tipo}" data-filtro-valor="${esc(k)}" class="group flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-800/70 ${sel ? 'bg-cyan-500/10 ring-1 ring-cyan-400' : ''}">
+            <span class="w-44 shrink-0 truncate text-[11px] text-slate-300" title="${esc(k)}">${esc(nom)}</span>
+            <span class="h-3 flex-1 overflow-hidden rounded-full bg-slate-800"><span class="block h-full rounded-full" style="width:${Math.max(2, v / max * 100)}%;background:${color}"></span></span>
+            <span class="w-24 shrink-0 text-right text-[11px] font-bold text-white">${util ? v.toFixed(1) + '%' : h2(v)}${!util && obj[k].n ? `<span class="font-normal text-slate-500"> ·${obj[k].n}</span>` : ''}</span></button>`;
+        }).join('');
+      }
+      function abrir(cat) {
+        st.cat = cat; st.filtro = null;
+        let m = $('desgloseModal');
+        if (!m) {
+          m = document.createElement('div'); m.id = 'desgloseModal';
+          m.className = 'fixed inset-0 z-[9970] hidden items-start justify-center overflow-y-auto bg-slate-950/80 p-3 sm:p-6';
+          m.style.zIndex = '9970';
+          m.innerHTML = '<div class="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"><div id="desgloseCuerpo"></div></div>';
+          document.body.appendChild(m);
+          m.addEventListener('click', e => {
+            if (e.target === m || e.target.closest('[data-cerrar]')) { m.classList.add('hidden'); m.classList.remove('flex'); return; }
+            const b = e.target.closest('[data-filtro-tipo]');
+            if (b) { const f = { tipo: b.dataset.filtroTipo, valor: b.dataset.filtroValor }; st.filtro = st.filtro && st.filtro.tipo === f.tipo && st.filtro.valor === f.valor ? null : f; render(); return; }
+            if (e.target.closest('[data-quitar-filtro]')) { st.filtro = null; render(); }
+            const ed = e.target.closest('[data-editar-op]'); if (ed && typeof inoferEditarTurno === 'function') { m.classList.add('hidden'); m.classList.remove('flex'); inoferEditarTurno(ed.dataset.ord, ed.dataset.log); }
+            const er = e.target.closest('[data-editar-parte]'); if (er && typeof openEditRecordModal === 'function') { m.classList.add('hidden'); m.classList.remove('flex'); openEditRecordModal(er.dataset.editarParte); }
+          });
+        }
+        render();
+        m.classList.remove('hidden'); m.classList.add('flex');
+      }
+      function render() {
+        const cat = st.cat, util = cat === 'util';
+        const c = util ? { label: 'Utilización efectiva (horas en producción)', color: '#34d399' } : (CATEGORIES.find(x => x.key === cat) || { label: cat, color: '#94a3b8' });
+        const d = calcular(cat);
+        const f = st.filtro;
+        const pasa = x => {
+          if (!f) return true;
+          if (f.tipo === 'dia') return x.r.date === f.valor;
+          if (f.tipo === 'maq') return (x.r.machine || '—') === f.valor;
+          if (f.tipo === 'turno') return (x.r.shift || '—') === f.valor;
+          if (f.tipo === 'motivo') return f.valor.startsWith('Sin código') ? /sin código/.test(x.motivos || '') : (x.motivos || '').includes(f.valor.split('-')[0] + ' ');
+          return true;
+        };
+        const lista = d.regs.filter(pasa).sort((a, b) => String(b.r.date).localeCompare(String(a.r.date)));
+        const filtrosTxt = { dia: 'Día', maq: 'Máquina', turno: 'Turno', motivo: 'Motivo' };
+        const desde = ($('filterDateFrom') || {}).value, hasta = ($('filterDateTo') || {}).value, mq = ($('filterMachine') || {}).value;
+        const contexto = [mq && mq !== 'ALL' ? mq : 'Todas las máquinas', desde || hasta ? `${desde || '…'} a ${hasta || '…'}` : 'todo el período'].join(' · ');
+        $('desgloseCuerpo').innerHTML = `<div class="flex items-start justify-between gap-3 border-b border-slate-800 px-5 py-3">
+            <div><div class="flex items-center gap-2 text-base font-extrabold text-white"><span class="h-3 w-3 rounded-full" style="background:${c.color}"></span>${esc(c.label)}</div>
+              <div class="text-[11px] text-slate-400">${esc(contexto)} · tocá una barra para filtrar los registros</div></div>
+            <button type="button" data-cerrar class="rounded-lg px-2 py-1 text-xl text-slate-400 hover:bg-slate-800 hover:text-white">×</button></div>
+          <div class="grid grid-cols-2 gap-3 px-5 py-3 sm:grid-cols-4">
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="text-[11px] text-slate-400">${util ? 'Horas productivas' : 'Horas de parada'}</div><div class="text-xl font-black text-white">${h2(d.total)}</div></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="text-[11px] text-slate-400">Sobre horas disponibles</div><div class="text-xl font-black text-white">${d.disp ? (d.total / d.disp * 100).toFixed(1) : 0}%</div></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="text-[11px] text-slate-400">${util ? 'Registros' : 'Registros con esta parada'}</div><div class="text-xl font-black text-white">${d.regs.length}</div></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><div class="text-[11px] text-slate-400">Días con ${util ? 'producción' : 'parada'}</div><div class="text-xl font-black text-white">${Object.keys(d.dias).length}</div></div>
+          </div>
+          <div class="grid gap-4 px-5 pb-3 lg:grid-cols-2">
+            ${util ? '' : `<div><div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">Motivos (código de parada)</div>${barras(Object.fromEntries(Object.entries(d.motivos)), 'motivo', c.color)}</div>`}
+            <div><div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">Por día</div><div class="max-h-64 overflow-y-auto pr-1">${barras(d.dias, 'dia', c.color, util, 'fecha')}</div></div>
+            <div><div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">Por máquina</div>${barras(d.maquinas, 'maq', c.color, util)}</div>
+            <div><div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">Por turno</div>${barras(d.turnos, 'turno', c.color, util)}</div>
+          </div>
+          <div class="border-t border-slate-800 px-5 py-3">
+            <div class="mb-2 flex items-center justify-between"><div class="text-xs font-bold uppercase tracking-wider text-slate-400">Registros (${lista.length})</div>
+              ${f ? `<button type="button" data-quitar-filtro class="rounded-full border border-cyan-400/60 px-2.5 py-0.5 text-[11px] text-cyan-200">${filtrosTxt[f.tipo]}: ${esc(f.tipo === 'dia' ? fechaTxt(f.valor) : f.valor)} ✕</button>` : ''}</div>
+            <div class="max-h-80 overflow-auto"><table class="w-full text-left text-xs"><thead><tr class="text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">Fecha</th><th class="py-1 pr-2">Máquina</th><th class="py-1 pr-2">Turno</th><th class="py-1 pr-2 text-right">${util ? 'Producción' : 'Horas'}</th>${util ? '' : '<th class="py-1 pr-2">Motivo</th>'}<th class="py-1 pr-2">Origen</th><th class="py-1 pr-2">Cargó</th><th></th></tr></thead>
+              <tbody>${lista.slice(0, 300).map(x => `<tr class="border-t border-slate-800/70">
+                <td class="py-1.5 pr-2 whitespace-nowrap text-slate-300">${esc(fechaTxt(x.r.date))}</td><td class="py-1.5 pr-2 text-slate-300">${esc(x.r.machine)}</td><td class="py-1.5 pr-2 text-slate-400">${esc(x.r.shift)}</td>
+                <td class="py-1.5 pr-2 text-right font-bold text-white">${util ? esc(x.det) : h2(x.h)}</td>${util ? '' : `<td class="py-1.5 pr-2 text-slate-300">${esc(x.motivos || '—')}</td>`}
+                <td class="py-1.5 pr-2 text-slate-400">${esc(origen(x.r))}</td><td class="py-1.5 pr-2 text-[11px] text-slate-500">${esc(x.r.cargadoPor || '')}</td>
+                <td class="py-1.5">${x.r.fromOrder ? `<button type="button" data-editar-op data-ord="${esc(x.r.ordId)}" data-log="${esc(x.r.logId)}" class="text-[11px] text-cyan-300 hover:underline">ver</button>` : `<button type="button" data-editar-parte="${esc(x.r.id)}" class="text-[11px] text-cyan-300 hover:underline">ver</button>`}</td></tr>`).join('') || `<tr><td colspan="8" class="py-4 text-center text-slate-500">Sin registros.</td></tr>`}</tbody></table></div>
+          </div>`;
+      }
+
+      // ---------- filas clicables ----------
+      if (typeof window.renderBreakdownTable === 'function') {
+        const rb = window.renderBreakdownTable;
+        window.renderBreakdownTable = function () {
+          const r = rb.apply(this, arguments);
+          try {
+            const filas = document.querySelectorAll('#summaryBreakdownTableBody > tr');
+            filas.forEach((tr, i) => {
+              const key = i === 0 ? 'util' : (CATEGORIES[i - 1] || {}).key; if (!key) return;
+              tr.dataset.desglose = key; tr.style.cursor = 'pointer'; tr.title = 'Ver el detalle: motivos, días, máquinas y turnos';
+              const td = tr.firstElementChild; if (td && !td.querySelector('.desg-lupa')) td.insertAdjacentHTML('beforeend', '<span class="desg-lupa ml-auto text-[11px] text-slate-500">🔍 ver detalle</span>');
+            });
+          } catch (e) { }
+          return r;
+        };
+      }
+      document.addEventListener('click', e => { const tr = e.target.closest && e.target.closest('#summaryBreakdownTableBody > tr[data-desglose]'); if (tr) abrir(tr.dataset.desglose); });
+      window.inoferDesglose = abrir;
+      setTimeout(() => { try { refreshAll(); } catch (e) { } }, 1200);
     })();
   </script>
   <script>
