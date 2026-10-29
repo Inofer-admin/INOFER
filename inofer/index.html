@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.42" />
+  <meta name="inofer-version" content="2026.10.29.43" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -792,7 +792,7 @@
                   🎯 <strong class="text-rose-300">Tips para Reducir Scrap y Arranque en Baja</strong>
                   <span class="block text-[11px] text-slate-400">Recomendaciones sobre temperatura de molde, rechupes, poros y rebabas</span>
                 </button>
-                <button type="button" data-ai-prompt="Analizá el estado de herramental (dorso de las órdenes: refrigeración, fechador, cáncamo, subida/bajada) y los 29 códigos de parada INOFER." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                <button type="button" data-ai-prompt="Analizá el estado de herramental (dorso de las órdenes: refrigeración, fechador, cáncamo, subida/bajada) y los 31 códigos de parada INOFER." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
                   🛠️ <strong class="text-cyan-300">Auditoría de Herramental y Códigos de Parada</strong>
                   <span class="block text-[11px] text-slate-400">Checklist preventivo de mangueras, puentes, correderas y moldes</span>
                 </button>
@@ -1166,7 +1166,7 @@
                 </div>
                 <div class="col-span-2 sm:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
                   <div>
-                    <label class="block text-[10px] text-slate-400 mb-0.5">Código de Parada INOFER (1 a 29)</label>
+                    <label class="block text-[10px] text-slate-400 mb-0.5">Código de Parada INOFER (1 a 31)</label>
                     <select id="logStopCode" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white">
                       <option value="">Sin parada registrada</option>
                     </select>
@@ -1308,7 +1308,7 @@
 
           <!-- Reference Table of the 28 Official INOFER Stoppage Codes -->
           <div class="mt-4 border-t border-slate-800 pt-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Referencia Oficial: 29 Códigos de Paradas de Inyectoras INOFER (Rev. 0 - Fecha 8/23)</h4>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Referencia Oficial: 31 Códigos de Paradas de Inyectoras INOFER (Rev. 0 - Fecha 8/23)</h4>
             <div id="inofer28CodesGrid" class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-4 text-[11px] text-slate-300">
               <!-- Populated by JS -->
             </div>
@@ -4608,7 +4608,7 @@ ${lines}${trendNote}`;
         'Relevo al pie de máquina sin detener el ciclo en los cambios de turno.'
       ],
       otros: [
-        'Desglosar "Otros" usando los 29 códigos de parada: lo que no se mide no se puede mejorar.',
+        'Desglosar "Otros" usando los 31 códigos de parada: lo que no se mide no se puede mejorar.',
         'Revisar semanalmente los partes con "Otros" alto y reclasificarlos.'
       ]
     };
@@ -5018,7 +5018,9 @@ ${lines}${trendNote}`;
       '26-Corte de fuerza motriz',
       '27-Falta de gas',
       '28-Desgasificado',
-      '29-Carga de nitrógeno'
+      '29-Carga de nitrógeno',
+      '30-Falta de material',
+      '31-Limpieza'
     ];
 
     const INITIAL_ORDERS = [
@@ -13978,7 +13980,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
       // Código de parada INOFER (1 a 28) -> categoría del tablero
       const COD_CAT = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
         16: 'parada_maquina', 2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
-        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
       window.INOFER_CODIGO_CATEGORIA = COD_CAT;
       const horas = (a, b) => (typeof calcHoursDiff === 'function' ? calcHoursDiff(a, b) : 0);
       function registrosDeOrdenes() {

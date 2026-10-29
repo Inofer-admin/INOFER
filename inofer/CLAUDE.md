@@ -137,3 +137,4 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - La landing (index.html raíz) ofrece INOFER-Setup.exe; INOFER-PC.zip queda por compatibilidad.
 - Presentación: editor tipo diapositivas (lista + edición + vista previa 16:9 escalada, duración propia mm:ss, duplicar, ver desde acá).
 - Instalador: ya NO cierra procesos con PowerShell (dispara heurísticas de antivirus); si INOFER está abierto (javaw.exe o INOFER.jar bloqueado) pide cerrarlo con Reintentar. Sigue sin firma digital → SmartScreen avisa hasta tener reputación o firma (Azure Artifact Signing no está disponible para Argentina; opción real: certificado OV o Microsoft Store). La landing ofrece también instalar como app desde Edge/Chrome (PWA), sin avisos.
+- Códigos de parada 30 "Falta de material" (categoría falta_material) y 31 "Limpieza" (mant_preventivo). Total 31.
