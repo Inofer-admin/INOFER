@@ -675,7 +675,7 @@ function accionPapelera(u, body) {
 
 // ===================== MENSAJERÍA: chats privados, grupos y solicitudes al administrador =====================
 // Hojas: BD_Chats, BD_Mensajes, BD_Solicitudes. Cada usuario solo recibe lo suyo.
-const ACCIONES_MSG = ['msgEstado', 'msgLeer', 'msgEnviar', 'msgCrearChat', 'msgBorrarChat', 'msgBorrarMensaje', 'msgEditarGrupo',
+const ACCIONES_MSG = ['msgAdminListar', 'msgAdminLeer', 'msgEstado', 'msgLeer', 'msgEnviar', 'msgCrearChat', 'msgBorrarChat', 'msgBorrarMensaje', 'msgEditarGrupo',
   'solListar', 'solCrear', 'solActualizar', 'solBorrar', 'solVisto'];
 
 function hojaMsg_(nombre, cab) {
@@ -717,8 +717,11 @@ function leerMensajes_(chatId) {
   return out;
 }
 function borrarFilas_(sh, filas) { filas.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); }); }
+// Permisos de mensajería por usuario (los define el administrador): chat_usar y chat_recibir (por defecto, sí)
+function chatPuedeUsar_(u) { return !!u && (u.rol === 'admin' || !(u.permisos && u.permisos.detalle && u.permisos.detalle.chat_usar === false)); }
+function chatPuedeRecibir_(u) { return !!u && (u.rol === 'admin' || (chatPuedeUsar_(u) && !(u.permisos && u.permisos.detalle && u.permisos.detalle.chat_recibir === false))); }
 function directorio_() {
-  return leerUsuarios().filter(function (x) { return x.activo; }).map(function (x) { return { usuario: x.usuario, nombre: x.nombre, rol: x.rol }; });
+  return leerUsuarios().filter(function (x) { return x.activo && chatPuedeRecibir_(x); }).map(function (x) { return { usuario: x.usuario, nombre: x.nombre, rol: x.rol }; });
 }
 function chatPublico_(c, u, msgs) {
   const mios = msgs.filter(function (m) { return m.chatId === c.id; });
@@ -760,6 +763,32 @@ function accionMensajeria(u, body) {
     const yo = u.usuario;
     const nombreYo = u.nombre || u.usuario;
     const texto = function (v, max) { return String(v == null ? '' : v).trim().slice(0, max || 2000); };
+    const esChat = body.action.indexOf('msg') === 0;
+
+    // Supervisión: el administrador puede leer todos los chats (uso laboral), sin marcarlos como leídos
+    if (body.action === 'msgAdminListar' || body.action === 'msgAdminLeer') {
+      if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
+      const nombres = {}; leerUsuarios().forEach(function (x) { nombres[x.usuario] = x.nombre || x.usuario; });
+      if (body.action === 'msgAdminListar') {
+        const msgs = leerMensajes_();
+        return { status: 'ok', nombres: nombres, chats: leerChats_().map(function (c) {
+          const ms = msgs.filter(function (m) { return m.chatId === c.id; }); const ult = ms[ms.length - 1];
+          return { id: c.id, tipo: c.tipo, nombre: c.nombre, miembros: c.miembros, creadoPor: c.creadoPor, ultimoAt: c.ultimoAt, cantidad: ms.length,
+            ultimo: ult ? { texto: ult.texto.slice(0, 120), nombre: ult.nombre, fecha: ult.fecha } : null };
+        }).sort(function (a, b) { return String(b.ultimoAt).localeCompare(String(a.ultimoAt)); }) };
+      }
+      const c = leerChats_().filter(function (x) { return x.id === String(body.chatId || ''); })[0];
+      if (!c) return { status: 'error', error: 'Chat inexistente.' };
+      return { status: 'ok', nombres: nombres, chat: { id: c.id, tipo: c.tipo, nombre: c.nombre, miembros: c.miembros, creadoPor: c.creadoPor },
+        mensajes: leerMensajes_(c.id).map(function (m) { const x = Object.assign({}, m); delete x.fila; return x; }).slice(-500) };
+    }
+    if (esChat && !chatPuedeUsar_(u)) {
+      if (body.action === 'msgEstado') {
+        const sols0 = leerSolicitudes_();
+        return { status: 'ok', chats: [], directorio: [], chatBloqueado: true, solicitudesAviso: sols0.filter(function (s) { return s.autor === yo && !s.vistoAutor; }).length, solPendientes: 0 };
+      }
+      return { status: 'error', error: 'El administrador no te habilitó el chat.' };
+    }
 
     if (body.action === 'msgEstado') {
       const chats = leerChats_().filter(function (c) { return c.miembros.indexOf(yo) !== -1; });
@@ -775,6 +804,7 @@ function accionMensajeria(u, body) {
     if (body.action === 'msgCrearChat') {
       const dir = directorio_().map(function (x) { return x.usuario; });
       let miembros = (Array.isArray(body.miembros) ? body.miembros : []).map(function (x) { return String(x).toLowerCase(); }).filter(function (x) { return dir.indexOf(x) !== -1 && x !== yo; });
+      if (!miembros.length && (body.miembros || []).length) return { status: 'error', error: 'Esa persona no puede recibir mensajes.' };
       miembros = miembros.filter(function (x, i) { return miembros.indexOf(x) === i; });
       if (!miembros.length) return { status: 'error', error: 'Elegí al menos una persona.' };
       const tipo = body.tipo === 'grupo' ? 'grupo' : 'privado';
@@ -796,6 +826,11 @@ function accionMensajeria(u, body) {
       const c = chatDe(body.chatId);
       if (!c || c.miembros.indexOf(yo) === -1) return { status: 'error', error: 'Chat inexistente.' };
       if (body.action === 'msgEnviar') {
+        if (c.tipo === 'privado') {
+          const otro = c.miembros.filter(function (x) { return x !== yo; })[0];
+          const uo = leerUsuarios().filter(function (x) { return x.usuario === otro; })[0];
+          if (!uo || !uo.activo || !chatPuedeRecibir_(uo)) return { status: 'error', error: 'A esta persona ya no se le pueden mandar mensajes.' };
+        }
         const t = texto(body.texto, 2000);
         if (!t) return { status: 'error', error: 'Mensaje vacío.' };
         hojaMensajes_().appendRow([idNuevo_('msg'), c.id, yo, nombreYo, t, ahora]);
@@ -812,14 +847,14 @@ function accionMensajeria(u, body) {
       if (!m) return { status: 'ok' };
       const c = chatDe(m.chatId);
       if (m.autor !== yo && u.rol !== 'admin') return { status: 'error', error: 'Solo podés borrar tus mensajes.' };
-      if (!c || c.miembros.indexOf(yo) === -1) return { status: 'error', error: 'Chat inexistente.' };
+      if (!c || (c.miembros.indexOf(yo) === -1 && u.rol !== 'admin')) return { status: 'error', error: 'Chat inexistente.' };
       hojaMensajes_().deleteRow(m.fila);
       return { status: 'ok' };
     }
 
     if (body.action === 'msgBorrarChat') {
       const c = chatDe(body.chatId);
-      if (!c || c.miembros.indexOf(yo) === -1) return { status: 'ok' };
+      if (!c || (c.miembros.indexOf(yo) === -1 && u.rol !== 'admin')) return { status: 'ok' };
       const borraTodo = c.tipo === 'privado' || c.creadoPor === yo || u.rol === 'admin';
       if (!borraTodo || body.salir === true) {
         c.miembros = c.miembros.filter(function (x) { return x !== yo; });

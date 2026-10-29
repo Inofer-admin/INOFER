@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.38" />
+  <meta name="inofer-version" content="2026.10.29.39" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14181,7 +14181,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const st = { abierto: false, pestana: 'chats', chats: [], dir: [], chatId: '', mensajes: [], solicitudes: [], solAviso: 0, solPend: 0, vista: 'lista', ultimoNoLeido: 0, cargando: false };
+      const st = { abierto: false, pestana: 'chats', chats: [], dir: [], chatId: '', mensajes: [], solicitudes: [], solAviso: 0, solPend: 0, vista: 'lista', ultimoNoLeido: 0, cargando: false, bloqueado: false, sup: { chats: [], nombres: {}, chatId: '', mensajes: [] } };
+      const AVISO_LABORAL = '<div class="border-b border-slate-800 bg-slate-950/60 px-4 py-2 text-[11px] text-slate-400">💼 Los chats de INOFER son de uso laboral. El administrador puede revisarlos.</div>';
       const TIPOS_SOL = ['Aumentar la facturación de la semana', 'Cambio en el Gantt / programación', 'Material o insumos', 'Mantenimiento / herramental', 'Personal / turnos', 'Otro'];
       const ESTADOS = { 'pendiente': ['⏳ Pendiente', 'bg-amber-500/20 text-amber-300'], 'en curso': ['🔧 En curso', 'bg-sky-500/20 text-sky-300'], 'resuelta': ['✅ Resuelta', 'bg-emerald-500/20 text-emerald-300'], 'rechazada': ['✖ Rechazada', 'bg-rose-500/20 text-rose-300'] };
       const yo = () => (typeof inoferSession !== 'undefined' && inoferSession ? inoferSession.usuario : '');
@@ -14234,6 +14235,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
               <div class="flex gap-1">
                 <button type="button" id="msgTabChats" class="msg-tab rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="chats">💬 Chats</button>
                 <button type="button" id="msgTabSol" class="msg-tab rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="solicitudes">📨 Solicitudes</button>
+                <button type="button" id="msgTabSup" class="msg-tab hidden rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="supervision">🛡️ Supervisión</button>
               </div>
               <button type="button" data-cerrar="1" class="rounded-lg px-2 py-1 text-xl leading-none text-slate-400 hover:bg-slate-800 hover:text-white">×</button>
             </div>
@@ -14251,7 +14253,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         else st.vista = 'lista';
         $('inoferMsgPanel').classList.remove('hidden');
         render();
-        if (st.pestana === 'solicitudes') cargarSolicitudes(true); else if (st.chatId) leerChat(); else refrescar();
+        if (st.pestana === 'solicitudes') cargarSolicitudes(true); else if (st.pestana === 'supervision') cargarSupervision(); else if (st.chatId) leerChat(); else refrescar();
       }
       function cerrar() { st.abierto = false; const p = $('inoferMsgPanel'); if (p) p.classList.add('hidden'); }
 
@@ -14259,11 +14261,15 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const c = $('msgCuerpo'); if (!c) return;
         document.querySelectorAll('#inoferMsgPanel .msg-tab').forEach(b => { b.className = 'msg-tab rounded-lg px-3 py-1.5 text-xs font-bold ' + (b.dataset.tab === st.pestana ? 'bg-violet-500 text-white' : 'text-slate-300 hover:bg-slate-800'); });
         badges();
+        const ts = $('msgTabSup'); if (ts) ts.classList.toggle('hidden', !esAdmin());
+        const tc = $('msgTabChats'); if (tc) tc.classList.toggle('hidden', st.bloqueado);
+        if (st.bloqueado && st.pestana === 'chats') st.pestana = 'solicitudes';
         if (!enNube()) { c.innerHTML = '<p class="p-6 text-center text-sm text-slate-400">Los mensajes y solicitudes necesitan la conexión a la nube.</p>'; return; }
         if (st.pestana === 'solicitudes') return renderSolicitudes(c);
+        if (st.pestana === 'supervision') return renderSupervision(c);
         if (st.vista === 'chat') return renderChat(c);
         if (st.vista === 'nuevo' || st.vista === 'grupo' || st.vista === 'editarGrupo') return renderNuevo(c);
-        c.innerHTML = `<div class="flex gap-2 border-b border-slate-800 p-3">
+        c.innerHTML = AVISO_LABORAL + `<div class="flex gap-2 border-b border-slate-800 p-3">
             <button type="button" data-acc="nuevo" class="flex-1 rounded-lg bg-violet-500 px-3 py-2 text-xs font-bold text-white hover:bg-violet-400">+ Chat privado</button>
             <button type="button" data-acc="grupo" class="flex-1 rounded-lg border border-violet-500/50 px-3 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/10">+ Grupo</button>
           </div>
@@ -14314,6 +14320,32 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           </form>`;
         const l = $('msgLista'); if (l) l.scrollTop = l.scrollHeight;
       }
+      function renderSupervision(c) {
+        const S = st.sup; const nom = u => S.nombres[u] || u;
+        if (S.chatId) {
+          const ch = S.chats.find(x => x.id === S.chatId) || {};
+          c.innerHTML = `<div class="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+              <button type="button" data-acc="supVolver" class="text-xs font-bold text-slate-400 hover:text-white">←</button>
+              <div class="min-w-0 flex-1"><div class="truncate text-sm font-black text-white">${ch.tipo === 'grupo' ? '👥 ' + esc(ch.nombre || 'Grupo') : '👤 ' + (ch.miembros || []).map(nom).map(esc).join(' ↔ ')}</div>
+                <div class="text-[11px] text-amber-300">Solo lectura · supervisión del administrador</div></div>
+              <button type="button" data-acc="supBorrar" class="rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold text-rose-300">🗑️ Borrar chat</button></div>
+            <div class="flex-1 space-y-1.5 overflow-y-auto p-3">${S.mensajes.length ? S.mensajes.map(m => `<div class="rounded-xl bg-slate-800 px-3 py-1.5"><div class="flex justify-between gap-2 text-[11px]"><b class="text-violet-300">${esc(m.nombre || nom(m.autor))}</b><span class="text-slate-500">${esc(fecha(m.fecha))} <button type="button" data-sup-borrar-msg="${esc(m.id)}" class="ml-1 opacity-60 hover:opacity-100">🗑️</button></span></div><div class="whitespace-pre-wrap break-words text-sm text-slate-100">${esc(m.texto)}</div></div>`).join('') : '<p class="py-6 text-center text-xs text-slate-500">Sin mensajes.</p>'}</div>`;
+          return;
+        }
+        c.innerHTML = `<div class="border-b border-slate-800 px-4 py-2 text-[11px] text-slate-400">Todos los chats entre usuarios (solo lectura). No se marcan como leídos.</div>
+          <div class="flex-1 overflow-y-auto">${S.chats.length ? S.chats.map(ch => `<button type="button" data-sup-chat="${esc(ch.id)}" class="block w-full border-b border-slate-800/70 px-4 py-3 text-left hover:bg-slate-800/60">
+            <div class="flex justify-between gap-2"><span class="truncate text-sm font-bold text-white">${ch.tipo === 'grupo' ? '👥 ' + esc(ch.nombre || 'Grupo') : '👤 ' + ch.miembros.map(nom).map(esc).join(' ↔ ')}</span><span class="shrink-0 text-[10px] text-slate-500">${ch.ultimo ? esc(fecha(ch.ultimo.fecha)) : ''}</span></div>
+            <div class="truncate text-xs text-slate-400">${ch.ultimo ? esc(ch.ultimo.nombre) + ': ' + esc(ch.ultimo.texto) : '<i>Sin mensajes</i>'} · ${ch.cantidad} mensajes</div></button>`).join('') : '<p class="p-6 text-center text-sm text-slate-400">No hay chats.</p>'}</div>`;
+      }
+      async function cargarSupervision() {
+        try { const d = await api({ action: 'msgAdminListar' }); st.sup.chats = d.chats || []; st.sup.nombres = d.nombres || {}; } catch (e) { showToast(e.message); }
+        if (st.abierto && st.pestana === 'supervision') render();
+      }
+      async function leerSupervision(id) {
+        try { const d = await api({ action: 'msgAdminLeer', chatId: id }); st.sup.chatId = id; st.sup.mensajes = d.mensajes || []; st.sup.nombres = d.nombres || st.sup.nombres; } catch (e) { showToast(e.message); }
+        render();
+      }
+
       function renderSolicitudes(c) {
         const adm = esAdmin();
         const form = st.vista === 'nuevaSol';
@@ -14360,7 +14392,11 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const t = e.target.closest('button, [data-cerrar]');
         if (!t) return;
         if (t.dataset.cerrar) return cerrar();
-        if (t.dataset.tab) { st.pestana = t.dataset.tab; st.vista = st.pestana === 'chats' && st.chatId ? 'chat' : 'lista'; render(); if (st.pestana === 'solicitudes') cargarSolicitudes(true); return; }
+        if (t.dataset.tab) { st.pestana = t.dataset.tab; st.vista = st.pestana === 'chats' && st.chatId ? 'chat' : 'lista'; render(); if (st.pestana === 'solicitudes') cargarSolicitudes(true); if (st.pestana === 'supervision') { st.sup.chatId = ''; cargarSupervision(); } return; }
+        if (t.dataset.supChat) { await leerSupervision(t.dataset.supChat); return; }
+        if (t.dataset.acc === 'supVolver') { st.sup.chatId = ''; render(); cargarSupervision(); return; }
+        if (t.dataset.acc === 'supBorrar') { if (!confirm('¿Borrar este chat y todos sus mensajes? No se puede deshacer.')) return; try { await api({ action: 'msgBorrarChat', chatId: st.sup.chatId }); st.sup.chatId = ''; showToast('Chat borrado'); cargarSupervision(); refrescar(true); } catch (e) { showToast(e.message); } return; }
+        if (t.dataset.supBorrarMsg) { if (!confirm('¿Borrar este mensaje?')) return; try { await api({ action: 'msgBorrarMensaje', id: t.dataset.supBorrarMsg }); await leerSupervision(st.sup.chatId); } catch (e) { showToast(e.message); } return; }
         const acc = t.dataset.acc;
         try {
           if (acc === 'nuevo' || acc === 'grupo') { st.vista = acc; render(); return; }
@@ -14446,7 +14482,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         try {
           const d = await api({ action: 'msgEstado' });
           const antes = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
-          st.chats = d.chats || []; st.dir = d.directorio || []; st.solAviso = d.solicitudesAviso || 0; st.solPend = d.solPendientes || 0;
+          st.chats = d.chats || []; st.dir = d.directorio || []; st.solAviso = d.solicitudesAviso || 0; st.solPend = d.solPendientes || 0; st.bloqueado = !!d.chatBloqueado;
+          const mb = $('inoferMsgBtn'); if (mb) mb.classList.toggle('hidden', st.bloqueado);
           if (st.abierto && st.chatId) { const ch = st.chats.find(x => x.id === st.chatId); if (ch) ch.noLeidos = 0; }
           const ahora = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
           if (ahora > antes && antes >= 0 && st.ultimoNoLeido !== null && !silencioso && !(st.abierto && st.pestana === 'chats')) showToast('💬 Tenés mensajes nuevos');
@@ -14473,6 +14510,40 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
       }
       const espera = setInterval(() => { try { iniciar(); } catch (e) { } if ($('inoferMsgBtn') && t1) clearInterval(espera); }, 2000);
       window.inoferMensajes = { abrir, refrescar, estado: st };
+
+      // ---------- permisos de chat por usuario (Usuarios y permisos) ----------
+      if (typeof window.inoferNormPerms === 'function') {
+        const np = window.inoferNormPerms;
+        window.inoferNormPerms = function (rol, p) {
+          const out = np.apply(this, arguments);
+          if (p && p.detalle) ['chat_usar', 'chat_recibir'].forEach(k => { if (p.detalle[k] === false) { out.detalle = Object.assign({}, out.detalle || {}); out.detalle[k] = false; } });
+          return out;
+        };
+      }
+      function casillasChat() {
+        const act = $('inoferUfActivo'); if (!act) return;
+        if (!$('inoferUfChatBox')) {
+          act.closest('label').parentElement.insertBefore(Object.assign(document.createElement('div'), { id: 'inoferUfChatBox', className: 'rounded-lg border border-violet-500/30 bg-violet-500/5 p-2.5 space-y-1',
+            innerHTML: '<div class="text-[10px] font-bold uppercase tracking-wider text-violet-300">💬 Mensajería</div><label class="flex items-center gap-2 text-xs text-slate-300"><input id="inoferUfChatUsar" type="checkbox" class="accent-violet-500"> Puede usar el chat</label><label class="flex items-center gap-2 text-xs text-slate-300"><input id="inoferUfChatRecibir" type="checkbox" class="accent-violet-500"> Los demás le pueden mandar mensajes</label>' }), $('inoferUfPermsBox'));
+        }
+        const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+        const rol = ($('inoferUfRol') || {}).value;
+        $('inoferUfChatBox').classList.toggle('hidden', rol === 'admin');
+        $('inoferUfChatUsar').checked = det.chat_usar !== false;
+        $('inoferUfChatRecibir').checked = det.chat_usar !== false && det.chat_recibir !== false;
+        $('inoferUfChatRecibir').disabled = det.chat_usar === false;
+      }
+      document.addEventListener('change', e => {
+        if (e.target.id !== 'inoferUfChatUsar' && e.target.id !== 'inoferUfChatRecibir') return;
+        inoferFormPerms.detalle = Object.assign({}, inoferFormPerms.detalle || {});
+        const k = e.target.id === 'inoferUfChatUsar' ? 'chat_usar' : 'chat_recibir';
+        if (e.target.checked) delete inoferFormPerms.detalle[k]; else inoferFormPerms.detalle[k] = false;
+        casillasChat();
+      });
+      if (typeof window.inoferRefreshPermUi === 'function') {
+        const rp = window.inoferRefreshPermUi;
+        window.inoferRefreshPermUi = function () { const r = rp.apply(this, arguments); try { casillasChat(); } catch (e) { } return r; };
+      }
     })();
   </script>
   <script>
