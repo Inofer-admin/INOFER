@@ -375,7 +375,10 @@ function puede(u, area, nivel) {
   return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
 }
 
-const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin' };
+const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin' };
+// área 'a|b' = alcanza con tener permiso en cualquiera de las dos
+function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
 function modulosVisibles(u) {
   const all = obtenerEstadoModulos();
@@ -384,7 +387,7 @@ function modulosVisibles(u) {
     if (k === 'users') return; // nunca se envía la lista de usuarios por acá
     const area = MODULO_AREA[k];
     if (!area) return;
-    if (k === 'turnos' || k === 'presentacion' || (area === 'admin' ? (k === 'config' && puede(u, 'ia', 'view')) : puede(u, area, 'view'))) out[k] = all[k];
+    if (k === 'turnos' || k === 'presentacion' || (area === 'admin' ? ((k === 'config' && puede(u, 'ia', 'view')) || u.rol === 'admin') : puedeArea_(u, area, 'view'))) out[k] = all[k];
   });
   return out;
 }
@@ -429,6 +432,7 @@ function accionCuenta(body) {
         Utilities.sleep(800);
         return { status: 'error', error: 'Usuario o clave incorrectos.' };
       }
+      auditar_(u, 'ingresó', 'sesión', ['Inició sesión']);
       return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
     }
     if (body.action === 'logout') {
@@ -465,14 +469,16 @@ function accionCuenta(body) {
       u.rol = rol; u.activo = activo;
       u.permisos = normalizarPermisos(rol, d.permisos || {});
       if (d.clave) { u.sal = Utilities.getUuid(); u.hash = hashClave(u.sal, String(d.clave)); }
+      const permAntes = ex ? JSON.stringify(ex.permisos) : '';
       escribirUsuario(u);
+      auditar_(yo, ex ? 'modificó' : 'creó', 'usuarios', [(ex ? 'Usuario ' : 'Creó el usuario ') + usuario + ' (' + u.nombre + ', ' + (rol === 'admin' ? 'administrador' : 'usuario') + (activo ? '' : ', DESACTIVADO') + ')' + (ex && permAntes !== JSON.stringify(u.permisos) ? ' · cambió permisos' : '') + (ex && d.clave ? ' · cambió la clave' : '')]);
       return { status: 'ok', users: leerUsuarios().map(publico) };
     }
     if (body.action === 'deleteUser') {
       const usuario = String(body.usuario || '').toLowerCase();
       if (usuario === yo.usuario) return { status: 'error', error: 'No podés borrar tu propio usuario.' };
       const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
-      if (ex) getUsersSheet().deleteRow(ex.fila);
+      if (ex) { getUsersSheet().deleteRow(ex.fila); auditar_(yo, 'borró', 'usuarios', ['Borró el usuario ' + usuario]); }
       return { status: 'ok', users: leerUsuarios().map(publico) };
     }
     return null;
@@ -1060,6 +1066,7 @@ function accionIA(u, body) {
     if (!prueba.ok) return { status: 'error', error: prueba.error };
     PropertiesService.getScriptProperties().setProperty('IA_KEY', k);
     PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY');
+    auditar_(u, 'modificó', 'IA', ['Configuró la clave de la IA (' + iaProveedor_(k) + ')']);
     return { status: 'ok', configurada: true, proveedor: iaProveedor_(k) };
   }
   if (body.action === 'iaGenerar') {
@@ -1075,6 +1082,358 @@ function accionIA(u, body) {
   return null;
 }
 
+// =====================================================================
+// REGISTRO DE CAMBIOS (auditoría): quién cambió qué y cuándo
+// Hoja BD_Auditoria: fecha | usuario | accion | modulo | detalle
+// =====================================================================
+const AUD_MAX_FILAS = 25000;
+function hojaAuditoria_() {
+  const ss = getSs();
+  let sh = ss.getSheetByName('BD_Auditoria');
+  if (!sh) {
+    sh = ss.insertSheet('BD_Auditoria');
+    sh.appendRow(['fecha', 'usuario', 'accion', 'modulo', 'detalle']);
+    sh.getRange('A:E').setNumberFormat('@');
+  }
+  return sh;
+}
+function etiquetaUsuario_(u) { return u ? (u.nombre ? u.nombre + ' (@' + u.usuario + ')' : u.usuario) : ''; }
+function auditar_(u, accion, modulo, detalle) {
+  try {
+    const lineas = [].concat(detalle || []).filter(function (x) { return x; });
+    if (!lineas.length) return;
+    const sh = hojaAuditoria_();
+    const ahora = new Date().toISOString();
+    const filas = lineas.slice(0, 40).map(function (d) { return [ahora, etiquetaUsuario_(u), String(accion), String(modulo || ''), String(d).slice(0, 900)]; });
+    if (lineas.length > 40) filas.push([ahora, etiquetaUsuario_(u), String(accion), String(modulo || ''), '… y ' + (lineas.length - 40) + ' cambios más']);
+    sh.getRange(sh.getLastRow() + 1, 1, filas.length, 5).setNumberFormat('@').setValues(filas);
+    const n = sh.getLastRow();
+    if (n > AUD_MAX_FILAS) sh.deleteRows(2, n - AUD_MAX_FILAS + 2000);
+  } catch (e) {}
+}
+function porId_(lista) { const o = {}; (lista || []).forEach(function (x) { if (x && x.id != null) o[String(x.id)] = x; }); return o; }
+function igual_(a, b) { try { return JSON.stringify(a) === JSON.stringify(b); } catch (e) { return false; } }
+function num_(v) { const n = Number(v); return isNaN(n) ? 0 : n; }
+function fmtN_(v) { return String(Math.round(num_(v) * 100) / 100).replace('.', ','); }
+const NOMBRE_CAMPO_ = { qtyTarget: 'cantidad', status: 'estado', part: 'pieza', machine: 'máquina', ordNumber: 'N°', date: 'fecha', precio: 'precio', unitsPerHour: 'u/h', loteMin: 'lote mínimo',
+  portamolde: 'portamolde', machines: 'máquinas', material: 'material', weightWithSprueKg: 'peso c/colada', cavities: 'bocas', mold: 'molde', desc: 'descripción', pistonMm: 'pistón' };
+function camposCambiados_(a, b, ignorar) {
+  const out = [];
+  const ks = {}; Object.keys(a || {}).forEach(function (k) { ks[k] = 1; }); Object.keys(b || {}).forEach(function (k) { ks[k] = 1; });
+  Object.keys(ks).forEach(function (k) {
+    if (ignorar && ignorar.indexOf(k) !== -1) return;
+    if (igual_((a || {})[k], (b || {})[k])) return;
+    const va = (a || {})[k], vb = (b || {})[k];
+    const vacio = function (v) { return v == null || v === '' || v === 0 || v === false; };
+    if (vacio(va) && vacio(vb)) return;
+    const simple = function (v) { return v == null || typeof v !== 'object'; };
+    out.push((NOMBRE_CAMPO_[k] || k) + (simple(va) && simple(vb) ? ': ' + (va == null || va === '' ? '—' : String(va).slice(0, 40)) + ' → ' + (vb == null || vb === '' ? '—' : String(vb).slice(0, 40)) : ''));
+  });
+  return out;
+}
+const NOMBRE_MODULO_ = { orders: 'Órdenes', gantt: 'Gantt', catalog: 'Base de datos', weekly: 'Cierres semanales', memory: 'IA', config: 'Configuración', pistones: 'Pistones', kpis: 'Indicadores',
+  turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal' };
+function resumenCambio_(clave, ant, nue) {
+  if (igual_(ant, nue)) return [];
+  const out = [];
+  const vacioM = function (v) { return v == null || (Array.isArray(v) ? !v.length : (typeof v === 'object' && !Object.keys(v).length)); };
+  if (clave === 'memory') {
+    const la = (ant && ant.learnedNotes) || [], ln = (nue && nue.learnedNotes) || [];
+    if (igual_(la, ln)) return [];
+    return ['Cambió lo que la IA tiene aprendido (' + (Array.isArray(ln) ? ln.length : 0) + ' notas)'];
+  }
+  if (vacioM(ant)) return ['Cargó por primera vez ' + (NOMBRE_MODULO_[clave] || clave) + (Array.isArray(nue) ? ' (' + nue.length + ' elementos)' : '')];
+  if (clave === 'orders') {
+    const A = porId_(ant), N = porId_(nue);
+    Object.keys(N).forEach(function (id) {
+      const o = N[id], v = A[id];
+      const nom = 'OP ' + (o.ordNumber || '') + ' · ' + (o.part || '');
+      if (!v) { out.push('Creó la ' + nom + ' (' + fmtN_(o.qtyTarget) + ' u, ' + (o.machine || '') + ')'); return; }
+      if (igual_(o, v)) return;
+      const LA = porId_(v.logs), LN = porId_(o.logs);
+      Object.keys(LN).forEach(function (lid) {
+        const l = LN[lid], la = LA[lid];
+        const t = (l.date || '') + ' ' + (l.turno || ((l.startTime || '') + '-' + (l.endTime || '')));
+        if (!la) out.push(nom + ': cargó turno ' + t + ' · ' + fmtN_(l.okPcs) + ' buenas' + (num_(l.scrapPcs) ? ', ' + fmtN_(l.scrapPcs) + ' scrap' : '') + (l.operator ? ' · ' + l.operator : ''));
+        else if (!igual_(l, la)) { const c = camposCambiados_(la, l, ['modificadoPor', 'modificadoAt', 'obs', 'paradas', 'stopCode']); if (!igual_(la.paradas, l.paradas)) c.push('paradas'); if (c.length) out.push(nom + ': corrigió turno ' + t + ' (' + c.join('; ').slice(0, 300) + ')'); }
+      });
+      Object.keys(LA).forEach(function (lid) { if (!LN[lid]) { const l = LA[lid]; out.push(nom + ': borró turno ' + (l.date || '') + ' ' + (l.turno || '') + ' (' + fmtN_(l.okPcs) + ' buenas)'); } });
+      const c = camposCambiados_(v, o, ['logs', 'back', 'autoCompletada']);
+      if (!igual_(v.back, o.back)) c.push('dorso de la orden');
+      if (c.length) out.push(nom + ': ' + c.join('; ').slice(0, 400));
+    });
+    Object.keys(A).forEach(function (id) { if (!N[id]) out.push('Borró la OP ' + (A[id].ordNumber || '') + ' · ' + (A[id].part || '')); });
+  } else if (clave === 'catalog') {
+    const A = porId_(ant), N = porId_(nue);
+    Object.keys(N).forEach(function (id) {
+      const p = N[id], v = A[id];
+      if (!v) { out.push('Agregó la pieza ' + (p.part || '')); return; }
+      const c = camposCambiados_(v, p, ['precioAt', 'updatedAt', 'armada']);
+      if (!igual_(v.armada, p.armada)) c.push(p.armada ? 'marcada como montada' : 'desmarcada como montada');
+      if (c.length) out.push('Pieza ' + (p.part || '') + ': ' + c.join('; ').slice(0, 400));
+    });
+    Object.keys(A).forEach(function (id) { if (!N[id]) out.push('Borró la pieza ' + (A[id].part || '')); });
+  } else if (clave === 'gantt') {
+    const A = ant || {}, N = nue || {};
+    const tot = function (it) { return (it.dailyQty || []).reduce(function (s, x) { return s + num_(x); }, 0); };
+    Object.keys(N).forEach(function (code) {
+      if (!A[code]) { out.push('Creó la semana ' + code); return; }
+      if (igual_(A[code], N[code])) return;
+      const mA = A[code].machines || {}, mN = N[code].machines || {};
+      const ms = {}; Object.keys(mA).forEach(function (m) { ms[m] = 1; }); Object.keys(mN).forEach(function (m) { ms[m] = 1; });
+      Object.keys(ms).forEach(function (m) {
+        const pa = {}, pn = {};
+        ((mA[m] || {}).items || []).forEach(function (it) { if (!it.isSharedCompanion) pa[it.part] = (pa[it.part] || 0) + tot(it); });
+        ((mN[m] || {}).items || []).forEach(function (it) { if (!it.isSharedCompanion) pn[it.part] = (pn[it.part] || 0) + tot(it); });
+        const cambios = [];
+        const ps = {}; Object.keys(pa).forEach(function (p) { ps[p] = 1; }); Object.keys(pn).forEach(function (p) { ps[p] = 1; });
+        Object.keys(ps).forEach(function (p) {
+          if (pa[p] === pn[p]) return;
+          if (pa[p] == null) cambios.push('agregó ' + p + ' (' + fmtN_(pn[p]) + ' u)');
+          else if (pn[p] == null) cambios.push('sacó ' + p);
+          else cambios.push(p + ' ' + fmtN_(pa[p]) + ' → ' + fmtN_(pn[p]) + ' u');
+        });
+        if (!cambios.length && !igual_((mA[m] || {}).items, (mN[m] || {}).items)) cambios.push('cambió el reparto por día');
+        if (!igual_((mA[m] || {}).aux, (mN[m] || {}).aux)) cambios.push('cambió horas auxiliares (set-up, limpieza…)');
+        if (cambios.length) out.push(code + ' · ' + m + ': ' + cambios.join('; ').slice(0, 500));
+      });
+    });
+    Object.keys(A).forEach(function (code) { if (!N[code]) out.push('Borró la semana ' + code); });
+  } else if (clave === 'setup') {
+    const mA = (ant && ant.maquinas) || {}, mN = (nue && nue.maquinas) || {};
+    Object.keys(mN).forEach(function (m) {
+      const a = mA[m] || {}, b = mN[m] || {};
+      if ((a.activa !== false) !== (b.activa !== false)) out.push(m + ': ' + (b.activa === false ? 'FUERA DE SERVICIO' + (b.motivo ? ' (' + b.motivo + ')' : '') : 'habilitada de nuevo'));
+      const c = camposCambiados_(a, b, ['activa']); if (c.length) out.push(m + ': ' + c.join('; '));
+    });
+  } else if (clave === 'stock') {
+    const movs = function (s) { const o = {}; ['materiales', 'terminado'].forEach(function (g) { Object.keys((s && s[g]) || {}).forEach(function (k) { ((s[g][k] || {}).movimientos || []).forEach(function (mv) { o[mv.id] = { g: g, k: k, mv: mv }; }); }); }); return o; };
+    const A = movs(ant), N = movs(nue);
+    Object.keys(N).forEach(function (id) { if (!A[id]) { const x = N[id]; out.push((x.g === 'materiales' ? 'Material ' : 'Pieza ') + x.k + ': ' + x.mv.tipo + ' ' + fmtN_(x.mv.kg != null ? x.mv.kg : x.mv.cant) + (x.g === 'materiales' ? ' kg' : ' u') + (x.mv.nota ? ' (' + x.mv.nota + ')' : '')); } });
+    Object.keys(A).forEach(function (id) { if (!N[id]) { const x = A[id]; out.push((x.g === 'materiales' ? 'Material ' : 'Pieza ') + x.k + ': borró movimiento ' + x.mv.tipo + ' del ' + (x.mv.fecha || '')); } });
+    if (!out.length) out.push('Cambió mínimos o datos del stock');
+  } else if (clave === 'mantenimiento') {
+    const A = porId_(ant && ant.trabajos), N = porId_(nue && nue.trabajos), PA = porId_(ant && ant.planes), PN = porId_(nue && nue.planes);
+    Object.keys(N).forEach(function (id) { if (!A[id]) { const t = N[id]; out.push('Registró ' + (t.tipo || 'trabajo') + ' en la ' + (t.maquina || '') + ': ' + (t.tarea || t.descripcion || '') + ' (' + (t.fecha || '') + ')'); } else if (!igual_(A[id], N[id])) out.push('Corrigió un trabajo de la ' + (N[id].maquina || '') + ' (' + (N[id].fecha || '') + ')'); });
+    Object.keys(A).forEach(function (id) { if (!N[id]) out.push('Borró un trabajo de la ' + (A[id].maquina || '') + ' (' + (A[id].fecha || '') + ')'); });
+    Object.keys(PN).forEach(function (id) { if (!PA[id]) out.push('Nuevo preventivo: ' + (PN[id].tarea || '') + ' en la ' + (PN[id].maquina || '') + ' cada ' + (PN[id].cadaDias || '?') + ' días'); else if (!igual_(PA[id], PN[id]) && PA[id].ultimo === PN[id].ultimo) out.push('Modificó el preventivo ' + (PN[id].tarea || '')); });
+    Object.keys(PA).forEach(function (id) { if (!PN[id]) out.push('Borró el preventivo ' + (PA[id].tarea || '')); });
+  } else {
+    const ks = {}; Object.keys(ant || {}).forEach(function (k) { ks[k] = 1; }); Object.keys(nue || {}).forEach(function (k) { ks[k] = 1; });
+    const cambiadas = Object.keys(ks).filter(function (k) { return !igual_((ant || {})[k], (nue || {})[k]); });
+    out.push('Modificó ' + (NOMBRE_MODULO_[clave] || clave) + (cambiadas.length && cambiadas.length < 8 && !Array.isArray(nue) ? ' (' + cambiadas.join(', ') + ')' : ''));
+  }
+  return out;
+}
+function resumenParte_(e) { return 'Parte ' + fechaTexto_(e && e.date) + ' · ' + ((e && e.machine) || '') + ' · ' + ((e && e.shift) || '') + ' · ' + fmtN_(e && e.available) + ' h'; }
+function accionAuditoria(u, body) {
+  if (body.action !== 'audListar') return null;
+  if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador ve el registro de cambios.' };
+  const sh = hojaAuditoria_();
+  const n = sh.getLastRow();
+  if (n < 2) return { status: 'ok', filas: [] };
+  const limite = Math.min(Number(body.limite) || 1500, 5000);
+  const desde = String(body.desde || ''), hasta = String(body.hasta || '');
+  const tomar = Math.min(n - 1, desde ? 20000 : limite * 3);
+  const vals = sh.getRange(n - tomar + 1, 1, tomar, 5).getValues();
+  const out = [];
+  for (let i = vals.length - 1; i >= 0 && out.length < limite; i--) {
+    const f = String(vals[i][0] || ''), dia = f.slice(0, 10);
+    if (desde && dia < desde) continue;
+    if (hasta && dia > hasta) continue;
+    out.push({ fecha: f, usuario: String(vals[i][1] || ''), accion: String(vals[i][2] || ''), modulo: String(vals[i][3] || ''), detalle: String(vals[i][4] || '') });
+  }
+  return { status: 'ok', filas: out };
+}
+
+// =====================================================================
+// INFORME SEMANAL (se arma en el servidor con los datos de la planta)
+// =====================================================================
+const COD_CAT_SRV = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
+  2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 16: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
+  4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+const CATS_SRV = [['parada_maquina', 'Parada de máquina'], ['setup_molde', 'Cambio de molde'], ['puesta_punto', 'Puesta a punto'], ['mant_preventivo', 'Mant. preventivo'], ['mant_correctivo', 'Mant. correctivo'], ['falta_material', 'Falta de material'], ['falta_operario', 'Falta de operario'], ['otros', 'Otros']];
+const MAQ_SRV = [['200V', 'Italpresse 200 Tn (V)'], ['200N', 'Italpresse 200 Tn (N)'], ['180', 'Italpresse 180 Tn'], ['H50', 'H-50'], ['Z30', 'Italpresse 30 Tn (Z-30)']];
+function maqId_(txt) {
+  const t = String(txt || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < MAQ_SRV.length; i++) if (t === MAQ_SRV[i][0].toLowerCase() || t === MAQ_SRV[i][1].toLowerCase()) return MAQ_SRV[i][0];
+  if (/\(v\)/.test(t)) return '200V'; if (/\(n\)/.test(t)) return '200N'; if (/180/.test(t)) return '180'; if (/h-?50/.test(t)) return 'H50'; if (/z-?30|30 tn/.test(t)) return 'Z30';
+  return String(txt || '');
+}
+function isoDia_(d) { return Utilities.formatDate(d, zonaHoja_(), 'yyyy-MM-dd'); }
+function sumarDias_(iso, n) { const p = iso.split('-').map(Number); const d = new Date(p[0], p[1] - 1, p[2] + n, 12); return Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd'); }
+function lunesDe_(iso) { const p = iso.split('-').map(Number); const d = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)); const dow = (d.getUTCDay() + 6) % 7; return sumarDias_(iso, -dow); }
+function horasEntre_(a, b) { const m = function (h) { const x = String(h || '0:0').split(':'); return (Number(x[0]) || 0) * 60 + (Number(x[1]) || 0); }; const d = ((m(b) - m(a)) + 1440) % 1440; return (d || 1440) / 60; }
+const DEMO_ORD_SRV = { 'ord-406': 1 };
+const DEMO_REC_SRV = { 'rec-1': 1, 'rec-2': 1, 'rec-3': 1, 'rec-4': 1, 'rec-5': 1, 'rec-6': 1 };
+function datosSemana_(mods, registros, lunes) {
+  const dom = sumarDias_(lunes, 6);
+  const enSem = function (f) { return f && f >= lunes && f <= dom; };
+  const catalogo = {}; (mods.catalog || []).forEach(function (c) { if (c && c.part) catalogo[String(c.part).toLowerCase()] = c; });
+  const R = { lunes: lunes, domingo: dom, ok: 0, scrap: 0, baja: 0, disp: 0, cat: {}, codigos: {}, maq: {}, piezas: {}, turnos: 0, facturado: 0, sinPrecio: 0, kg: {} };
+  CATS_SRV.forEach(function (c) { R.cat[c[0]] = 0; });
+  MAQ_SRV.forEach(function (m) { R.maq[m[0]] = { ok: 0, scrap: 0, disp: 0, paradas: 0, correctivo: 0 }; });
+  (mods.orders || []).forEach(function (o) {
+    if (DEMO_ORD_SRV[o.id]) return;
+    const m = maqId_(o.machine); const c = catalogo[String(o.part || '').toLowerCase()] || {};
+    (o.logs || []).forEach(function (l) {
+      if (!enSem(String(l.date || ''))) return;
+      const ok = num_(l.okPcs), sc = num_(l.scrapPcs), bj = num_(l.lowStartPcs), h = horasEntre_(l.startTime, l.endTime);
+      R.ok += ok; R.scrap += sc; R.baja += bj; R.disp += h; R.turnos++;
+      if (!R.maq[m]) R.maq[m] = { ok: 0, scrap: 0, disp: 0, paradas: 0, correctivo: 0 };
+      R.maq[m].ok += ok; R.maq[m].scrap += sc; R.maq[m].disp += h;
+      const pz = R.piezas[o.part] = R.piezas[o.part] || { ok: 0, scrap: 0, maq: m };
+      pz.ok += ok; pz.scrap += sc;
+      const precio = num_(c.precio || o.precio);
+      if (precio) R.facturado += ok * precio; else if (ok) R.sinPrecio += ok;
+      const kgp = num_(c.weightWithSprueKg || o.weightWithSprueKg), mat = String(c.material || o.material || '').toUpperCase();
+      if (kgp && mat) R.kg[mat] = (R.kg[mat] || 0) + (ok + sc + bj) * kgp;
+      const ps = (l.paradas && l.paradas.length) ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: l.stopMinutes }] : []);
+      ps.forEach(function (p) {
+        const cod = parseInt(String(p.codigo || ''), 10), hh = num_(p.min) / 60, cat = COD_CAT_SRV[cod] || 'otros';
+        R.cat[cat] += hh; R.maq[m].paradas += hh; if (cat === 'mant_correctivo') R.maq[m].correctivo += hh;
+        const k = String(p.codigo || 'Sin código'); R.codigos[k] = (R.codigos[k] || 0) + hh;
+      });
+    });
+  });
+  (registros || []).forEach(function (r) {
+    if (DEMO_REC_SRV[r.id] || !enSem(r.date)) return;
+    const m = maqId_(r.machine);
+    if (!R.maq[m]) R.maq[m] = { ok: 0, scrap: 0, disp: 0, paradas: 0, correctivo: 0 };
+    R.disp += num_(r.available); R.maq[m].disp += num_(r.available); R.turnos++;
+    CATS_SRV.forEach(function (c) { const h = num_(r[c[0]]); R.cat[c[0]] += h; R.maq[m].paradas += h; if (c[0] === 'mant_correctivo') R.maq[m].correctivo += h; });
+    (r.paradas || []).forEach(function (p) { const k = String(p.codigo || 'Sin código'); R.codigos[k] = (R.codigos[k] || 0) + num_(p.min) / 60; });
+  });
+  R.paradas = CATS_SRV.reduce(function (s, c) { return s + R.cat[c[0]]; }, 0);
+  R.util = R.disp ? Math.max(0, (R.disp - R.paradas) / R.disp * 100) : 0;
+  R.scrapPct = (R.ok + R.scrap) ? R.scrap / (R.ok + R.scrap) * 100 : 0;
+  // Gantt: lo programado para esa semana
+  R.programado = 0; R.progPiezas = {}; R.facturaProg = 0;
+  Object.keys(mods.gantt || {}).forEach(function (code) {
+    const w = mods.gantt[code]; if (!w || !w.startDate) return;
+    const p = w.startDate.split('-').map(Number); const base = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12)); const dow = base.getUTCDay();
+    Object.keys(w.machines || {}).forEach(function (m) {
+      ((w.machines[m] || {}).items || []).forEach(function (it) {
+        if (it.isSharedCompanion) return;
+        (it.dailyQty || []).forEach(function (q, d) {
+          const f = sumarDias_(w.startDate, d - dow); if (!enSem(f) || !num_(q)) return;
+          R.programado += num_(q); R.progPiezas[it.part] = (R.progPiezas[it.part] || 0) + num_(q);
+          const c = catalogo[String(it.part || '').toLowerCase()] || {}; R.facturaProg += num_(q) * num_(c.precio);
+        });
+      });
+    });
+  });
+  // órdenes
+  R.opCompletadas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status === 'Completada' && (o.logs || []).some(function (l) { return enSem(l.date); }); }).length;
+  R.opAbiertas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status !== 'Completada'; }).length;
+  // mantenimiento
+  const mant = mods.mantenimiento || {};
+  R.trabajos = (mant.trabajos || []).filter(function (t) { return enSem(t.fecha); });
+  R.preventivosVencidos = (mant.planes || []).filter(function (p) { return p.ultimo && num_(p.cadaDias) && sumarDias_(p.ultimo, num_(p.cadaDias)) < sumarDias_(dom, 1); });
+  return R;
+}
+function htmlInforme_(R, P, verPrecios, extra) {
+  const e = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  const n0 = function (v) { return Math.round(num_(v)).toLocaleString('es-AR'); };
+  const n1 = function (v) { return (Math.round(num_(v) * 10) / 10).toLocaleString('es-AR'); };
+  const plata = function (v) { return '$ ' + Math.round(num_(v)).toLocaleString('es-AR'); };
+  const fd = function (iso) { const p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
+  const delta = function (a, b, inv, suf) { if (!b) return ''; const d = (a - b) / Math.abs(b) * 100; if (!isFinite(d) || Math.abs(d) < 0.5) return '<span style="color:#64748b">= sem. anterior</span>'; const bueno = inv ? d < 0 : d > 0; return '<span style="color:' + (bueno ? '#059669' : '#dc2626') + '">' + (d > 0 ? '▲ ' : '▼ ') + n1(Math.abs(d)) + '%' + (suf || '') + '</span>'; };
+  const tile = function (t, v, s) { return '<td style="padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em">' + t + '</div><div style="font-size:22px;font-weight:800;color:#0f172a;margin:2px 0">' + v + '</div><div style="font-size:11px">' + (s || '') + '</div></td>'; };
+  const th = 'style="text-align:left;padding:6px 8px;background:#f1f5f9;font-size:11px;color:#334155;border-bottom:1px solid #cbd5e1"';
+  const td = 'style="padding:5px 8px;font-size:12px;border-bottom:1px solid #e2e8f0"';
+  const tdr = 'style="padding:5px 8px;font-size:12px;border-bottom:1px solid #e2e8f0;text-align:right"';
+  let h = '<div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;max-width:860px;margin:0 auto">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0891b2;padding-bottom:8px;margin-bottom:14px"><div><div style="font-size:26px;font-weight:900;letter-spacing:.06em;color:#0891b2">INOFER</div><div style="font-size:15px;font-weight:700">Informe semanal de producción</div></div><div style="text-align:right;font-size:12px;color:#475569">Semana del ' + fd(R.lunes) + ' al ' + fd(R.domingo) + '<br>Generado el ' + e(extra.generado) + '</div></div>';
+  h += '<table style="width:100%;border-collapse:separate;border-spacing:6px;margin:0 -6px"><tr>' +
+    tile('Piezas buenas', n0(R.ok), delta(R.ok, P.ok)) + tile('Scrap', n1(R.scrapPct) + '%', n0(R.scrap) + ' u · ' + delta(R.scrapPct, P.scrapPct, true)) +
+    tile('Utilización', n1(R.util) + '%', n1(R.disp) + ' h disponibles · ' + delta(R.util, P.util)) +
+    (verPrecios ? tile('Facturación producida', plata(R.facturado), delta(R.facturado, P.facturado) + (R.sinPrecio ? '<br><span style="color:#b45309">' + n0(R.sinPrecio) + ' u sin precio</span>' : '')) : tile('Turnos cargados', n0(R.turnos), delta(R.turnos, P.turnos))) + '</tr></table>';
+  const cumpl = R.programado ? Math.min(999, R.ok / R.programado * 100) : 0;
+  h += '<h3 style="font-size:14px;margin:18px 0 6px">Cumplimiento del plan (Gantt)</h3>';
+  h += R.programado ? '<div style="font-size:12px;margin-bottom:6px">Programado <b>' + n0(R.programado) + '</b> u · producido <b>' + n0(R.ok) + '</b> u · cumplimiento <b style="color:' + (cumpl >= 90 ? '#059669' : (cumpl >= 70 ? '#b45309' : '#dc2626')) + '">' + n1(cumpl) + '%</b>' + (verPrecios && R.facturaProg ? ' · facturación programada ' + plata(R.facturaProg) : '') + '</div>' : '<div style="font-size:12px;color:#64748b">No había nada programado en el Gantt para esta semana.</div>';
+  const piezas = {}; Object.keys(R.progPiezas).forEach(function (p) { piezas[p] = 1; }); Object.keys(R.piezas).forEach(function (p) { piezas[p] = 1; });
+  const lista = Object.keys(piezas).map(function (p) { return { p: p, prog: R.progPiezas[p] || 0, ok: (R.piezas[p] || {}).ok || 0, sc: (R.piezas[p] || {}).scrap || 0 }; }).sort(function (a, b) { return (b.prog + b.ok) - (a.prog + a.ok); }).slice(0, 25);
+  if (lista.length) {
+    h += '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Pieza</th><th ' + th + ' style="text-align:right">Programado</th><th ' + th + ' style="text-align:right">Producido</th><th ' + th + ' style="text-align:right">Scrap</th><th ' + th + ' style="text-align:right">Cumpl.</th></tr>';
+    lista.forEach(function (x) { const c = x.prog ? x.ok / x.prog * 100 : null; h += '<tr><td ' + td + '>' + e(x.p) + '</td><td ' + tdr + '>' + (x.prog ? n0(x.prog) : '—') + '</td><td ' + tdr + '>' + n0(x.ok) + '</td><td ' + tdr + '>' + (x.sc ? n0(x.sc) : '') + '</td><td ' + tdr + '>' + (c == null ? 'fuera de plan' : '<b style="color:' + (c >= 90 ? '#059669' : (c >= 70 ? '#b45309' : '#dc2626')) + '">' + n1(c) + '%</b>') + '</td></tr>'; });
+    h += '</table>';
+  }
+  h += '<h3 style="font-size:14px;margin:18px 0 6px">Por máquina</h3><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Máquina</th><th ' + th + ' style="text-align:right">Buenas</th><th ' + th + ' style="text-align:right">Scrap</th><th ' + th + ' style="text-align:right">Horas disp.</th><th ' + th + ' style="text-align:right">Paradas</th><th ' + th + ' style="text-align:right">Utilización</th><th ' + th + ' style="text-align:right">Roturas</th></tr>';
+  Object.keys(R.maq).forEach(function (m) { const x = R.maq[m]; const u = x.disp ? Math.max(0, (x.disp - x.paradas) / x.disp * 100) : 0; h += '<tr><td ' + td + '><b>' + e(m) + '</b></td><td ' + tdr + '>' + n0(x.ok) + '</td><td ' + tdr + '>' + n0(x.scrap) + '</td><td ' + tdr + '>' + n1(x.disp) + ' h</td><td ' + tdr + '>' + n1(x.paradas) + ' h</td><td ' + tdr + '>' + (x.disp ? n1(u) + '%' : '—') + '</td><td ' + tdr + '>' + (x.correctivo ? n1(x.correctivo) + ' h' : '') + '</td></tr>'; });
+  h += '</table>';
+  const cods = Object.keys(R.codigos).map(function (k) { return [k, R.codigos[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+  h += '<h3 style="font-size:14px;margin:18px 0 6px">Paradas</h3><table style="width:100%;border-collapse:collapse"><tr><td style="vertical-align:top;width:50%;padding-right:8px"><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Categoría</th><th ' + th + ' style="text-align:right">Horas</th></tr>';
+  CATS_SRV.forEach(function (c) { if (R.cat[c[0]]) h += '<tr><td ' + td + '>' + c[1] + '</td><td ' + tdr + '>' + n1(R.cat[c[0]]) + ' h</td></tr>'; });
+  h += '<tr><td ' + td + '><b>Total</b></td><td ' + tdr + '><b>' + n1(R.paradas) + ' h</b> ' + delta(R.paradas, P.paradas, true) + '</td></tr></table></td><td style="vertical-align:top;width:50%"><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Principales motivos</th><th ' + th + ' style="text-align:right">Horas</th></tr>';
+  cods.forEach(function (c) { h += '<tr><td ' + td + '>' + e(c[0]) + '</td><td ' + tdr + '>' + n1(c[1]) + ' h</td></tr>'; });
+  if (!cods.length) h += '<tr><td ' + td + ' colspan="2" style="color:#64748b">Sin paradas con código.</td></tr>';
+  h += '</table></td></tr></table>';
+  const kgs = Object.keys(R.kg);
+  if (kgs.length) h += '<h3 style="font-size:14px;margin:18px 0 6px">Material consumido</h3><div style="font-size:12px">' + kgs.map(function (k) { return '<b>' + e(k) + '</b>: ' + n1(R.kg[k]) + ' kg'; }).join(' · ') + '</div>';
+  if (extra.stockBajo && extra.stockBajo.length) h += '<div style="margin-top:8px;font-size:12px;color:#b45309">⚠️ Stock bajo: ' + extra.stockBajo.map(e).join(' · ') + '</div>';
+  h += '<h3 style="font-size:14px;margin:18px 0 6px">Órdenes y mantenimiento</h3><div style="font-size:12px;line-height:1.6">Órdenes completadas en la semana: <b>' + R.opCompletadas + '</b> · abiertas ahora: <b>' + R.opAbiertas + '</b><br>';
+  h += 'Trabajos de mantenimiento: <b>' + R.trabajos.length + '</b>' + (R.trabajos.length ? ' (' + R.trabajos.slice(0, 6).map(function (t) { return e(t.maquina + ': ' + (t.tarea || t.descripcion || t.tipo)); }).join('; ') + ')' : '') + '<br>';
+  if (R.preventivosVencidos.length) h += '<span style="color:#dc2626">Preventivos vencidos: ' + R.preventivosVencidos.map(function (p) { return e(p.maquina + ' · ' + p.tarea); }).join('; ') + '</span><br>';
+  if (extra.fueraServicio && extra.fueraServicio.length) h += '<span style="color:#dc2626">Máquinas fuera de servicio: ' + extra.fueraServicio.map(e).join('; ') + '</span>';
+  h += '</div><div style="margin-top:22px;border-top:1px solid #e2e8f0;padding-top:6px;font-size:10px;color:#94a3b8">INOFER · Informe generado automáticamente con los turnos de las Órdenes de Producción y los partes de horas cargados. La semana anterior se usa como comparación.</div></div>';
+  return h;
+}
+function textoInforme_(R, P, verPrecios) {
+  const n0 = function (v) { return Math.round(num_(v)).toLocaleString('es-AR'); };
+  const n1 = function (v) { return (Math.round(num_(v) * 10) / 10).toLocaleString('es-AR'); };
+  const fd = function (iso) { const p = iso.split('-'); return p[2] + '/' + p[1]; };
+  const cods = Object.keys(R.codigos).map(function (k) { return [k, R.codigos[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 3);
+  let t = '*INOFER · Semana ' + fd(R.lunes) + ' al ' + fd(R.domingo) + '*\n';
+  t += '✅ Piezas buenas: ' + n0(R.ok) + (P.ok ? ' (sem. ant. ' + n0(P.ok) + ')' : '') + '\n';
+  t += '❌ Scrap: ' + n1(R.scrapPct) + '% (' + n0(R.scrap) + ' u)\n';
+  t += '⚙️ Utilización: ' + n1(R.util) + '%\n';
+  if (R.programado) t += '📅 Cumplimiento del Gantt: ' + n1(R.ok / R.programado * 100) + '%\n';
+  if (verPrecios && R.facturado) t += '💰 Facturación producida: $ ' + n0(R.facturado) + '\n';
+  t += '⏱️ Paradas: ' + n1(R.paradas) + ' h' + (cods.length ? ' · principales: ' + cods.map(function (c) { return c[0].split('-').slice(1).join('-').trim() || c[0]; }).map(function (x, i) { return x + ' ' + n1(cods[i][1]) + ' h'; }).join(', ') : '') + '\n';
+  t += '📋 Órdenes completadas: ' + R.opCompletadas + ' · abiertas: ' + R.opAbiertas;
+  return t;
+}
+function puedeVerPreciosSrv_(u) { return !!u && (u.rol === 'admin' || (puede(u, 'catalogo', 'view') && !(u.permisos && u.permisos.detalle && u.permisos.detalle.precios_ver === false))); }
+function armarInforme_(u, lunes) {
+  const mods = obtenerEstadoModulos();
+  const regs = obtenerRegistros();
+  const R = datosSemana_(mods, regs, lunes), P = datosSemana_(mods, regs, sumarDias_(lunes, -7));
+  const verPrecios = puedeVerPreciosSrv_(u);
+  const setup = (mods.setup && mods.setup.maquinas) || {};
+  const fueraServicio = Object.keys(setup).filter(function (m) { return setup[m] && setup[m].activa === false; }).map(function (m) { return m + (setup[m].motivo ? ' (' + setup[m].motivo + ')' : ''); });
+  const stockBajo = [];
+  Object.keys(((mods.stock || {}).materiales) || {}).forEach(function (k) { const s = mods.stock.materiales[k]; if (s && s.ultimoCalculo != null && num_(s.minimo) && num_(s.ultimoCalculo) < num_(s.minimo)) stockBajo.push(k + ' ' + Math.round(num_(s.ultimoCalculo)) + ' kg'); });
+  const generado = Utilities.formatDate(new Date(), zonaHoja_(), 'dd/MM/yyyy HH:mm');
+  return { status: 'ok', semana: lunes, html: htmlInforme_(R, P, verPrecios, { generado: generado, fueraServicio: fueraServicio, stockBajo: stockBajo }), texto: textoInforme_(R, P, verPrecios), resumen: { ok: R.ok, scrapPct: R.scrapPct, util: R.util, facturado: verPrecios ? R.facturado : null, programado: R.programado } };
+}
+function accionInforme(u, body) {
+  if (body.action !== 'informeSemanal') return null;
+  if (!(u.rol === 'admin' || puede(u, 'indicadores', 'view') || puede(u, 'ordenes', 'view'))) return { status: 'error', error: 'Tu usuario no puede ver el informe.' };
+  const hoy = isoDia_(new Date());
+  const lunes = /^\d{4}-\d{2}-\d{2}$/.test(String(body.semana || '')) ? lunesDe_(String(body.semana)) : sumarDias_(lunesDe_(hoy), -7);
+  return armarInforme_(u, lunes);
+}
+// Lo llama el disparador semanal de Apps Script (función inoferInformeSemanal del Código.gs)
+function enviarInformeSemanal(forzar) {
+  const mods = obtenerEstadoModulos();
+  const cfg = mods.informes || {};
+  const emails = (cfg.emails || []).filter(function (x) { return /@/.test(String(x)); });
+  if (!emails.length) return 'No hay mails cargados en INOFER (Informe semanal → Enviar por mail).';
+  if (cfg.activo === false && !forzar) return 'El envío por mail está desactivado.';
+  const hoy = isoDia_(new Date());
+  const lunes = sumarDias_(lunesDe_(hoy), -7);
+  const props = PropertiesService.getScriptProperties();
+  if (!forzar && props.getProperty('INFORME_ENVIADO_' + lunes)) return 'El informe de esa semana ya se envió.';
+  const admin = { rol: 'admin', usuario: 'sistema', nombre: 'Informe automático', permisos: {} };
+  const inf = armarInforme_(admin, lunes);
+  const p = lunes.split('-');
+  MailApp.sendEmail({ to: emails.join(','), subject: 'INOFER · Informe semanal ' + p[2] + '/' + p[1] + '/' + p[0], htmlBody: '<div style="background:#fff;padding:12px">' + inf.html + '</div>', body: inf.texto.replace(/\*/g, ''), name: 'INOFER' });
+  props.setProperty('INFORME_ENVIADO_' + lunes, new Date().toISOString());
+  auditar_(admin, 'mail', 'informes', ['Informe semanal enviado a ' + emails.join(', ')]);
+  return 'Informe enviado a ' + emails.join(', ');
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -1087,9 +1446,15 @@ function doPost(e) {
   if (ia) return respuesta(ia);
   const msg = accionMensajeria(u, body);
   if (msg) return respuesta(msg);
+  const aud = accionAuditoria(u, body);
+  if (aud) return respuesta(aud);
+  const inf = accionInforme(u, body);
+  if (inf) return respuesta(inf);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
-    return respuesta(accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' });
+    const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };
+    if (body.action !== 'listPapelera' && resP.status === 'ok') auditar_(u, body.action === 'restaurarPapelera' ? 'restauró' : 'vació', 'papelera', [body.action === 'restaurarPapelera' ? 'Restauró un elemento de la papelera' : 'Vació la papelera' + (body.ids ? ' (elementos sueltos)' : '')]);
+    return respuesta(resP);
   }
 
   USUARIO_ACTUAL = u.nombre ? (u.nombre + ' (@' + u.usuario + ')') : u.usuario;
@@ -1097,24 +1462,36 @@ function doPost(e) {
   const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
   if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
     if (!puede(u, 'partes', 'edit')) return sinPermiso('partes');
-    if (body.action === 'add') records = guardarRegistro(body.entry);
-    else if (body.action === 'edit') records = editarRegistro(body.entry);
+    if (body.action === 'add') { records = guardarRegistro(body.entry); auditar_(u, 'cargó', 'partes', [resumenParte_(body.entry)]); }
+    else if (body.action === 'edit') {
+      try { const ant = obtenerRegistros().filter(function (r) { return String(r.id) === String(body.entry && body.entry.id); })[0]; const c = ant ? camposCambiados_(ant, body.entry, ['actualizado', 'cargadoPor', 'modificadoPor', 'cargadoAt', 'paradas', 'id']).filter(function (x) { return !/: (0|—) → (0|—)$/.test(x); }) : []; if (ant && !igual_(ant.paradas || [], body.entry.paradas || [])) c.push('paradas'); auditar_(u, 'corrigió', 'partes', [resumenParte_(body.entry) + (c.length ? ' (' + c.join('; ') + ')' : '')]); } catch (e) {}
+      records = editarRegistro(body.entry);
+    }
     else if (body.action === 'delete') {
-      try { registrarEliminados(u, 'parte', obtenerRegistros().filter(function (r) { return String(r.id) === String(body.id); }), {}); } catch (e) {}
+      try { const b = obtenerRegistros().filter(function (r) { return String(r.id) === String(body.id); }); registrarEliminados(u, 'parte', b, {}); if (b[0]) auditar_(u, 'borró', 'partes', [resumenParte_(b[0])]); } catch (e) {}
       records = eliminarRegistro(body.id);
     } else {
       try {
         const nuevos = idsDe(body.records);
-        registrarEliminados(u, 'parte', obtenerRegistros().filter(function (r) { return !nuevos[String(r.id)]; }), {});
+        const actuales = obtenerRegistros();
+        const borr = actuales.filter(function (r) { return !nuevos[String(r.id)]; });
+        registrarEliminados(u, 'parte', borr, {});
+        const viejos = idsDe(actuales);
+        const alta = (body.records || []).filter(function (r) { return r && !viejos[String(r.id)]; });
+        auditar_(u, 'sincronizó', 'partes', alta.map(function (r) { return 'Cargó ' + resumenParte_(r); }).concat(borr.map(function (r) { return 'Borró ' + resumenParte_(r); })));
       } catch (e) {}
       records = reemplazarRegistros(body.records);
     }
   } else if (body.action === 'saveModule') {
     const area = MODULO_AREA[body.moduleKey];
     if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
-    const ok = area === 'admin' ? u.rol === 'admin' : puede(u, area, 'edit');
+    const ok = area === 'admin' ? u.rol === 'admin' : puedeArea_(u, area, 'edit');
     if (!ok) return sinPermiso(area);
-    try { registrarDiferencias(u, body.moduleKey, obtenerEstadoModulos()[body.moduleKey], body.moduleData); } catch (e) {}
+    let anterior = null;
+    try { anterior = obtenerEstadoModulos()[body.moduleKey]; } catch (e) {}
+    if (igual_(anterior, body.moduleData)) return respuesta(paqueteDatos(u, records));
+    try { registrarDiferencias(u, body.moduleKey, anterior, body.moduleData); } catch (e) {}
+    try { auditar_(u, 'modificó', body.moduleKey, resumenCambio_(body.moduleKey, anterior, body.moduleData)); } catch (e) {}
     guardarModuloEstado(body.moduleKey, body.moduleData);
   }
   return respuesta(paqueteDatos(u, records));

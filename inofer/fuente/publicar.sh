@@ -48,7 +48,7 @@ printf 'INOFER para PC\r\n==============\r\n1. Doble clic en INOFER.jar\r\n2. To
 rm -f "$OUT/INOFER-PC.zip"; (cd "$Z" && zip -q -X "$OUT/INOFER-PC.zip" INOFER.jar LEEME.txt); rm -rf "$Z"
 
 # Servidor de Apps Script: el cargador (Codigo.gs) descarga este archivo
-{ cat "$SRC/servidor/servidor.gs"; printf '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin };\n'; } > "$OUT/servidor.js"
+{ cat "$SRC/servidor/servidor.gs"; printf '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal };\n'; } > "$OUT/servidor.js"
 touch "$OUT/.nojekyll"
 
 # Compatibilidad: los INOFER.jar viejos (2.3) buscaban actualizaciones en la raíz del sitio.
