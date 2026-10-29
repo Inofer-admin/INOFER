@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.17" />
+  <meta name="inofer-version" content="2026.10.29.18" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1591,6 +1591,10 @@
               <div>
                 <label class="block text-[11px] font-bold text-sky-300 mb-1">⚙️ Diámetro de pistón (mm)</label>
                 <select id="cat_piston" class="w-full rounded-lg border border-sky-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-sky-300"><option value="">Sin definir</option><option value="40">40 mm</option><option value="45">45 mm</option><option value="50">50 mm</option><option value="55">55 mm</option><option value="65">65 mm</option></select>
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-lime-300 mb-1">💲 Precio unitario sin IVA ($)</label>
+                <input type="number" id="cat_precio" min="0" step="0.01" placeholder="Ej: 1250.50" class="w-full rounded-lg border border-lime-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-lime-300" />
               </div>
               <div class="flex items-end">
                 <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
@@ -5434,7 +5438,8 @@ ${lines}${trendNote}`;
             ${typeof inoferPortamoldeHermanas === 'function' && item.portamolde ? (() => { const h = inoferPortamoldeHermanas(item); return h.length ? `<div class="mt-0.5 text-[10px] text-orange-200/80">Mismo portamolde que: <b>${h.map(x => x.part).join(', ')}</b></div>` : ''; })() : ''}
           </td>
           <td class="py-2 px-2.5 text-center font-semibold text-white">${item.cavities}</td>
-          <td class="py-2 px-2.5 text-right font-extrabold text-emerald-400">${item.unitsPerHour} u/h</td>
+          <td class="py-2 px-2.5 text-right font-extrabold text-emerald-400">${item.unitsPerHour} u/h
+            <div class="mt-1 flex items-center justify-end gap-1"><span class="text-[10px] font-semibold text-lime-300">💲</span><input type="number" min="0" step="0.01" data-inline-precio="${item.id}" value="${Number(item.precio) > 0 ? item.precio : ''}" placeholder="sin precio" class="inline-precio-input w-24 rounded border ${Number(item.precio) > 0 ? 'border-lime-500/60 bg-lime-950/30 text-lime-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-right text-[11px] font-bold focus:border-lime-400 focus:outline-none" title="Precio unitario sin IVA" /></div></td>
           <td class="py-2 px-2.5">
             <div class="flex flex-wrap items-center gap-1">${machButtonsHtml}</div>
           </td>
@@ -5568,6 +5573,8 @@ ${lines}${trendNote}`;
             if (v && !Array.from(pisInp.options).some(op => op.value === v)) { const op = document.createElement('option'); op.value = v; op.textContent = v + ' mm'; pisInp.appendChild(op); }
             pisInp.value = v;
           }
+          const prInp = document.getElementById('cat_precio');
+          if (prInp) prInp.value = Number(item.precio) > 0 ? item.precio : '';
           const formEl = document.getElementById('catalogForm');
           if (formEl && typeof formEl.scrollIntoView === 'function') {
             formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -8838,6 +8845,8 @@ ${lines}${trendNote}`;
         if (pmInp) { pmInp.value = ''; pmInp.dispatchEvent(new Event('input')); }
         const pisInp = document.getElementById('cat_piston');
         if (pisInp) pisInp.value = '';
+        const prInp = document.getElementById('cat_precio');
+        if (prInp) prInp.value = '';
       };
 
       document.getElementById('catalogResetFormBtn').addEventListener('click', resetCatalogForm);
@@ -8863,6 +8872,8 @@ ${lines}${trendNote}`;
           sharedMoldWith: sharedVal,
           portamolde: (document.getElementById('cat_portamolde')?.value || '').trim().toUpperCase(),
           pistonMm: Number(document.getElementById('cat_piston')?.value) || 0,
+          precio: Math.max(0, Number(document.getElementById('cat_precio')?.value) || 0),
+          precioAt: (Number(document.getElementById('cat_precio')?.value) || 0) !== (Number(existingItem?.precio) || 0) ? new Date().toISOString() : (existingItem?.precioAt || ''),
           cavities: Number(document.getElementById('cat_cavities').value) || 1,
           unitsPerHour: Number(document.getElementById('cat_units_hr').value) || 180,
           machines: checkedMachs,
@@ -11812,6 +11823,25 @@ ${lines}${trendNote}`;
         if (!f) return [];
         if (/^(deshace|deshacer|volve atras|volver atras|anula|anular|undo)/.test(f)) return [{ op: 'undo' }];
         if (/^(ayuda|que podes hacer|que puedo decir|comandos)/.test(f)) return [{ op: 'help' }];
+        if (/factur|cuanto (se )?(vende|vendemos|sale el programa|genera)|cuanta plata|\bingres|\bplata\b/.test(f)) {
+          const pre = [];
+          const sm = f.match(/\bsem(?:ana)?[\s-]*(\d{1,2})\b/);
+          if (sm) pre.push({ op: 'week', code: 'SEM-' + sm[1] });
+          const sinSem = sm ? frase.replace(new RegExp(sm[0].replace(/[-\s]/g, '.?'), 'i'), ' ') : frase;
+          const quiere = /(aument|subi|llev|necesito|objetivo|meta|quiero|lleg|arma|alcanz|sum|increment|mejor)/.test(f);
+          const pct = norm(sinSem).match(/(\d+(?:[.,]\d+)?)\s*(%|por ?ciento)/);
+          const monto = !pct && typeof inoferParseMonto === 'function' ? inoferParseMonto(sinSem) : null;
+          if (!quiere) return pre.concat([{ op: 'facturacion' }]);
+          if (!pct && !monto) return pre.concat([{ op: 'error', msg: '¿A cuánta plata querés llegar? Ej: "necesito facturar 40 millones esta semana" o "aumentá la facturación en 5 millones" o "subí la facturación un 10%".' }]);
+          const xx = extraer(sinSem, week);
+          const dias = xx.dias.map(d => d.idx);
+          let ds = null;
+          if (/sabado/.test(f)) ds = [1, 2, 3, 4, 5, 6];
+          if (/domingo/.test(f)) ds = (ds || [1, 2, 3, 4, 5]).concat([0]);
+          if (!ds && dias.length && /\b(solo|solamente|nada mas)\b/.test(f)) ds = dias;
+          const incremental = !!pct || /(aument|subi|sum|increment)\w*.*\ben\s+\$?\s*\d/.test(f) || /\d[\d.,]*\s*(millones|millon|mil|m|palos)?\s*(mas|extra|adicionales?)\b/.test(f);
+          return pre.concat([{ op: 'meta', monto, pct: pct ? Number(pct[1].replace(',', '.')) : null, incremental, dias: ds, maquinas: xx.maquinas.map(m => m.id), sinLimite: /sin limite|aunque no haya (pedido|demanda)|sin importar (la )?demanda|sin tope/.test(f) }]);
+        }
         const sem = f.match(/\bsem(?:ana)?[\s-]*(\d{1,2})\b/);
         if (sem && /(cambia|pasa|anda|abri|ir|mostra|ver|selecciona|semana)/.test(f) && !/\b\d{4,}/.test(f.replace(sem[0], ''))) return [{ op: 'week', code: 'SEM-' + sem[1] }];
         const x = extraer(frase, week);
@@ -12044,7 +12074,7 @@ ${lines}${trendNote}`;
         });
         return lineas.join('<br>') || 'La semana está vacía.';
       }
-      const AYUDA = 'Podés pedirme, por ejemplo:<br>• <i>pasá la 26608 del lunes al martes</i><br>• <i>pasá 200 de la 34111-PB del miércoles al jueves</i><br>• <i>mové la 26608 a la 200N</i><br>• <i>poné 500 de la 34548-PB en la 180 el miércoles</i><br>• <i>sumale 100 a la 26608 el viernes</i> / <i>restale 50…</i><br>• <i>sacá la 26608</i> / <i>sacá la 26608 del viernes</i><br>• <i>intercambiá la 26608 del lunes con el martes</i><br>• <i>poné 2 horas de limpieza en la 200V el lunes</i><br>• <i>qué hay en la 200V</i> · <i>cambiá a la semana 45</i> · <i>deshacer</i><br>Podés encadenar pedidos separándolos con punto, punto y coma o renglón.';
+      const AYUDA = 'Podés pedirme, por ejemplo:<br>• <i>pasá la 26608 del lunes al martes</i><br>• <i>pasá 200 de la 34111-PB del miércoles al jueves</i><br>• <i>mové la 26608 a la 200N</i><br>• <i>poné 500 de la 34548-PB en la 180 el miércoles</i><br>• <i>sumale 100 a la 26608 el viernes</i> / <i>restale 50…</i><br>• <i>sacá la 26608</i> / <i>sacá la 26608 del viernes</i><br>• <i>intercambiá la 26608 del lunes con el martes</i><br>• <i>poné 2 horas de limpieza en la 200V el lunes</i><br>• <i>qué hay en la 200V</i> · <i>cambiá a la semana 45</i> · <i>deshacer</i><br>• <i>cuánto factura el programa</i><br>• <i>necesito facturar 40 millones esta semana</i> · <i>aumentá la facturación en 5 millones</i> · <i>subí la facturación un 10% incluyendo el sábado</i><br>Podés encadenar pedidos separándolos con punto, punto y coma o renglón.';
 
       // ---------- Gemini (opcional) para frases que no entiendo ----------
       async function pedirAGemini(frase, week) {
@@ -12064,6 +12094,8 @@ Operaciones válidas:
 {"op":"remove","part","mach"|null}
 {"op":"aux","mach","code","day","hours"}
 {"op":"week","code":"SEM-NN"}
+{"op":"facturacion"} cuánto factura el programa
+{"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":[índices]|null,"maquinas":[ids]|null,"sinLimite":false} armar el Gantt para llegar a un objetivo de facturación (monto en pesos)
 Semana actual ${week.code}: ${JSON.stringify(semana)}
 Respondé SOLO JSON: {"ops":[...],"nota":"texto corto o vacío"}. Si no se puede, ops vacío y explicá en nota.
 Pedido: ${frase}`;
@@ -12111,6 +12143,18 @@ Pedido: ${frase}`;
           if (op.op === 'help') { respuestas.push(AYUDA); continue; }
           if (op.op === 'error') { errores.push(op.msg); continue; }
           if (op.op === 'show') { respuestas.push(resumen(week, op.mach)); continue; }
+          if (op.op === 'facturacion') { respuestas.push(typeof inoferResumenFacturacion === 'function' ? inoferResumenFacturacion(week) : 'No hay precios cargados.'); continue; }
+          if (op.op === 'meta') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            if (typeof inoferPlanMeta !== 'function') { errores.push('Falta el módulo de precios.'); continue; }
+            const base = inoferFacturacion(week).total;
+            const obj = op.pct != null ? base * (1 + op.pct / 100) : (op.incremental ? base + op.monto : op.monto);
+            if (!base && !Object.values(partsCatalog || []).some(c => Number(c.precio) > 0)) { errores.push('Todavía no hay precios cargados en la base de datos.'); continue; }
+            const r = inoferPlanMeta(week, obj, { dias: op.dias, maquinas: op.maquinas, sinLimite: op.sinLimite });
+            if (r.cambios.length) cambio = true;
+            respuestas.push(inoferTextoPlanMeta(r));
+            continue;
+          }
           if (op.op === 'week') {
             const code = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.code));
             if (!code) { errores.push(`No existe la semana ${op.code}. Semanas cargadas: ${Object.keys(ganttWeeksData).join(', ')}.`); continue; }
@@ -12816,6 +12860,359 @@ Pedido: ${frase}`;
           return r;
         };
       }
+    })();
+  </script>
+  <script>
+    // ===== Precios (sin IVA), facturación del Gantt y plan por objetivo de facturación =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const clave = s => norm(s).replace(/[\s\-\/_.]/g, '');
+      const plata = n => '$ ' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+      window.inoferPlata = plata;
+      const cat = () => (typeof partsCatalog !== 'undefined' ? partsCatalog : []);
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const DIA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+      function catDe(part) {
+        const k = norm(part), c2 = clave(part);
+        return cat().find(x => norm(x.part) === k) || cat().find(x => clave(x.part) === c2) || null;
+      }
+      function precioDe(part) { const c = catDe(part); return c ? (Number(c.precio) || 0) : 0; }
+      window.inoferPrecioDe = precioDe;
+
+      // ---------- precio editable desde la tabla de la base de datos ----------
+      document.addEventListener('change', ev => {
+        const el = ev.target;
+        if (!el || !el.classList || !el.classList.contains('inline-precio-input')) return;
+        if (typeof inoferCan === 'function' && !inoferCan('catalogo', 'edit')) return;
+        const item = cat().find(x => String(x.id) === String(el.dataset.inlinePrecio));
+        if (!item) return;
+        const v = Math.max(0, Math.round((Number(el.value) || 0) * 100) / 100);
+        if (v === (Number(item.precio) || 0)) return;
+        item.precio = v; item.precioAt = new Date().toISOString();
+        savePartsCatalog();
+        el.className = el.className.replace(/border-(lime-500\/60|slate-700) bg-(lime-950\/30|slate-900) text-(lime-200|slate-400)/, v > 0 ? 'border-lime-500/60 bg-lime-950/30 text-lime-200' : 'border-slate-700 bg-slate-900 text-slate-400');
+        showToast(v ? `${item.part}: ${plata(v)} sin IVA` : `${item.part}: sin precio`);
+        renderPanelPrecios();
+      });
+
+      // ---------- facturación de una semana del Gantt ----------
+      function facturacion(week) {
+        const r = { total: 0, porMaq: {}, porDia: [0, 0, 0, 0, 0, 0, 0], sinPrecio: {}, piezas: {}, unidades: 0 };
+        if (!week || !week.machines) return r;
+        Object.keys(week.machines).forEach(m => {
+          r.porMaq[m] = r.porMaq[m] || 0;
+          ((week.machines[m] || {}).items || []).forEach(it => {
+            const q = (it.dailyQty || []).map(x => Number(x) || 0);
+            const tot = q.reduce((a, b) => a + b, 0);
+            if (!tot) return;
+            const p = precioDe(it.part);
+            r.unidades += tot;
+            if (!p) { r.sinPrecio[it.part] = (r.sinPrecio[it.part] || 0) + tot; return; }
+            r.total += p * tot; r.porMaq[m] += p * tot;
+            q.forEach((x, d) => { r.porDia[d] += x * p; });
+            const pz = r.piezas[it.part] = r.piezas[it.part] || { part: it.part, qty: 0, monto: 0, precio: p };
+            pz.qty += tot; pz.monto += p * tot;
+          });
+        });
+        return r;
+      }
+      window.inoferFacturacion = facturacion;
+
+      function resumenFacturacion(week) {
+        const f = facturacion(week);
+        const maqs = MAQS().filter(m => f.porMaq[m]);
+        const top = Object.values(f.piezas).sort((a, b) => b.monto - a.monto).slice(0, 5);
+        const sp = Object.keys(f.sinPrecio);
+        let h = `💲 <b>Facturación del programa ${esc(week.code)}: ${plata(f.total)}</b> sin IVA`;
+        if (maqs.length) h += '<br>' + maqs.map(m => `${m}: ${plata(f.porMaq[m])}`).join(' · ');
+        const dias = [1, 2, 3, 4, 5, 6, 0].filter(d => f.porDia[d] > 0);
+        if (dias.length) h += '<br><span class="text-slate-400">Por día:</span> ' + dias.map(d => `${DIA[d].slice(0, 3)} ${plata(f.porDia[d])}`).join(' · ');
+        if (top.length) h += '<br><span class="text-slate-400">Lo que más factura:</span> ' + top.map(p => `${esc(p.part)} ${plata(p.monto)}`).join(' · ');
+        if (sp.length) h += `<br>⚠️ ${sp.length} pieza${sp.length > 1 ? 's' : ''} del programa sin precio cargado (no suman): ${sp.slice(0, 8).map(esc).join(', ')}${sp.length > 8 ? '…' : ''}`;
+        return h;
+      }
+      window.inoferResumenFacturacion = resumenFacturacion;
+
+      // ---------- leer montos escritos ("50 millones", "$ 12.500.000", "3,5M", "800 mil") ----------
+      function parseMonto(texto) {
+        const t = norm(texto).replace(/\$/g, ' $ ');
+        const re = /(\d+(?:[.,]\d+)*)\s*(millones|millon|mill|palos|palo|m\b|mm\b|mil\b|k\b)?/g;
+        let best = null, m;
+        while ((m = re.exec(t))) {
+          let num = m[1], u = m[2] || '';
+          const ctxAntes = t.slice(Math.max(0, m.index - 3), m.index);
+          if (!u && !/\$/.test(ctxAntes) && num.replace(/[.,]/g, '').length < 5) continue; // números chicos sin unidad: no es plata
+          let v;
+          if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(num)) v = Number(num.replace(/\./g, '').replace(',', '.'));
+          else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(num)) v = Number(num.replace(/,/g, ''));
+          else v = Number(num.replace(',', '.'));
+          if (/^(millones|millon|mill|palos|palo|m|mm)$/.test(u)) v *= 1e6;
+          else if (/^(mil|k)$/.test(u)) v *= 1e3;
+          if (v > 0 && (!best || v > best)) best = v;
+        }
+        return best;
+      }
+      window.inoferParseMonto = parseMonto;
+
+      // ---------- armar el Gantt para llegar a un objetivo de facturación ----------
+      function horasTurnos() {
+        try {
+          const c = typeof inoferTurnosConfig === 'function' ? inoferTurnosConfig() : null;
+          const e = c && (c.esquemas.find(x => x.id === c.activo) || c.esquemas[0]);
+          if (!e) return 24;
+          const aMin = h => { const [a, b] = String(h).split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+          const tot = e.turnos.reduce((s, t) => s + ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440), 0) / 60;
+          return Math.min(24, tot || 24);
+        } catch (e) { return 24; }
+      }
+      function horasUsadas(week, m, d) {
+        const md = week.machines[m] || {};
+        let h = 0;
+        (md.items || []).forEach(it => { if (!it.isSharedCompanion) h += (Number((it.dailyQty || [])[d]) || 0) / (Number(it.stdRate) || 60); });
+        Object.keys(md.aux || {}).forEach(k => { h += Number((md.aux[k] || [])[d]) || 0; });
+        return h;
+      }
+      function demandaPorPieza() {
+        const out = {};
+        try {
+          const txt = ($('autoGanttPasteArea') || {}).value || '';
+          if (!txt.trim() || typeof parseDemandTextToItems !== 'function') return out;
+          const now = new Date(); const mi = now.getMonth();
+          parseDemandTextToItems(txt).forEach(d => {
+            const ped = (d.mOrders || []);
+            const prox = (Number(ped[mi]) || 0) + (Number(ped[(mi + 1) % 12]) || 0);
+            const cons = Number(d.monthlyConsumption) || 0;
+            const alc = Number(d.alcOcMonths != null ? d.alcOcMonths : d.alcDispMonths);
+            out[clave(d.part)] = { pedido: Math.max(prox, cons), alcance: isFinite(alc) ? alc : 99 };
+          });
+        } catch (e) { }
+        return out;
+      }
+
+      function planMeta(week, objetivo, opts) {
+        opts = opts || {};
+        const f0 = facturacion(week);
+        const res = { antes: f0.total, objetivo, cambios: [], despues: f0.total, faltante: 0, avisos: [] };
+        if (objetivo <= f0.total) { res.yaCumple = true; return res; }
+        const cap = horasTurnos();
+        const dias = (opts.dias && opts.dias.length) ? opts.dias : [1, 2, 3, 4, 5];
+        const maqs = (opts.maquinas && opts.maquinas.length) ? opts.maquinas : MAQS();
+        const dem = demandaPorPieza();
+        const hayDemanda = Object.keys(dem).length > 0;
+        const SETUP = 0.87; // cambio de molde + alistamiento (h)
+        // cuánto se puede sumar de cada pieza en la semana
+        const yaPlan = {};
+        Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => { if (!it.isSharedCompanion) yaPlan[clave(it.part)] = (yaPlan[clave(it.part)] || 0) + (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); }));
+        const tope = {};
+        const topeDe = part => {
+          const k = clave(part);
+          if (k in tope) return tope[k];
+          let t;
+          if (opts.sinLimite) t = Infinity;
+          else if (dem[k]) t = Math.max(0, dem[k].pedido - (yaPlan[k] || 0));
+          else t = hayDemanda ? 0 : (yaPlan[k] || 0); // sin listado de demanda: como mucho duplicar lo programado
+          return (tope[k] = t);
+        };
+        // candidatos por máquina
+        const candidatos = [];
+        cat().forEach(c => {
+          const p = Number(c.precio) || 0;
+          if (!p || !c.part) return;
+          if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(c.part)) return;
+          const rate = Number(c.unitsPerHour) || 0;
+          if (!rate) return;
+          const ms = (c.machines || []).filter(m => maqs.includes(m));
+          ms.forEach(m => {
+            if (typeof inoferMaquinaAdmitePiston === 'function' && typeof inoferPistonDe === 'function') { const mm = inoferPistonDe(c.part); if (mm && !inoferMaquinaAdmitePiston(m, mm)) return; }
+            const yaEnMaq = ((week.machines[m] || {}).items || []).some(it => !it.isSharedCompanion && clave(it.part) === clave(c.part));
+            const urg = dem[clave(c.part)] ? dem[clave(c.part)].alcance : 50;
+            candidatos.push({ c, m, p, rate, valorHora: p * rate * (yaEnMaq ? 1.15 : 1) / (1 + Math.max(0, urg) / 40), yaEnMaq });
+          });
+        });
+        candidatos.sort((a, b) => b.valorHora - a.valorHora);
+        let falta = objetivo - f0.total;
+        const usadaEn = {}; // pieza -> máquina elegida (no repartir una pieza nueva en varias máquinas)
+        Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => { if (!it.isSharedCompanion && !usadaEn[clave(it.part)]) usadaEn[clave(it.part)] = m; }));
+        for (const k of candidatos) {
+          if (falta <= 0) break;
+          const kk = clave(k.c.part);
+          if (usadaEn[kk] && usadaEn[kk] !== k.m) continue;
+          let resto = topeDe(k.c.part);
+          if (resto <= 0) continue;
+          let md = week.machines[k.m];
+          if (!md) md = week.machines[k.m] = { aux: {}, items: [] };
+          if (!md.items) md.items = [];
+          let it = md.items.find(x => !x.isSharedCompanion && clave(x.part) === kk);
+          let agregado = 0, setupPend = !it;
+          const porDia = [];
+          const ordenDias = dias.slice().sort((a, b) => (horasUsadas(week, k.m, a) - horasUsadas(week, k.m, b)) || (a - b));
+          for (const d of ordenDias) {
+            if (falta <= 0 || resto <= 0) break;
+            let libre = cap - horasUsadas(week, k.m, d) - (setupPend ? SETUP : 0);
+            if (libre < 0.5) continue;
+            if (typeof inoferChoqueManual === 'function' && inoferChoqueManual(week, k.c.part, k.m, [d])) continue;
+            const q = Math.min(Math.floor(libre * k.rate), resto, Math.ceil(falta / k.p));
+            if (q <= 0) continue;
+            if (!it) {
+              const mat = String(k.c.material || '').toLowerCase().includes('zam') ? 'zamac' : 'alsi';
+              it = { id: 'gi-meta-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), part: k.c.part, desc: k.c.desc || ('Pieza ' + k.c.part), totalQty: 0, mat, stdRate: k.rate,
+                weightKg: Number(k.c.weightWithSprueKg) || 0, recuperoKg: (Number(k.c.weightWithSprueKg) || 0) * 0.3, dailyQty: [0, 0, 0, 0, 0, 0, 0], orderId: '', sharedWithPart: '', isSharedCompanion: false };
+              md.items.push(it);
+              if (!md.aux) md.aux = {};
+              if (!md.aux.CMO) md.aux.CMO = [0, 0, 0, 0, 0, 0, 0];
+              md.aux.CMO[d] = Math.round(((Number(md.aux.CMO[d]) || 0) + SETUP) * 100) / 100;
+              setupPend = false;
+            }
+            it.dailyQty[d] = (Number(it.dailyQty[d]) || 0) + q;
+            agregado += q; resto -= q; falta -= q * k.p;
+            porDia.push(`${DIA[d].slice(0, 3)} ${q}`);
+          }
+          if (agregado) {
+            tope[kk] = resto; usadaEn[kk] = k.m;
+            it.totalQty = Math.max(Number(it.totalQty) || 0, (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0));
+            res.cambios.push({ part: k.c.part, m: k.m, qty: agregado, monto: agregado * k.p, nueva: !k.yaEnMaq, detalle: porDia.join(', ') });
+          }
+        }
+        res.despues = facturacion(week).total;
+        res.faltante = Math.max(0, objetivo - res.despues);
+        if (!hayDemanda && !opts.sinLimite) res.avisos.push('No hay listado de demanda cargado en el Gantt automático: solo subí piezas que ya estaban programadas (hasta el doble).');
+        res.capHoras = cap;
+        return res;
+      }
+      window.inoferPlanMeta = planMeta;
+
+      function textoPlan(r) {
+        if (r.yaCumple) return `✓ El programa ya factura ${plata(r.antes)}, que alcanza el objetivo de ${plata(r.objetivo)}.`;
+        let h = `🎯 Objetivo ${plata(r.objetivo)} · antes ${plata(r.antes)} → ahora <b>${plata(r.despues)}</b>`;
+        if (r.cambios.length) h += '<br>' + r.cambios.map(c => `✓ ${esc(c.part)} en la ${c.m}: +${c.qty.toLocaleString('es-AR')} u (${c.detalle}) = ${plata(c.monto)}${c.nueva ? ' · nueva (+0,87 h cambio de molde)' : ''}`).join('<br>');
+        if (r.faltante > 0) h += `<br>⚠️ Faltan ${plata(r.faltante)} para el objetivo: no queda capacidad (${r.capHoras} h por día según los turnos) o demanda de piezas con precio. Podés pedirme que incluya el sábado, otra máquina, o "sin límite de demanda".`;
+        else h += '<br>✓ Objetivo alcanzado.';
+        r.avisos.forEach(a => { h += '<br>ℹ️ ' + esc(a); });
+        return h;
+      }
+      window.inoferTextoPlanMeta = textoPlan;
+
+      // ---------- panel de precios en la base de datos ----------
+      function leerNumeroPrecio(v) {
+        if (typeof v === 'number') return v;
+        let s = String(v || '').replace(/[^\d.,-]/g, '');
+        if (!s) return 0;
+        if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+        else if (/\.\d{3}(\D|$)/.test(s) && !/\.\d{1,2}$/.test(s)) s = s.replace(/\./g, '');
+        else s = s.replace(/,/g, '');
+        return Number(s) || 0;
+      }
+      function importarFilas(rows) {
+        // buscar la fila de encabezados
+        let hi = -1, ci = -1, pi = -1;
+        for (let i = 0; i < Math.min(rows.length, 30); i++) {
+          const r = rows[i].map(x => norm(x));
+          const c = r.findIndex(x => /^(pieza|codigo|cod|articulo|art|item|producto|n° pieza|nro pieza|numero de pieza|part)/.test(x) || /cod(igo)?\.? ?(de )?(pieza|art)/.test(x));
+          const p = r.findIndex(x => /precio|price|importe|valor|unitario/.test(x));
+          if (c >= 0 && p >= 0) { hi = i; ci = c; pi = p; break; }
+        }
+        if (hi < 0) { // sin encabezado: primera columna de texto y primera numérica
+          hi = -1; ci = 0; pi = rows[0] ? rows[0].findIndex((x, j) => j > 0 && leerNumeroPrecio(x) > 0) : 1; if (pi < 0) pi = 1;
+        }
+        const res = { ok: 0, cambiados: 0, noEncontradas: [], vacias: 0 };
+        rows.slice(hi + 1).forEach(r => {
+          const code = String(r[ci] == null ? '' : r[ci]).trim();
+          if (!code) return;
+          const v = Math.round(leerNumeroPrecio(r[pi]) * 100) / 100;
+          if (!(v > 0)) { res.vacias++; return; }
+          const it = catDe(code);
+          if (!it) { res.noEncontradas.push(code); return; }
+          res.ok++;
+          if ((Number(it.precio) || 0) !== v) { it.precio = v; it.precioAt = new Date().toISOString(); res.cambiados++; }
+        });
+        if (res.cambiados) savePartsCatalog();
+        try { if (typeof renderCatalogTable === 'function') renderCatalogTable(); } catch (e) { }
+        try { if (typeof renderCatalogView === 'function') renderCatalogView(); } catch (e) { }
+        return res;
+      }
+      window.inoferImportarPreciosFilas = importarFilas;
+      function importarArchivo(file) {
+        if (!file) return;
+        if (typeof inoferCan === 'function' && !inoferCan('catalogo', 'edit')) { showToast('Tu usuario no puede modificar la base de datos'); return; }
+        const rd = new FileReader();
+        const fin = rows => {
+          const r = importarFilas(rows);
+          const msg = `Precios: ${r.ok} piezas encontradas, ${r.cambiados} actualizadas${r.noEncontradas.length ? `, ${r.noEncontradas.length} códigos que no están en la base` : ''}.`;
+          showToast(msg);
+          const box = $('inoferPreciosResultado');
+          if (box) box.innerHTML = esc(msg) + (r.noEncontradas.length ? `<details class="mt-1"><summary class="cursor-pointer text-amber-300">Ver códigos no encontrados</summary><div class="mt-1 max-h-32 overflow-auto text-slate-400">${r.noEncontradas.map(esc).join(', ')}</div></details>` : '');
+          renderPanelPrecios();
+        };
+        if (/\.(csv|txt)$/i.test(file.name)) {
+          rd.onload = () => fin(String(rd.result).split(/\r?\n/).map(l => l.split(/[;\t]/.test(l) ? /[;\t]/ : ',')));
+          rd.readAsText(file);
+        } else {
+          if (typeof XLSX === 'undefined') { showToast('No se pudo leer Excel en este equipo'); return; }
+          rd.onload = () => {
+            try {
+              const wb = XLSX.read(new Uint8Array(rd.result), { type: 'array' });
+              let rows = [];
+              wb.SheetNames.forEach(n => { rows = rows.concat(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })); });
+              fin(rows);
+            } catch (e) { showToast('No pude leer el archivo: ' + e.message); }
+          };
+          rd.readAsArrayBuffer(file);
+        }
+      }
+      function renderPanelPrecios() {
+        const p = $('inoferPanelPrecios');
+        if (!p) return;
+        const total = cat().length, con = cat().filter(x => Number(x.precio) > 0).length;
+        const ult = cat().map(x => x.precioAt || '').filter(Boolean).sort().pop();
+        $('inoferPreciosEstado').innerHTML = `<b class="text-lime-300">${con}</b> de ${total} piezas con precio${ult ? ` · último cambio ${new Date(ult).toLocaleDateString('es-AR')}` : ''}`;
+      }
+      function montarPanel() {
+        const form = $('catalogForm');
+        if (!form || $('inoferPanelPrecios')) return;
+        const d = document.createElement('div');
+        d.id = 'inoferPanelPrecios';
+        d.className = 'rounded-xl border border-lime-500/30 bg-slate-950/70 p-3 mb-3';
+        d.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-2">
+            <div><div class="text-sm font-extrabold text-lime-300">💲 Precios sin IVA</div>
+            <div id="inoferPreciosEstado" class="text-[11px] text-slate-400"></div></div>
+            <label id="inoferPreciosImportarBtn" class="cursor-pointer rounded-lg border border-lime-500/40 bg-lime-500/10 px-2.5 py-1 text-[11px] font-bold text-lime-200 hover:bg-lime-500/20">📥 Importar lista de precios (Excel)
+              <input type="file" id="inoferPreciosFile" accept=".xlsx,.xls,.csv,.txt" class="hidden"></label>
+          </div>
+          <p class="mt-1 text-[11px] text-slate-400">El Excel necesita una columna con el código de pieza y otra con el precio. Cada precio también se puede cambiar a mano en la tabla (💲) o al editar la pieza.</p>
+          <div id="inoferPreciosResultado" class="mt-1 text-[11px] text-slate-300"></div>`;
+        form.parentElement.insertBefore(d, form);
+        $('inoferPreciosFile').addEventListener('change', e => { importarArchivo(e.target.files[0]); e.target.value = ''; });
+        if (typeof INOFER_EDIT_CONTROLS !== 'undefined') INOFER_EDIT_CONTROLS.catalogo.push('#inoferPreciosImportarBtn', '#inoferPreciosFile', '.inline-precio-input', '#cat_precio');
+        renderPanelPrecios();
+      }
+
+      // ---------- total facturado visible en el asistente del Gantt ----------
+      function actualizarBadge() {
+        const head = $('inoferGanttChatToggle');
+        if (!head) return;
+        let b = $('inoferGanttFactBadge');
+        if (!b) { b = document.createElement('span'); b.id = 'inoferGanttFactBadge'; b.className = 'rounded-lg bg-lime-500/15 px-2 py-0.5 text-[11px] font-bold text-lime-300'; head.parentElement.insertBefore(b, head.nextSibling); }
+        try {
+          const w = getActiveGanttWeek();
+          const f = facturacion(w);
+          const sp = Object.keys(f.sinPrecio).length;
+          b.textContent = `💲 ${w ? w.code : ''}: ${plata(f.total)}${sp ? ` (${sp} sin precio)` : ''}`;
+          b.title = 'Facturación sin IVA del programa armado';
+        } catch (e) { }
+      }
+      if (typeof window.renderGanttView === 'function') {
+        const rg = window.renderGanttView;
+        window.renderGanttView = function () { const r = rg.apply(this, arguments); try { actualizarBadge(); } catch (e) { } return r; };
+      }
+      if (typeof window.savePartsCatalog === 'function') {
+        const sc = window.savePartsCatalog;
+        window.savePartsCatalog = function () { const r = sc.apply(this, arguments); try { actualizarBadge(); renderPanelPrecios(); } catch (e) { } return r; };
+      }
+      function iniciar() { try { montarPanel(); } catch (e) { console.error(e); } setTimeout(() => { try { actualizarBadge(); } catch (e) { } }, 300); }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
     })();
   </script>
   <script>
