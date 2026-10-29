@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.28" />
+  <meta name="inofer-version" content="2026.10.29.29" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -4893,6 +4893,7 @@ ${lines}${trendNote}`;
         contents: history.concat([{ role: 'user', parts: [{ text: 'DATOS ACTUALES DE LA PLANTA (JSON):\n' + ctxJson + '\n\nCONSULTA: ' + promptText }] }]),
         generationConfig: { temperature: 0.35, maxOutputTokens: 2048 }
       };
+      if (!key && typeof inoferLLM === 'function') return await inoferLLM(body);
       let lastErr = 'sin respuesta';
       for (const model of GEMINI_MODELS) {
         let resp, data;
@@ -4961,7 +4962,7 @@ ${lines}${trendNote}`;
         return;
       }
 
-      if (geminiApiKey) {
+      if (geminiApiKey || (typeof inoferIaDisponible === 'function' && inoferIaDisponible())) {
         aiBusy = true;
         aiShowTyping(true);
         try {
@@ -12193,33 +12194,63 @@ Pedido: ${frase}`;
       }
 
       // ---------- flujo principal ----------
-      async function procesar(texto) {
+      async function procesar(texto, opciones) {
+        opciones = opciones || {};
         texto = String(texto || '').trim();
-        if (!texto) return;
-        agregarMsg('user', esc(texto));
+        if (!texto) return '';
+        const salida = html => { if (opciones.devolver) return html; agregarMsg('bot', html); return html; };
+        if (!opciones.devolver) agregarMsg('user', esc(texto));
         const puedeEditar = (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('gantt_asistente'));
         const puedePrecios = typeof inoferPuede !== 'function' || inoferPuede('precios_ver');
+        const sel = semanasElegidas();
+        if (sel.length && !sel.includes(activeGanttWeekCode)) activeGanttWeekCode = sel[0];
         let week = getActiveGanttWeek();
-        if (!week) { agregarMsg('bot', 'No hay ninguna semana abierta en el Gantt.'); return; }
-        const frases = texto.split(/\n|;|\.(?=\s|$)|\by despues\b|\by luego\b/i).map(s => s.trim()).filter(Boolean);
+        if (!week) return salida('No hay ninguna semana abierta en el Gantt.');
         let ops = [];
-        let usoIA = false;
-        for (const fr of frases) {
-          let o = interpretar(fr, week);
-          if (o.length === 1 && o[0].op === 'error') {
-            const g = await pedirAGemini(fr, week);
-            if (g && g.ops.length) { o = g.ops; usoIA = true; }
-            else if (g && g.nota) o = [{ op: 'error', msg: g.nota }];
-          }
-          ops = ops.concat(o);
+        let respuestaIA = '';
+        const fn = norm(texto);
+        const local = /^(deshace|deshacer|volve atras|anula|undo|ayuda|que podes hacer|comandos|que hiciste|que cambiaste|detall|dame (el )?detalle)/.test(fn);
+        if (!local && typeof inoferIaDisponible === 'function' && inoferIaDisponible()) {
+          if (!opciones.devolver) mostrarEscribiendo(true);
+          try {
+            const r = await pedirIA(texto, sel, { puedeEditar, puedePrecios });
+            ops = Array.isArray(r.ops) ? r.ops : [];
+            respuestaIA = String(r.respuesta || '').trim();
+            historialIA.push({ role: 'user', text: texto }, { role: 'model', text: JSON.stringify({ respuesta: respuestaIA, ops }) });
+            if (historialIA.length > 16) historialIA = historialIA.slice(-16);
+          } catch (e) { ops = []; respuestaIA = ''; console.warn('IA:', e.message); }
+          if (!opciones.devolver) mostrarEscribiendo(false);
+        }
+        if (!ops.length && !respuestaIA) {
+          const frases = texto.split(/\n|;|\.(?=\s|$)|\by despues\b|\by luego\b/i).map(s => s.trim()).filter(Boolean);
+          for (const fr of frases) ops = ops.concat(interpretar(fr, week));
+          // pedidos de "aumentar N piezas" sin día: se reparten en la semana
+          ops = ops.map(o => o.op === 'error' && /(aument|sub[ií]|agreg|sum)/.test(fn) ? (aumentoLocal(texto, week) || o) : o);
         }
         const respuestas = [], avisos = [], errores = [], detalles = [];
         let cambio = false, nCambios = 0;
         const quiereDetalle = /detall|explic|que hiciste|que cambiaste|mostra(me)? (los )?cambios|paso a paso|desglos|por maquina|por dia|completo/.test(norm(texto));
         const copia = JSON.stringify(ganttWeeksData);
         const semanaAntes = activeGanttWeekCode;
+        const tocadas = new Set([activeGanttWeekCode]);
         for (const op of ops) {
+          if (op && op.semana && op.op !== 'week') {
+            const cs = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.semana) || norm(c) === norm('SEM-' + String(op.semana).replace(/\D/g, '')));
+            if (!cs) { errores.push(`No existe la semana ${op.semana}.`); continue; }
+            week = ganttWeeksData[cs]; tocadas.add(cs);
+          } else if (op && op.op !== 'week') { week = getActiveGanttWeek(); }
           if (op.op === 'help') { respuestas.push(AYUDA); continue; }
+          if (op.op === 'aumentar' || op.op === 'reducir') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            const semanas = op.semana ? [week.code] : (sel.length ? sel : [week.code]);
+            try {
+              const r = op.op === 'aumentar' ? aumentarPiezas(op, semanas, avisos) : reducirPiezas(op, semanas);
+              semanas.forEach(c => tocadas.add(c));
+              if (r.cant) { cambio = true; nCambios++; detalles.push('✓ ' + esc(r.texto)); if (quiereDetalle) respuestas.push('✓ ' + esc(r.texto)); }
+              if (r.falta) errores.push(r.faltaTexto);
+            } catch (e) { errores.push(typeof e === 'string' ? e : e.message); }
+            continue;
+          }
           if (op.op === 'detalle') { respuestas.push(ultimoDetalle || 'Todavía no hice cambios en esta sesión.'); continue; }
           if (op.op === 'error') { errores.push(op.msg); continue; }
           if (op.op === 'show') { respuestas.push(resumen(week, op.mach)); continue; }
@@ -12234,10 +12265,27 @@ Pedido: ${frase}`;
           if (op.op === 'meta') {
             if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
             if (typeof inoferPlanMeta !== 'function') { errores.push('Falta el módulo de precios.'); continue; }
-            const base = inoferFacturacion(week).total;
+            const semMeta = op.semana ? [week.code] : (sel.length ? sel : [week.code]);
+            const weeksM = semMeta.map(c => ganttWeeksData[c]).filter(Boolean);
+            const base = weeksM.reduce((a, w) => a + inoferFacturacion(w).total, 0);
             const obj = op.pct != null ? base * (1 + op.pct / 100) : (op.incremental ? base + op.monto : op.monto);
             if (!base && !Object.values(partsCatalog || []).some(c => Number(c.precio) > 0)) { errores.push('Todavía no hay precios cargados en la base de datos.'); continue; }
-            const r = inoferPlanMeta(week, obj, { dias: op.dias, maquinas: op.maquinas, sinLimite: op.sinLimite });
+            // varias semanas: se completa en orden hasta llegar al objetivo total
+            let r = null, faltaTot = obj - base;
+            const agg = { antes: base, objetivo: obj, cambios: [], despues: base, faltante: 0, avisos: [], capHoras: 24 };
+            for (const w of weeksM) {
+              if (faltaTot <= 0) break;
+              const actual = inoferFacturacion(w).total;
+              const rr = inoferPlanMeta(w, actual + faltaTot, { dias: op.dias, maquinas: op.maquinas, sinLimite: op.sinLimite });
+              tocadas.add(w.code);
+              faltaTot -= (rr.despues - rr.antes);
+              rr.cambios.forEach(c => agg.cambios.push(Object.assign({}, c, { detalle: (weeksM.length > 1 ? w.code + ': ' : '') + c.detalle })));
+              rr.avisos.forEach(a => { if (!agg.avisos.includes(a)) agg.avisos.push(a); });
+              agg.capHoras = rr.capHoras;
+            }
+            agg.despues = weeksM.reduce((a, w) => a + inoferFacturacion(w).total, 0);
+            agg.faltante = Math.max(0, obj - agg.despues); agg.yaCumple = base >= obj;
+            r = agg;
             if (r.cambios.length) { cambio = true; nCambios += r.cambios.length; }
             const full = inoferTextoPlanMeta(r);
             detalles.push(full);
@@ -12268,21 +12316,193 @@ Pedido: ${frase}`;
           const ultimaEsUndo = ops.some(o => o.op === 'undo');
           if (!ultimaEsUndo) historial.push({ datos: copia, semana: semanaAntes });
           if (historial.length > 30) historial.shift();
-          limpiarVacios(week);
+          tocadas.forEach(c => { if (ganttWeeksData[c]) limpiarVacios(ganttWeeksData[c]); });
           saveGanttWeeks();
         }
         if (cambio || activeGanttWeekCode !== semanaAntes) renderGanttView();
         const avisosImp = avisos.filter(a => /^⚠️/.test(a));
         const avisosInfo = avisos.filter(a => !/^⚠️/.test(a));
         if (detalles.length) ultimoDetalle = detalles.concat(avisos.map(esc)).join('<br>');
-        if (!quiereDetalle && nCambios && !respuestas.some(r => /^🎯|^✓ El programa/.test(r))) respuestas.unshift('✓ Listo.');
-        let html = respuestas.join('<br>');
+        if (respuestaIA && errores.length && ops.length) { if (nCambios) respuestas.unshift('⚠️ Lo hice en parte:', ...(quiereDetalle ? [] : detalles.map(d => d.replace(/\(.*\)$/, '')))); }
+        else if (respuestaIA) respuestas.unshift(esc(respuestaIA).replace(/\n/g, '<br>'));
+        else if (!quiereDetalle && nCambios && !respuestas.some(r => /^🎯|^✓ El programa/.test(r))) respuestas.unshift('✓ Listo.');
+        let html = respuestas.filter(Boolean).join('<br>');
         if (quiereDetalle && avisosInfo.length) html += (html ? '<br>' : '') + avisosInfo.map(esc).join('<br>');
         if (avisosImp.length) html += (html ? '<br>' : '') + avisosImp.map(esc).join('<br>');
         if (errores.length) html += (html ? '<br>' : '') + errores.map(e => '✗ ' + esc(e)).join('<br>');
-        agregarMsg('bot', html || 'Listo.');
+        return salida(html || 'Listo.');
       }
       window.inoferGanttChat = procesar;
+      window.inoferGanttEjecutar = t => procesar(t, { devolver: true });
+
+      // ---------- semanas que planifica el asistente ----------
+      const SEM_KEY = 'tablero_inyectoras_asistente_semanas_v1';
+      function semanasElegidas() {
+        let a = [];
+        try { a = JSON.parse(localStorage.getItem(SEM_KEY) || '[]'); } catch (e) { }
+        a = (Array.isArray(a) ? a : []).filter(c => ganttWeeksData[c]).sort((x, y) => (parseInt(x.replace(/\D/g, ''), 10) || 0) - (parseInt(y.replace(/\D/g, ''), 10) || 0));
+        return a.length ? a : (activeGanttWeekCode && ganttWeeksData[activeGanttWeekCode] ? [activeGanttWeekCode] : []);
+      }
+      function guardarSemanas(a) { try { localStorage.setItem(SEM_KEY, JSON.stringify(a)); } catch (e) { } }
+      function renderSemanas() {
+        const box = $('inoferGanttSemanas'); if (!box) return;
+        const sel = semanasElegidas();
+        const codes = Object.keys(ganttWeeksData).sort((a, b) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b.replace(/\D/g, ''), 10) || 0));
+        box.innerHTML = '<span class="text-[11px] font-bold text-slate-400">Semanas a planificar:</span>' + codes.map(c => `<button type="button" data-sem="${esc(c)}" class="inofer-sem-chip rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${sel.includes(c) ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200' : 'border-slate-700 text-slate-400 hover:text-white'}">${esc(c)}</button>`).join('');
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-sem-chip'); if (!b) return;
+        let sel = semanasElegidas(); const c = b.dataset.sem;
+        sel = sel.includes(c) ? sel.filter(x => x !== c) : sel.concat([c]);
+        if (!sel.length) sel = [c];
+        sel.sort((a, b2) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b2.replace(/\D/g, ''), 10) || 0));
+        guardarSemanas(sel);
+        if (!sel.includes(activeGanttWeekCode)) { activeGanttWeekCode = sel[0]; renderGanttView(); }
+        renderSemanas();
+      });
+      window.inoferSemanasAsistente = semanasElegidas;
+
+      // ---------- aumentar / reducir cantidades repartiendo en los días con capacidad ----------
+      function capDia() {
+        try { const c = inoferTurnosConfig(); const e = c.esquemas.find(x => x.id === c.activo) || c.esquemas[0];
+          const aMin = h => { const [a, b] = String(h).split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+          return Math.min(24, e.turnos.reduce((s2, t) => s2 + ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440), 0) / 60) || 24; } catch (e) { return 24; }
+      }
+      function aumentarPiezas(op, semanas, avisos) {
+        let resto = Math.round(Number(op.qty) || 0);
+        if (resto <= 0) throw 'Decime cuántas piezas querés sumar.';
+        const pz = resolverPieza(String(op.part || ''), getActiveGanttWeek() || { machines: {} });
+        if (pz.ambigua) throw `"${op.part}" coincide con varias piezas: ${pz.ambigua.join(', ')}.`;
+        const part = pz.part;
+        const cap = capDia();
+        const dias = Array.isArray(op.dias) && op.dias.length ? op.dias.map(Number) : [1, 2, 3, 4, 5].concat(op.sabado ? [6] : []);
+        let puesto = 0; const detalle = [];
+        for (const code of semanas) {
+          if (resto <= 0) break;
+          const w = ganttWeeksData[code]; if (!w) continue;
+          let x = buscar(w, part, op.mach || null)[0];
+          let m = x ? x.m : (op.mach || maquinaPorDefecto(part));
+          if (!m) throw `La ${part} no está programada. Decime en qué máquina la pongo.`;
+          let it = x ? x.it : null;
+          const orden = dias.slice().sort((a, b) => ((it && Number(it.dailyQty[b]) > 0) - (it && Number(it.dailyQty[a]) > 0)) || (horasDia(w, m, a) - horasDia(w, m, b)) || (a - b));
+          for (const d of orden) {
+            if (resto <= 0) break;
+            const err = validarUbicacion(w, part, m, [d]);
+            if (err) { if (!it) throw err; continue; }
+            let libre = cap - horasDia(w, m, d);
+            if (!it) {
+              it = nuevoItem(part, m); asegurarMaquina(w, m).items.push(it);
+              const hs = typeof inoferAgregarSetup === 'function' ? inoferAgregarSetup(w, m, d) : 0; libre -= hs;
+              const lm = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(part, m) : 0;
+              if (lm && Number(op.qty) < lm) avisos.push(`⚠️ La ${part} queda por debajo del lote mínimo de ${lm.toLocaleString('es-AR')} u.`);
+            }
+            const rate = Number(it.stdRate) || 60;
+            const q = Math.min(resto, Math.floor(Math.max(0, libre) * rate));
+            if (q <= 0) continue;
+            it.dailyQty[d] = (Number(it.dailyQty[d]) || 0) + q;
+            sincronizarCompañeras(w, m, it);
+            resto -= q; puesto += q; detalle.push(`${code} ${DIA_NOMBRE[d].slice(0, 3)} +${q}`);
+          }
+        }
+        const r = { cant: puesto, texto: `${part}: +${puesto.toLocaleString('es-AR')} u (${detalle.join(', ')})` };
+        if (resto > 0) { r.falta = resto; r.faltaTexto = `No entraron ${resto.toLocaleString('es-AR')} u de la ${part}: no queda capacidad en ${semanas.join(', ')}. Elegí otra semana más para seguir.`; }
+        return r;
+      }
+      function reducirPiezas(op, semanas) {
+        let resto = Math.round(Number(op.qty) || 0);
+        const pz = resolverPieza(String(op.part || ''), getActiveGanttWeek() || { machines: {} });
+        const part = pz.part; let quitado = 0;
+        for (const code of semanas.slice().reverse()) {
+          const w = ganttWeeksData[code]; if (!w || resto <= 0) continue;
+          for (const x of buscar(w, part, op.mach || null)) {
+            for (const d of [6, 5, 4, 3, 2, 1, 0]) {
+              if (resto <= 0) break;
+              const q = Math.min(resto, Number(x.it.dailyQty[d]) || 0);
+              if (q > 0) { x.it.dailyQty[d] -= q; resto -= q; quitado += q; }
+            }
+            sincronizarCompañeras(w, x.m, x.it);
+          }
+        }
+        if (!quitado) throw `No encontré la ${part} en ${semanas.join(', ')}.`;
+        return { cant: quitado, texto: `${part}: -${quitado.toLocaleString('es-AR')} u` };
+      }
+      function aumentoLocal(texto, week) {
+        const x = extraer(texto, week);
+        if (!x.piezas.length || !x.numeros.length) return null;
+        const pz = resolverPieza(x.piezas[0].token, week);
+        if (pz.ambigua) return null;
+        return { op: /(baj|rest|reduc|sac)/.test(norm(texto)) ? 'reducir' : 'aumentar', part: pz.part, qty: x.numeros[0].n, mach: x.maquinas[0] ? x.maquinas[0].id : null, sabado: /sabado/.test(norm(texto)) };
+      }
+
+      // ---------- IA: entender pedidos escritos como a una persona ----------
+      let historialIA = [];
+      function contextoIA(sel, perm) {
+        const cap = capDia();
+        const semanas = sel.map(c => ganttWeeksData[c]).filter(Boolean).map(w => {
+          const maquinas = {};
+          MAQS().forEach(m => {
+            const md = w.machines[m] || {};
+            maquinas[m] = { piezas: (md.items || []).filter(it => !it.isSharedCompanion).map(it => ({ pieza: it.part, porDia: it.dailyQty, uh: it.stdRate })),
+              horasUsadasPorDia: [0, 1, 2, 3, 4, 5, 6].map(d => Math.round(horasDia(w, m, d) * 10) / 10) };
+          });
+          const out = { semana: w.code, nombre: w.name, maquinas };
+          if (perm.puedePrecios && typeof inoferFacturacion === 'function') out.facturacionSinIVA = Math.round(inoferFacturacion(w).total);
+          return out;
+        });
+        const catalogo = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).filter(c => c && c.part && !(typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(c.part))).map(c => {
+          const o = { p: c.part, maq: (c.machines || []).join('/'), uh: Number(c.unitsPerHour) || 0 };
+          const lm = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(c.part) : 0; if (lm) o.lote = lm;
+          if (perm.puedePrecios && Number(c.precio) > 0) o.precio = Number(c.precio);
+          if (c.portamolde) o.pm = c.portamolde;
+          if (Number(c.pistonMm)) o.pis = Number(c.pistonMm);
+          return o;
+        });
+        return { semanasSeleccionadas: semanas, semanaActiva: activeGanttWeekCode, semanasExistentes: Object.keys(ganttWeeksData), capacidadHorasPorDia: cap,
+          diasIndice: '0=domingo,1=lunes,2=martes,3=miércoles,4=jueves,5=viernes,6=sábado (se trabaja lunes a viernes salvo que pidan sábado)',
+          setupPorMaquinaHoras: Object.fromEntries(MAQS().map(m => [m, typeof inoferSetupDe === 'function' ? inoferSetupDe(m).total : 0])),
+          puedeModificar: perm.puedeEditar, puedeVerPrecios: perm.puedePrecios, catalogo };
+      }
+      const SISTEMA_IA = `Sos el asistente de programación (Gantt) de la planta de inyección INOFER, en Argentina. Hablás en español rioplatense, como un compañero de planta: claro y BREVE (una o dos oraciones), sin detallar lo que hacés salvo que te lo pidan.
+Entendé el pedido aunque esté mal escrito, con abreviaturas o códigos incompletos (ej: "la 26608" = pieza que empieza con 26608). Usá el catálogo y el plan que te paso.
+Si el usuario pide CAMBIOS en el plan, devolvé operaciones. Si solo pregunta, contestá con los datos (sin operaciones).
+Respondé SIEMPRE solo con JSON: {"respuesta":"texto breve","ops":[...]}
+Operaciones (agregá "semana":"SEM-NN" si corresponde a una semana específica; si no, se usan las semanas seleccionadas):
+{"op":"aumentar","part","qty","mach"|null,"dias":[índices]|null,"sabado":false}  sumar piezas repartiéndolas en los días con capacidad (si no entra pasa a la próxima semana seleccionada)
+{"op":"reducir","part","qty","mach"|null}
+{"op":"set","part","mach"|null,"day","qty"}  fijar la cantidad de un día
+{"op":"add","part","mach"|null,"day","qty"}  sumar/restar en un día puntual
+{"op":"move_day","part","mach"|null,"from","to","qty"|null,"toMach"|null}
+{"op":"move_mach","part","from"|null,"to","days"|null}
+{"op":"swap","part","mach"|null,"a","b"}
+{"op":"remove","part","mach"|null}
+{"op":"aux","mach","code":"CMA|CMO|ALIS|DESG|LING|LIMP|CPIS","day","hours"}
+{"op":"week","code":"SEM-NN"}  abrir otra semana
+{"op":"facturacion"}  cuánto factura (solo si puedeVerPrecios)
+{"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":null,"maquinas":null,"sinLimite":false}  llegar a un objetivo de facturación en pesos
+{"op":"show","mach"|null}
+Reglas de planta que respeta la app (no hace falta que las verifiques, pero tenelas en cuenta al proponer): piezas terminadas en -R no se inyectan; piezas del mismo portamolde (pm) no pueden estar en máquina el mismo día; cada pieza solo en sus máquinas compatibles (maq) y con su pistón (pis); no se programa menos que el lote mínimo (lote) salvo pedido explícito; cada pieza nueva en una máquina suma su set-up; capacidad por día según capacidadHorasPorDia.
+Si puedeModificar es false, no devuelvas operaciones de cambio y explicá que no tiene permiso.
+Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta" sin operaciones.`;
+      async function pedirIA(texto, sel, perm) {
+        const ctx = contextoIA(sel, perm);
+        const cuerpo = {
+          systemInstruction: { parts: [{ text: SISTEMA_IA }] },
+          contents: historialIA.slice(-12).map(m => ({ role: m.role, parts: [{ text: m.text }] }))
+            .concat([{ role: 'user', parts: [{ text: 'PLAN Y DATOS (JSON):\n' + JSON.stringify(ctx) + '\n\nPEDIDO: ' + texto }] }]),
+          generationConfig: { temperature: 0.15, responseMimeType: 'application/json', maxOutputTokens: 2048 }
+        };
+        const txt = await inoferLLM(cuerpo);
+        const limpio = String(txt).replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+        let j; try { j = JSON.parse(limpio); } catch (e) { const m = limpio.match(/\{[\s\S]*\}/); j = m ? JSON.parse(m[0]) : null; }
+        if (!j || typeof j !== 'object') throw new Error('respuesta de IA ilegible');
+        return j;
+      }
+      function mostrarEscribiendo(on) {
+        const box = $('inoferGanttChatLog'); if (!box) return;
+        let t = $('inoferGanttTyping');
+        if (on && !t) { box.insertAdjacentHTML('beforeend', '<div id="inoferGanttTyping" class="flex"><div class="rounded-xl bg-slate-800 px-3 py-1.5 text-xs text-slate-400">Pensando…</div></div>'); box.scrollTop = box.scrollHeight; }
+        if (!on && t) t.remove();
+      }
       window.inoferGanttInterpretar = frase => interpretar(frase, getActiveGanttWeek() || { machines: {} });
 
       // ---------- interfaz ----------
@@ -12311,6 +12531,7 @@ Pedido: ${frase}`;
             </div>
           </div>
           <div id="inoferGanttChatBody" class="mt-3 space-y-2">
+            <div id="inoferGanttSemanas" class="flex flex-wrap items-center gap-1.5"></div>
             <div id="inoferGanttChatLog" class="max-h-60 min-h-[60px] space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2"></div>
             <form id="inoferGanttChatForm" class="flex gap-2">
               <input id="inoferGanttChatInput" autocomplete="off" placeholder='Ej: pasá la 26608 del lunes al martes · mové la 34111-PB a la 200N' class="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-emerald-400 focus:outline-none">
@@ -12340,7 +12561,13 @@ Pedido: ${frase}`;
             try { rec.start(); } catch (e) { rec = null; }
           });
         }
-        agregarMsg('bot', 'Hola 👋 Decime qué querés cambiar del Gantt de la semana que tenés abierta. Respeto portamoldes, piezas -R, pistones, set-up y lotes mínimos. Te contesto corto; si querés el detalle preguntame <b>qué hiciste</b>. Escribí <b>ayuda</b> para ver ejemplos.');
+        renderSemanas();
+        if (typeof window.renderGanttView === 'function' && !window.__inoferSemHook) {
+          window.__inoferSemHook = true;
+          const rgS = window.renderGanttView;
+          window.renderGanttView = function () { const r = rgS.apply(this, arguments); try { renderSemanas(); } catch (e) { } return r; };
+        }
+        agregarMsg('bot', 'Hola 👋 Escribime como le hablarías a un compañero y lo cambio en el Gantt, en las semanas que marques arriba. Respeto portamoldes, piezas -R, pistones, set-up y lotes mínimos. Te contesto corto; si querés el detalle preguntame <b>qué hiciste</b>. Escribí <b>ayuda</b> para ver ejemplos.');
       }
 
       // ===================== LISTA DE ÓRDENES =====================
@@ -14246,6 +14473,83 @@ Pedido: ${frase}`;
       }
       const espera = setInterval(() => { try { iniciar(); } catch (e) { } if ($('inoferMsgBtn') && t1) clearInterval(espera); }, 2000);
       window.inoferMensajes = { abrir, refrescar, estado: st };
+    })();
+  </script>
+  <script>
+    // ===== IA compartida: Gemini a través de la nube (la clave la carga el administrador una sola vez) =====
+    (function () {
+      let iaServidor = false;
+      const enNube = () => typeof inoferAuthMode !== 'undefined' && inoferAuthMode === 'nube' && typeof inoferAuthToken === 'function' && inoferAuthToken();
+      window.inoferIaDisponible = () => !!(typeof geminiApiKey !== 'undefined' && geminiApiKey) || (iaServidor && !!enNube());
+      async function directo(cuerpo, key) {
+        let ultimo = 'sin respuesta';
+        for (const model of (typeof GEMINI_MODELS !== 'undefined' ? GEMINI_MODELS : ['gemini-2.5-flash'])) {
+          let r, d;
+          try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo) }); d = await r.json().catch(() => ({})); }
+          catch (e) { throw new Error('sin conexión a internet'); }
+          if (r.ok) { const t = (d?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim(); if (t) return t; ultimo = 'respuesta vacía'; continue; }
+          ultimo = String(d?.error?.message || r.status);
+          if (r.status === 400 && /api key/i.test(ultimo)) throw new Error('la clave de Gemini no es válida');
+        }
+        throw new Error(ultimo);
+      }
+      window.inoferLLM = async function (cuerpo) {
+        if (typeof geminiApiKey !== 'undefined' && geminiApiKey) {
+          try { return await directo(cuerpo, geminiApiKey); } catch (e) { if (!(iaServidor && enNube())) throw e; }
+        }
+        if (iaServidor && enNube()) {
+          const d = await inoferCloudPost({ action: 'iaGenerar', token: inoferAuthToken(), cuerpo });
+          if (d && d.status === 'ok') return d.texto;
+          throw new Error((d && d.error) || 'la IA no respondió');
+        }
+        throw new Error('la IA no está configurada');
+      };
+      async function info() {
+        if (!enNube()) return;
+        try { const d = await inoferCloudPost({ action: 'iaInfo', token: inoferAuthToken() }); iaServidor = !!(d && d.status === 'ok' && d.configurada); } catch (e) { }
+        const badge = document.getElementById('aiEngineModeBadge');
+        if (badge && inoferIaDisponible()) badge.textContent = 'IA Gemini activa ✓';
+      }
+      window.inoferIaInfo = info;
+      // al guardar la clave en la pestaña IA, el administrador también la deja en la nube para todos
+      document.addEventListener('click', ev => {
+        const b = ev.target.closest && ev.target.closest('#saveGeminiKeyBtn');
+        if (!b || !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()) || !enNube()) return;
+        const k = (document.getElementById('geminiApiKeyInput') || {}).value || '';
+        setTimeout(async () => {
+          try {
+            const d = await inoferCloudPost({ action: 'iaConfig', token: inoferAuthToken(), clave: k.trim() });
+            if (d && d.status === 'ok') { iaServidor = !!d.configurada; showToast(iaServidor ? 'IA activada para todos los usuarios ✓' : 'IA desactivada en la nube'); }
+            else showToast('No se pudo guardar la clave en la nube: ' + ((d && d.error) || ''));
+          } catch (e) { showToast('Sin conexión con la nube'); }
+        }, 1500);
+      }, true);
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); setTimeout(info, 500); return r; };
+      }
+      setTimeout(info, 3000);
+
+      // IA INOFER: los pedidos de cambios sobre el plan los ejecuta el asistente del Gantt
+      const ORDEN = /\b(aument\w*|sub[ií]\w*|baj[aá]\w*|pon[eé]\w*|agreg\w*|sum[aá]\w*|rest[aá]\w*|sac[aá]\w*|quit[aá]\w*|borr[aá]\w*|mov[eé]\w*|pas[aá]\w*|program\w*|planific\w*|arm[aá]\w*|cambi[aá]\w*|reduc\w*|deshac\w*|llev[aá]\w*|necesito facturar|factur[aá])\b/i;
+      const SOBRE_PLAN = /(\d{4,}|sem(ana)?\s*\d|gantt|piezas?|200v|200n|\b180\b|h50|z30|factur|lote|turno)/i;
+      if (typeof window.handleAiUserPrompt === 'function') {
+        const orig = window.handleAiUserPrompt;
+        window.handleAiUserPrompt = async function (text, chart) {
+          const t = String(text || '').trim();
+          if (t && !chart && ORDEN.test(t) && SOBRE_PLAN.test(t) && typeof inoferGanttEjecutar === 'function' && !/^(record[aá] que|aprend[eé] que|ten[eé] en cuenta que|regla:|nota:|criterio:)/i.test(t)) {
+            appendAiChatMessage('user', t);
+            try { aiShowTyping(true); } catch (e) { }
+            let html = '';
+            try { html = await inoferGanttEjecutar(t); } catch (e) { html = '✗ ' + e.message; }
+            try { aiShowTyping(false); } catch (e) { }
+            const md = String(html || 'Listo.').replace(/<br\s*\/?>/gi, '\n').replace(/<\/?b>/gi, '**').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            appendAiChatMessage('assistant', md + '\n\n*(Cambio aplicado en el Gantt: ' + (window.inoferSemanasAsistente ? inoferSemanasAsistente().join(', ') : '') + ')*');
+            return;
+          }
+          return orig.apply(this, arguments);
+        };
+      }
     })();
   </script>
   <script>

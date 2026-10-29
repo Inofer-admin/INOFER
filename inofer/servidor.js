@@ -856,6 +856,58 @@ function accionMensajeria(u, body) {
   }
 }
 
+// ===================== IA (Gemini) a través del servidor: la clave queda guardada en la nube =====================
+const ACCIONES_IA = ['iaInfo', 'iaConfig', 'iaGenerar'];
+const IA_MODELOS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+function iaClave_() { return PropertiesService.getScriptProperties().getProperty('GEMINI_KEY') || ''; }
+function iaLlamar_(clave, cuerpo) {
+  let ultimo = 'sin respuesta';
+  for (let i = 0; i < IA_MODELOS.length; i++) {
+    const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent?key=' + encodeURIComponent(clave), {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true
+    });
+    const code = r.getResponseCode();
+    let d = {};
+    try { d = JSON.parse(r.getContentText()); } catch (e) {}
+    if (code === 200) {
+      const partes = (((d.candidates || [])[0] || {}).content || {}).parts || [];
+      const t = partes.map(function (p) { return p.text || ''; }).join('').trim();
+      if (t) return { ok: true, texto: t };
+      ultimo = 'respuesta vacía';
+      continue;
+    }
+    const msg = String((d.error && d.error.message) || code);
+    if (code === 400 && /api key/i.test(msg)) return { ok: false, error: 'la clave de Gemini no es válida' };
+    if (code === 403) return { ok: false, error: 'la clave de Gemini no tiene permiso' };
+    ultimo = msg;
+  }
+  return { ok: false, error: ultimo };
+}
+function accionIA(u, body) {
+  if (ACCIONES_IA.indexOf(body.action) === -1) return null;
+  if (body.action === 'iaInfo') return { status: 'ok', configurada: !!iaClave_() };
+  if (body.action === 'iaConfig') {
+    if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador configura la IA.' };
+    const k = String(body.clave || '').trim();
+    if (!k) { PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY'); return { status: 'ok', configurada: false }; }
+    const prueba = iaLlamar_(k, { contents: [{ role: 'user', parts: [{ text: 'Respondé solamente: OK' }] }], generationConfig: { maxOutputTokens: 10 } });
+    if (!prueba.ok) return { status: 'error', error: prueba.error };
+    PropertiesService.getScriptProperties().setProperty('GEMINI_KEY', k);
+    return { status: 'ok', configurada: true };
+  }
+  if (body.action === 'iaGenerar') {
+    const k = iaClave_();
+    if (!k) return { status: 'error', error: 'La IA no está configurada (falta la clave de Gemini).' };
+    const c = body.cuerpo || {};
+    const cuerpo = { contents: Array.isArray(c.contents) ? c.contents.slice(-20) : [] };
+    if (c.systemInstruction) cuerpo.systemInstruction = c.systemInstruction;
+    if (c.generationConfig) cuerpo.generationConfig = c.generationConfig;
+    const r = iaLlamar_(k, cuerpo);
+    return r.ok ? { status: 'ok', texto: r.texto } : { status: 'error', error: r.error };
+  }
+  return null;
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -864,6 +916,8 @@ function doPost(e) {
   const u = usuarioDeToken(body.token);
   if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
 
+  const ia = accionIA(u, body);
+  if (ia) return respuesta(ia);
   const msg = accionMensajeria(u, body);
   if (msg) return respuesta(msg);
 

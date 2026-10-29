@@ -107,3 +107,11 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 ## Mensajería y solicitudes (bloque "Mensajería: chats privados, grupos y solicitudes")
 - Servidor (`accionMensajeria`, antes de papelera en doPost): hojas BD_Chats (id,tipo,nombre,miembros JSON,creado_por,creado_at,ultimo_at,leidos JSON), BD_Mensajes, BD_Solicitudes. Acciones msgEstado (chats del usuario + no leídos + directorio + avisos de solicitudes), msgLeer, msgEnviar, msgCrearChat (privado reutiliza el existente), msgBorrarChat (privado: cualquiera borra todo; grupo: creador/admin borra, el resto sale), msgBorrarMensaje (autor o admin), msgEditarGrupo, solListar (admin todas / usuario las suyas), solCrear, solActualizar (admin: estado pendiente|en curso|resuelta|rechazada + respuesta), solBorrar (autor o admin), solVisto.
 - Cliente: botones 💬 Mensajes y 📨 Solicitud junto al usuario (con contadores), panel lateral `#inoferMsgPanel`; consulta cada 30 s y el chat abierto cada 6 s. Solo funciona con la nube. `window.inoferMensajes`.
+
+## IA compartida y asistente con lenguaje natural (bloque "IA compartida: Gemini a través de la nube")
+- Servidor `accionIA`: iaInfo, iaConfig (admin; prueba y guarda la clave en Script Properties GEMINI_KEY), iaGenerar (proxy a Gemini con UrlFetchApp; la clave nunca viaja a los equipos). El admin la carga con "Guardar" en la pestaña IA (también se envía a la nube).
+- Cliente: `inoferLLM(cuerpo)` (clave local si hay, si no la nube), `inoferIaDisponible()`. callGemini usa inoferLLM si no hay clave local.
+- Asistente del Gantt: si hay IA, TODO pedido (salvo deshacer/ayuda/qué hiciste) va a Gemini con contexto JSON (semanas elegidas, horas usadas, catálogo con u/h, lote, precio si puede, pm, pistón) y devuelve {respuesta, ops}; se aplican con las mismas validaciones. Sin IA cae al parser local. Ops nuevas: aumentar/reducir (reparte por capacidad y sigue en la próxima semana elegida), cualquier op acepta "semana". Meta de facturación en varias semanas.
+- Selector de semanas `#inoferGanttSemanas` (chips, local `tablero_inyectoras_asistente_semanas_v1`).
+- IA INOFER: pedidos de cambio (verbo de acción + algo del plan) se ejecutan con `inoferGanttEjecutar`; el resto sigue con el análisis de siempre.
+- Test: gas_mock_server.js simula Gemini con /tmp/work/gemini_fake.js.
