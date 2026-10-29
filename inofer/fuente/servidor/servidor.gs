@@ -327,7 +327,7 @@ function puede(u, area, nivel) {
   return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
 }
 
-const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores' };
+const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin' };
 
 function modulosVisibles(u) {
   const all = obtenerEstadoModulos();
@@ -336,7 +336,7 @@ function modulosVisibles(u) {
     if (k === 'users') return; // nunca se envía la lista de usuarios por acá
     const area = MODULO_AREA[k];
     if (!area) return;
-    if (area === 'admin' ? (k === 'config' && puede(u, 'ia', 'view')) : puede(u, area, 'view')) out[k] = all[k];
+    if (k === 'turnos' || (area === 'admin' ? (k === 'config' && puede(u, 'ia', 'view')) : puede(u, area, 'view'))) out[k] = all[k];
   });
   return out;
 }

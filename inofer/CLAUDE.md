@@ -76,3 +76,4 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - El log guarda turno, stopMinutes, cargadoPor. Si llega al 100% la orden pasa a Completada.
 - Usuarios no admin con permiso ordenes edit entran directo a esta pestaña; el admin entra a la Lista.
 - Se quitaron los valores de ejemplo (350/10/8) del formulario viejo de avance. En celular el header deja de ser sticky y la barra de sub-pestañas hace wrap.
+- Turnos configurables: módulo de nube `turnos` = {activo, esquemas:[{id,nombre,turnos:[{nombre,ini,fin}]}]} (local `tablero_inyectoras_turnos_v1`). Por defecto "3 turnos de 8 h" y "2 turnos de 12 h". Solo el admin lo edita (botón ⚙️ Horarios de turnos en Carga rápida; servidor MODULO_AREA turnos:'admin'), todos los usuarios lo reciben. El turno sugerido es el que contiene la hora actual.

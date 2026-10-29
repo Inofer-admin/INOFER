@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.15" />
+  <meta name="inofer-version" content="2026.10.29.16" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -12368,9 +12368,30 @@ Pedido: ${frase}`;
         { id: '200V', full: 'Italpresse 200 Tn (V)' }, { id: '200N', full: 'Italpresse 200 Tn (N)' }, { id: '180', full: 'Italpresse 180 Tn' },
         { id: 'H50', full: 'H-50' }, { id: 'Z30', full: 'Italpresse 30 Tn (Z-30)' }
       ];
-      const TURNOS = [{ id: 'M', nombre: 'Mañana', ini: '06:00', fin: '14:00', ico: '🌅' }, { id: 'T', nombre: 'Tarde', ini: '14:00', fin: '22:00', ico: '🌇' }, { id: 'N', nombre: 'Noche', ini: '22:00', fin: '06:00', ico: '🌙' }];
+      // Turnos configurables por el administrador (módulo de nube "turnos", se ve en todos los equipos)
+      const TURNOS_KEY = 'tablero_inyectoras_turnos_v1';
+      const TURNOS_DEF = { activo: 'e3', esquemas: [
+        { id: 'e3', nombre: '3 turnos de 8 h', turnos: [{ nombre: 'Mañana', ini: '06:00', fin: '14:00' }, { nombre: 'Tarde', ini: '14:00', fin: '22:00' }, { nombre: 'Noche', ini: '22:00', fin: '06:00' }] },
+        { id: 'e2', nombre: '2 turnos de 12 h', turnos: [{ nombre: 'Día', ini: '06:00', fin: '18:00' }, { nombre: 'Noche', ini: '18:00', fin: '06:00' }] }
+      ] };
+      let cfgTurnos = null;
+      try { cfgTurnos = JSON.parse(localStorage.getItem(TURNOS_KEY) || 'null'); } catch (e) { }
+      if (!cfgTurnos || !Array.isArray(cfgTurnos.esquemas) || !cfgTurnos.esquemas.length) cfgTurnos = JSON.parse(JSON.stringify(TURNOS_DEF));
+      const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+      const icono = ini => { const h = aMin(ini) / 60; return h >= 4 && h < 11 ? '🌅' : (h >= 11 && h < 17 ? '☀️' : (h >= 17 && h < 21 ? '🌇' : '🌙')); };
+      const esquemaActivo = () => cfgTurnos.esquemas.find(e => e.id === cfgTurnos.activo) || cfgTurnos.esquemas[0];
+      const turnos = () => (esquemaActivo().turnos || []).map((t, i) => ({ id: 'T' + i, nombre: t.nombre || ('Turno ' + (i + 1)), ini: t.ini || '06:00', fin: t.fin || '14:00', ico: icono(t.ini) }));
+      function guardarTurnos(subir) {
+        try { localStorage.setItem(TURNOS_KEY, JSON.stringify(cfgTurnos)); } catch (e) { }
+        if (subir) { try { pushCloudModuleState('turnos', cfgTurnos); } catch (e) { } }
+      }
+      window.inoferTurnosConfig = () => cfgTurnos;
       const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
-      const turnoActual = () => { const h = new Date().getHours(); return h >= 6 && h < 14 ? 'M' : (h >= 14 && h < 22 ? 'T' : 'N'); };
+      const turnoActual = () => {
+        const n = new Date(); const m = n.getHours() * 60 + n.getMinutes();
+        const t = turnos().find(x => { const a = aMin(x.ini), b = aMin(x.fin); return a <= b ? (m >= a && m < b) : (m >= a || m < b); });
+        return (t || turnos()[0] || { id: 'T0' }).id;
+      };
       let pref = {};
       try { pref = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { pref = {}; }
       const guardarPref = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) { } };
@@ -12405,6 +12426,10 @@ Pedido: ${frase}`;
       function render() {
         const box = $('inoferCR');
         if (!box) return;
+        try {
+          const tag = $('crEsquemaTag'); if (tag) tag.textContent = 'Turnos: ' + esquemaActivo().nombre;
+          const cb = $('crTurnosCfgBtn'); if (cb) cb.classList.toggle('hidden', !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()));
+        } catch (e) { }
         if (!puedeEditar()) { box.innerHTML = '<div class="rounded-2xl border border-slate-700 p-6 text-center text-sm text-slate-300">Tu usuario solo puede ver las órdenes. Para cargar avances pedile permiso de edición al administrador.</div>'; return; }
         const pasos = ['maquina', 'orden', 'turno'];
         const idx = pasos.indexOf(st.paso);
@@ -12457,7 +12482,7 @@ Pedido: ${frase}`;
         } else {
           const o = productionOrders.find(x => x.id === st.ordId);
           if (!o) { st.paso = 'orden'; return render(); }
-          const t = TURNOS.find(x => x.id === st.turno) || TURNOS[0];
+          const t = turnos().find(x => x.id === st.turno) || turnos()[0];
           const a = avance(o);
           const falta = Math.max(0, (Number(o.qtyTarget) || 0) - a.ok);
           html = `<div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
@@ -12466,7 +12491,7 @@ Pedido: ${frase}`;
             </div>
             <form id="crTurnoForm" class="space-y-4">
               <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Turno</span>
-                <div class="grid grid-cols-3 gap-2">${TURNOS.map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
+                <div class="grid ${['grid-cols-1', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-2 sm:grid-cols-4'][Math.min(4, turnos().length)]} gap-2">${turnos().map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
                 <details class="mt-1.5 text-xs text-slate-400"><summary class="cursor-pointer">Cambiar horario o fecha</summary>
                   <div class="mt-2 grid grid-cols-3 gap-2">
                     <input id="crFecha" type="date" value="${hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
@@ -12505,6 +12530,81 @@ Pedido: ${frase}`;
         box.innerHTML = migas + html;
       }
 
+      // ---------- editor de turnos (solo administrador) ----------
+      function renderCfgTurnos() {
+        const c = $('crTurnosCfg'); if (!c) return;
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white';
+        c.innerHTML = `<div class="rounded-xl border border-sky-500/30 bg-slate-950/70 p-3 space-y-3">
+          <div class="flex items-center justify-between"><span class="text-sm font-black text-sky-300">⚙️ Horarios de turnos</span><button type="button" class="crt-cerrar text-xs text-slate-400 hover:text-white">✕ Cerrar</button></div>
+          <p class="text-[11px] text-slate-400">Elegí qué esquema se usa ahora. Los operarios ven solo los turnos del esquema activo. Los cambios se guardan solos y llegan a todos los equipos.</p>
+          ${cfgTurnos.esquemas.map((e, ei) => `<div class="rounded-xl border ${e.id === cfgTurnos.activo ? 'border-amber-400 bg-amber-500/5' : 'border-slate-800'} p-2.5 space-y-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="flex items-center gap-1.5 text-xs font-bold text-white"><input type="radio" name="crtActivo" class="crt-activo" data-e="${ei}" ${e.id === cfgTurnos.activo ? 'checked' : ''}> En uso</label>
+              <input class="crt-enombre ${inp} flex-1 font-bold" data-e="${ei}" value="${esc(e.nombre)}">
+              ${cfgTurnos.esquemas.length > 1 ? `<button type="button" class="crt-ebor text-xs text-rose-300" data-e="${ei}">Borrar esquema</button>` : ''}
+            </div>
+            ${(e.turnos || []).map((t, ti) => `<div class="flex flex-wrap items-center gap-2 pl-5">
+              <input class="crt-tn ${inp} w-28" data-e="${ei}" data-t="${ti}" value="${esc(t.nombre)}" placeholder="Nombre">
+              <input type="time" class="crt-ti ${inp}" data-e="${ei}" data-t="${ti}" value="${esc(t.ini)}">
+              <span class="text-xs text-slate-500">a</span>
+              <input type="time" class="crt-tf ${inp}" data-e="${ei}" data-t="${ti}" value="${esc(t.fin)}">
+              <span class="text-[11px] text-slate-500">${(((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440 || 1440) / 60} h</span>
+              ${(e.turnos || []).length > 1 ? `<button type="button" class="crt-tbor text-xs text-rose-300" data-e="${ei}" data-t="${ti}">✕</button>` : ''}
+            </div>`).join('')}
+            <button type="button" class="crt-tadd ml-5 text-xs font-bold text-sky-300" data-e="${ei}">+ Agregar turno</button>
+          </div>`).join('')}
+          <button type="button" class="crt-eadd rounded-lg border border-dashed border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300">+ Nuevo esquema</button>
+        </div>`;
+      }
+      function cambioTurnos(rerender) {
+        guardarTurnos(true);
+        if (!turnos().some(t => t.id === st.turno)) st.turno = turnoActual();
+        if (rerender) renderCfgTurnos();
+        render();
+      }
+      function montarCfgTurnos() {
+        const c = $('crTurnosCfg'), b = $('crTurnosCfgBtn');
+        if (!c || !b) return;
+        b.addEventListener('click', () => { if (!(typeof inoferIsAdmin === 'function' && inoferIsAdmin())) return; c.classList.toggle('hidden'); if (!c.classList.contains('hidden')) renderCfgTurnos(); });
+        c.addEventListener('click', e => {
+          const el = e.target.closest('button, input[type=radio]'); if (!el) return;
+          const ei = Number(el.dataset.e), ti = Number(el.dataset.t), esq = cfgTurnos.esquemas[ei];
+          if (el.classList.contains('crt-cerrar')) { c.classList.add('hidden'); return; }
+          if (el.classList.contains('crt-activo')) { cfgTurnos.activo = esq.id; st.turno = turnoActual(); cambioTurnos(true); }
+          else if (el.classList.contains('crt-tadd')) { const u = esq.turnos[esq.turnos.length - 1] || { fin: '06:00' }; esq.turnos.push({ nombre: 'Turno ' + (esq.turnos.length + 1), ini: u.fin, fin: u.fin }); cambioTurnos(true); }
+          else if (el.classList.contains('crt-tbor')) { esq.turnos.splice(ti, 1); cambioTurnos(true); }
+          else if (el.classList.contains('crt-ebor')) { if (!confirm('¿Borrar el esquema "' + esq.nombre + '"?')) return; cfgTurnos.esquemas.splice(ei, 1); if (!cfgTurnos.esquemas.some(x => x.id === cfgTurnos.activo)) cfgTurnos.activo = cfgTurnos.esquemas[0].id; cambioTurnos(true); }
+          else if (el.classList.contains('crt-eadd')) { cfgTurnos.esquemas.push({ id: 'e' + Date.now(), nombre: 'Nuevo esquema', turnos: [{ nombre: 'Turno 1', ini: '06:00', fin: '14:00' }] }); cambioTurnos(true); }
+        });
+        c.addEventListener('change', e => {
+          const el = e.target, ei = Number(el.dataset.e), ti = Number(el.dataset.t), esq = cfgTurnos.esquemas[ei];
+          if (!esq) return;
+          if (el.classList.contains('crt-enombre')) esq.nombre = el.value.trim() || esq.nombre;
+          else if (el.classList.contains('crt-tn')) esq.turnos[ti].nombre = el.value.trim() || esq.turnos[ti].nombre;
+          else if (el.classList.contains('crt-ti')) esq.turnos[ti].ini = el.value || esq.turnos[ti].ini;
+          else if (el.classList.contains('crt-tf')) esq.turnos[ti].fin = el.value || esq.turnos[ti].fin;
+          else return;
+          cambioTurnos(true);
+        });
+      }
+      // Recibir los turnos desde la nube
+      if (typeof window.applyCloudModules === 'function') {
+        const _amT = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const out = _amT.apply(this, arguments);
+          try {
+            if (mods && mods.turnos && Array.isArray(mods.turnos.esquemas) && mods.turnos.esquemas.length && JSON.stringify(mods.turnos) !== JSON.stringify(cfgTurnos)) {
+              cfgTurnos = mods.turnos; guardarTurnos(false);
+              if (!turnos().some(t => t.id === st.turno)) st.turno = turnoActual();
+              const a = document.activeElement;
+              const editando = a && a.closest && a.closest('#crTurnosCfg');
+              if (!editando) { if ($('crTurnosCfg') && !$('crTurnosCfg').classList.contains('hidden')) renderCfgTurnos(); if (!(a && a.closest && a.closest('#crTurnoForm'))) render(); }
+            }
+          } catch (e) { }
+          return out;
+        };
+      }
+
       function crearOrden(part, qty, numero) {
         const c = cat().find(x => norm(x.part) === norm(part));
         const d = hoy();
@@ -12532,7 +12632,7 @@ Pedido: ${frase}`;
         if (!o) return;
         const ok = Number($('crOk').value);
         if (!($('crOk').value !== '' && ok >= 0)) { showToast('Poné cuántas piezas buenas hiciste'); $('crOk').focus(); return; }
-        const t = TURNOS.find(x => x.id === st.turno) || TURNOS[0];
+        const t = turnos().find(x => x.id === st.turno) || turnos()[0];
         const operario = $('crOperario').value.trim();
         if (!operario) { showToast('Poné tu nombre'); $('crOperario').focus(); return; }
         const codigo = st.parada ? $('crCodigo').value : '';
@@ -12589,10 +12689,12 @@ Pedido: ${frase}`;
         }
         const v = document.createElement('div');
         v.id = 'orderSubViewRapida'; v.className = 'hidden';
-        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex items-center justify-between"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="text-[11px] text-slate-500">3 pasos, menos de un minuto</span></div><div id="inoferCR"></div></div>';
+        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="flex items-center gap-2"><span id="crEsquemaTag" class="text-[11px] text-slate-500"></span><button type="button" id="crTurnosCfgBtn" class="hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">⚙️ Horarios de turnos</button></span></div><div id="crTurnosCfg" class="hidden mb-4"></div><div id="inoferCR"></div></div>';
         eff.parentElement.insertBefore(v, eff);
+        montarCfgTurnos();
 
         v.addEventListener('click', e => {
+          if (e.target.closest('#crTurnosCfg')) return;
           const g = s => e.target.closest(s);
           let el;
           if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; render(); }
@@ -12602,7 +12704,7 @@ Pedido: ${frase}`;
           else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
           else if ((el = g('.cr-turno'))) {
-            st.turno = el.dataset.t; const t = TURNOS.find(x => x.id === st.turno);
+            st.turno = el.dataset.t; const t = turnos().find(x => x.id === st.turno);
             v.querySelectorAll('.cr-turno').forEach(b => { const on = b.dataset.t === st.turno; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); b.classList.toggle('bg-slate-950', !on); b.classList.toggle('text-slate-300', !on); });
             $('crIni').value = t.ini; $('crFin').value = t.fin;
           }
