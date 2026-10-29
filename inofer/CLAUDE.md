@@ -70,3 +70,9 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Valida -R (`inoferEsPiezaR`), portamolde (`inoferChoqueManual`), pistón (`inoferMaquinaAdmitePiston`); avisa >24 h/día. Guarda con `saveGanttWeeks()`; historial local para "deshacer". Requiere permiso gantt edit (ver solo consulta).
 - Micrófono con Web Speech API (es-AR) cuando el navegador lo permite.
 - Sub-pestaña `list` (📂 Lista de órdenes, `#orderSubViewList`) por defecto en Órdenes: tarjetas con buscar/filtrar, Abrir (efficiency), Editar (front), Borrar (va a la papelera). `switchOrderSubTab` y `renderProductionOrdersView` quedan envueltos.
+
+## Carga rápida de órdenes (bloque "Carga rápida de órdenes para el operario en máquina")
+- Sub-pestaña `rapida` (⚡ Carga rápida, `#orderSubViewRapida` / `#inoferCR`): asistente de 3 pasos para el operario: máquina (se recuerda por equipo en `tablero_inyectoras_operario_v1`) → orden abierta de esa máquina o nueva (pieza con autocompletado desde catálogo + sugeridas del Gantt, cantidad sugerida del Gantt, N° autonumerado) → turno (Mañana/Tarde/Noche), piezas buenas, scrap, arranque en baja, parada sí/no con código y minutos, operario.
+- El log guarda turno, stopMinutes, cargadoPor. Si llega al 100% la orden pasa a Completada.
+- Usuarios no admin con permiso ordenes edit entran directo a esta pestaña; el admin entra a la Lista.
+- Se quitaron los valores de ejemplo (350/10/8) del formulario viejo de avance. En celular el header deja de ser sticky y la barra de sub-pestañas hace wrap.

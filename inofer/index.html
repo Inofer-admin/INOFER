@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.14" />
+  <meta name="inofer-version" content="2026.10.29.15" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -141,7 +141,7 @@
 
       <!-- Mode / View Switcher & Quick Actions -->
       <div class="flex flex-wrap items-center gap-2">
-        <div class="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700">
+        <div class="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700" style="max-width:calc(100vw - 32px);overflow-x:auto">
           <button id="tabDashboardBtn" type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold transition bg-cyan-500 text-slate-950 shadow">
             Tablero y Velocímetros
           </button>
@@ -995,9 +995,9 @@
 
         <!-- Active Orders Selector & Sub-view Switcher -->
         <div class="mt-4 flex flex-wrap items-center justify-between gap-4">
-          <div class="flex flex-wrap items-center gap-3 flex-1">
+          <div class="flex flex-wrap items-center gap-3 flex-1" style="min-width:0;max-width:100%">
             <label for="activeOrderSelect" class="text-xs font-bold text-slate-300">Orden Activa:</label>
-            <select id="activeOrderSelect" class="min-w-[280px] rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-bold text-amber-300 focus:border-amber-400 focus:outline-none">
+            <select id="activeOrderSelect" style="max-width:100%" class="min-w-0 sm:min-w-[280px] rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-bold text-amber-300 focus:border-amber-400 focus:outline-none">
               <!-- Populated by JS -->
             </select>
             <span id="orderStatusBadge" class="rounded-lg px-2.5 py-1 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
@@ -1006,7 +1006,7 @@
           </div>
 
           <!-- Sub-tabs: Seguimiento y Eficiencia | Frente (Orden y Partes) | Dorso (Informe Herramental) | Planilla Imprimible -->
-          <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+          <div class="flex flex-wrap gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
             <button type="button" data-order-subtab="efficiency" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-500 text-slate-950">
               1. Eficiencia y Seguimiento
             </button>
@@ -1912,7 +1912,7 @@
           </div>
 
           <!-- View Mode: Semanal Detallada vs Mensual Visual -->
-          <div class="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+          <div class="flex flex-wrap gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
             <button id="ganttModeWeekBtn" type="button" class="rounded-lg px-3 py-1.5 text-xs font-bold bg-emerald-500 text-slate-950 shadow">
               Vista Semanal Detallada (INOFER)
             </button>
@@ -12353,6 +12353,327 @@ Pedido: ${frase}`;
 
       function iniciar() { try { montar(); } catch (e) { console.error(e); } try { montarLista(); } catch (e) { console.error(e); } }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>
+  <script>
+    // ===== Carga rápida de órdenes para el operario en máquina =====
+    (function () {
+      // En celular el encabezado fijo tapa un tercio de la pantalla: que se desplace con la página
+      try { const stl = document.createElement('style'); stl.textContent = '@media (max-width: 640px){ body > header.sticky{ position: static; } }'; document.head.appendChild(stl); } catch (e) { }
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const PREF_KEY = 'tablero_inyectoras_operario_v1';
+      const MAQ = [
+        { id: '200V', full: 'Italpresse 200 Tn (V)' }, { id: '200N', full: 'Italpresse 200 Tn (N)' }, { id: '180', full: 'Italpresse 180 Tn' },
+        { id: 'H50', full: 'H-50' }, { id: 'Z30', full: 'Italpresse 30 Tn (Z-30)' }
+      ];
+      const TURNOS = [{ id: 'M', nombre: 'Mañana', ini: '06:00', fin: '14:00', ico: '🌅' }, { id: 'T', nombre: 'Tarde', ini: '14:00', fin: '22:00', ico: '🌇' }, { id: 'N', nombre: 'Noche', ini: '22:00', fin: '06:00', ico: '🌙' }];
+      const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const turnoActual = () => { const h = new Date().getHours(); return h >= 6 && h < 14 ? 'M' : (h >= 14 && h < 22 ? 'T' : 'N'); };
+      let pref = {};
+      try { pref = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { pref = {}; }
+      const guardarPref = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) { } };
+      const st = { paso: 'maquina', maq: pref.maq || '', ordId: '', turno: turnoActual(), parada: false, nueva: false };
+
+      const maqDeOrden = o => { const f = norm(o.machine); const m = MAQ.find(x => norm(x.full) === f || norm(x.id) === f); return m ? m.id : ''; };
+      const fullDe = id => (MAQ.find(m => m.id === id) || {}).full || id;
+      const cat = () => (typeof partsCatalog !== 'undefined' ? partsCatalog : []);
+      const puedeEditar = () => typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit');
+      const nombreOperario = () => pref.operario || (typeof inoferSession !== 'undefined' && inoferSession && inoferSession.nombre) || '';
+      function avance(o) { try { const m = computeOrderMetrics(o); return { pct: Math.min(100, Math.round((m && m.progressPct) || 0)), ok: (m && m.totalOk) || 0 }; } catch (e) { return { pct: 0, ok: 0 }; } }
+      const abierta = o => !(o.status === 'Completada' || avance(o).pct >= 100);
+      function siguienteNumero() {
+        const n = (typeof productionOrders !== 'undefined' ? productionOrders : []).map(o => parseInt(String(o.ordNumber).replace(/\D/g, ''), 10) || 0);
+        return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0');
+      }
+      // Piezas planificadas en el Gantt para esa máquina (semana activa)
+      function piezasDelGantt(maq) {
+        try {
+          const out = [];
+          Object.values(ganttWeeksData || {}).forEach(w => {
+            const items = (((w.machines || {})[maq]) || {}).items || [];
+            items.forEach(it => { if (it.isSharedCompanion) return; const tot = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (tot > 0) out.push({ part: it.part, qty: tot, sem: w.code }); });
+          });
+          const act = typeof activeGanttWeekCode !== 'undefined' ? activeGanttWeekCode : '';
+          const vistos = {};
+          return out.sort((a, b) => (b.sem === act) - (a.sem === act)).filter(x => { if (vistos[norm(x.part)]) return false; vistos[norm(x.part)] = 1; return true; }).slice(0, 8);
+        } catch (e) { return []; }
+      }
+
+      const BTN = 'rounded-2xl border-2 px-4 py-4 text-left font-bold transition active:scale-[0.98]';
+      function render() {
+        const box = $('inoferCR');
+        if (!box) return;
+        if (!puedeEditar()) { box.innerHTML = '<div class="rounded-2xl border border-slate-700 p-6 text-center text-sm text-slate-300">Tu usuario solo puede ver las órdenes. Para cargar avances pedile permiso de edición al administrador.</div>'; return; }
+        const pasos = ['maquina', 'orden', 'turno'];
+        const idx = pasos.indexOf(st.paso);
+        const migas = `<div class="mb-4 flex items-center gap-2 text-xs font-bold">
+          ${['1 Máquina', '2 Orden', '3 Cargar turno'].map((t, i) => `<button type="button" class="cr-miga rounded-full px-3 py-1 ${i === idx ? 'bg-amber-500 text-slate-950' : (i < idx ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-500')}" data-paso="${pasos[i]}" ${i > idx ? 'disabled' : ''}>${t}</button>`).join('<span class="text-slate-600">›</span>')}
+        </div>`;
+        let html = '';
+        if (st.paso === 'maquina') {
+          html = `<h3 class="mb-3 text-lg font-black text-white">¿En qué máquina estás?</h3>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              ${MAQ.map(m => `<button type="button" class="cr-maq ${BTN} ${st.maq === m.id ? 'border-amber-400 bg-amber-500/15' : 'border-slate-700 bg-slate-950 hover:border-amber-400'}" data-maq="${m.id}">
+                <span class="block text-2xl text-amber-300">${m.id}</span><span class="block text-[11px] font-normal text-slate-400">${esc(m.full)}</span></button>`).join('')}
+            </div>`;
+        } else if (st.paso === 'orden') {
+          const ords = productionOrders.filter(o => maqDeOrden(o) === st.maq && abierta(o));
+          if (st.nueva || !ords.length) {
+            const plan = piezasDelGantt(st.maq);
+            const piezasMaq = cat().filter(c => (c.machines || []).includes(st.maq) || norm(c.machine) === norm(fullDe(st.maq)));
+            html = `<h3 class="mb-1 text-lg font-black text-white">Orden nueva en la ${esc(st.maq)}</h3>
+              <p class="mb-3 text-xs text-slate-400">${ords.length ? '' : 'No hay órdenes abiertas en esta máquina. '}Elegí la pieza: el molde, las bocas, el material y los pesos se completan solos desde la base de datos.</p>
+              ${plan.length ? `<div class="mb-3"><span class="mb-1.5 block text-[11px] font-bold uppercase text-emerald-300">Planificadas en el Gantt</span>
+                <div class="flex flex-wrap gap-2">${plan.map(p => `<button type="button" class="cr-plan rounded-xl border-2 border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-bold text-emerald-200" data-part="${esc(p.part)}" data-qty="${p.qty}">${esc(p.part)} <span class="text-[11px] font-normal text-emerald-400">${p.qty.toLocaleString('es-AR')} u</span></button>`).join('')}</div></div>` : ''}
+              <form id="crNuevaForm" class="space-y-3">
+                <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Pieza</span>
+                  <input id="crPieza" list="crPiezasList" required autocomplete="off" placeholder="Escribí el código, ej: 26608" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-white focus:border-amber-400 focus:outline-none">
+                  <datalist id="crPiezasList">${(piezasMaq.length ? piezasMaq : cat()).slice(0, 400).map(c => `<option value="${esc(c.part)}">${esc(c.desc || '')}</option>`).join('')}</datalist>
+                </label>
+                <div id="crPiezaInfo" class="hidden rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-300"></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Cantidad a inyectar</span>
+                    <input id="crCantidad" type="number" inputmode="numeric" min="1" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-emerald-300 focus:border-amber-400 focus:outline-none"></label>
+                  <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">N° de orden</span>
+                    <input id="crNumero" inputmode="numeric" value="${siguienteNumero()}" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-white focus:border-amber-400 focus:outline-none"></label>
+                </div>
+                <div class="flex gap-2">
+                  ${ords.length ? '<button type="button" id="crCancelarNueva" class="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Volver</button>' : ''}
+                  <button type="submit" class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-base font-black text-slate-950 hover:bg-amber-400">Crear orden y seguir →</button>
+                </div>
+              </form>`;
+          } else {
+            html = `<h3 class="mb-3 text-lg font-black text-white">¿Qué orden estás haciendo en la ${esc(st.maq)}?</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                ${ords.map(o => { const a = avance(o); return `<button type="button" class="cr-ord ${BTN} border-slate-700 bg-slate-950 hover:border-amber-400" data-id="${esc(o.id)}">
+                  <span class="flex items-center justify-between"><span class="text-xl text-amber-300">${esc(o.part || 'Sin pieza')}</span><span class="text-sm text-slate-300">${a.pct}%</span></span>
+                  <span class="block text-[11px] font-normal text-slate-400">OP ${esc(o.ordNumber)} · ${a.ok.toLocaleString('es-AR')} de ${Number(o.qtyTarget || 0).toLocaleString('es-AR')} u</span>
+                  <span class="mt-2 block h-2 overflow-hidden rounded-full bg-slate-800"><span class="block h-full bg-amber-400" style="width:${a.pct}%"></span></span></button>`; }).join('')}
+                <button type="button" id="crNuevaBtn" class="${BTN} border-dashed border-slate-600 bg-transparent text-center text-slate-300 hover:border-amber-400 hover:text-white"><span class="block text-2xl">+</span><span class="text-sm">Empezar una orden nueva</span></button>
+              </div>`;
+          }
+        } else {
+          const o = productionOrders.find(x => x.id === st.ordId);
+          if (!o) { st.paso = 'orden'; return render(); }
+          const t = TURNOS.find(x => x.id === st.turno) || TURNOS[0];
+          const a = avance(o);
+          const falta = Math.max(0, (Number(o.qtyTarget) || 0) - a.ok);
+          html = `<div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
+              <div><span class="text-base font-black text-amber-300">${esc(o.part)}</span> <span class="text-xs text-slate-400">· ${esc(st.maq)} · OP ${esc(o.ordNumber)}</span></div>
+              <div class="text-xs text-slate-300">Van <b>${a.ok.toLocaleString('es-AR')}</b> · faltan <b>${falta.toLocaleString('es-AR')}</b></div>
+            </div>
+            <form id="crTurnoForm" class="space-y-4">
+              <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Turno</span>
+                <div class="grid grid-cols-3 gap-2">${TURNOS.map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
+                <details class="mt-1.5 text-xs text-slate-400"><summary class="cursor-pointer">Cambiar horario o fecha</summary>
+                  <div class="mt-2 grid grid-cols-3 gap-2">
+                    <input id="crFecha" type="date" value="${hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crIni" type="time" value="${t.ini}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crFin" type="time" value="${t.fin}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                  </div></details>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="col-span-2 block sm:col-span-1"><span class="mb-1 block text-sm font-black text-emerald-300">✅ Piezas buenas</span>
+                  <input id="crOk" type="number" inputmode="numeric" min="0" required placeholder="0" class="w-full rounded-xl border-2 border-emerald-500/50 bg-slate-950 px-4 py-4 text-3xl font-black text-emerald-300 focus:border-emerald-400 focus:outline-none"></label>
+                <label class="block"><span class="mb-1 block text-sm font-black text-rose-300">❌ Scrap</span>
+                  <input id="crScrap" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-rose-500/40 bg-slate-950 px-4 py-4 text-2xl font-black text-rose-300 focus:border-rose-400 focus:outline-none"></label>
+                <label class="block"><span class="mb-1 block text-sm font-bold text-amber-300">Arranque en baja</span>
+                  <input id="crBaja" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-4 text-2xl font-black text-amber-300 focus:border-amber-400 focus:outline-none"></label>
+              </div>
+              <div><span class="mb-1.5 block text-xs font-bold text-slate-300">¿Hubo paradas?</span>
+                <div class="grid grid-cols-2 gap-2">
+                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${!st.parada ? 'border-emerald-400 bg-emerald-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="0">No</button>
+                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${st.parada ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="1">Sí</button>
+                </div>
+                <div id="crParadaBox" class="${st.parada ? '' : 'hidden'} mt-2 space-y-2">
+                  <select id="crCodigo" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white">
+                    <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+                  </select>
+                  <div class="grid grid-cols-4 gap-2">${[15, 30, 60, 120].map(m => `<button type="button" class="cr-min rounded-lg border border-slate-700 bg-slate-950 py-2 text-xs font-bold text-slate-200" data-m="${m}">${m < 60 ? m + ' min' : (m / 60) + ' h'}</button>`).join('')}</div>
+                  <input id="crMinutos" type="number" inputmode="numeric" min="0" placeholder="Minutos parada" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">
+                </div>
+              </div>
+              <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Operario</span>
+                <input id="crOperario" value="${esc(nombreOperario())}" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-base font-bold text-white focus:border-amber-400 focus:outline-none"></label>
+              <details class="text-xs text-slate-400"><summary class="cursor-pointer">Agregar una observación (opcional)</summary>
+                <input id="crObs" placeholder="Ej: cambié noyo" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></details>
+              <button type="submit" class="w-full rounded-2xl bg-emerald-500 px-4 py-4 text-lg font-black text-slate-950 hover:bg-emerald-400">💾 Guardar turno</button>
+            </form>`;
+        }
+        box.innerHTML = migas + html;
+      }
+
+      function crearOrden(part, qty, numero) {
+        const c = cat().find(x => norm(x.part) === norm(part));
+        const d = hoy();
+        const rate = c ? Number(c.unitsPerHour) || 180 : 180;
+        const w = c ? Number(c.weightWithSprueKg) || 0 : 0;
+        const o = {
+          id: 'ord-' + Date.now(), ordNumber: numero || siguienteNumero(), date: d, machine: fullDe(st.maq),
+          mold: c ? (c.mold || '') : '', part: c ? c.part : part.toUpperCase(), cavities: c ? Number(c.cavities) || 1 : 1, unitsPerHour: rate,
+          material: c ? (c.material || 'ZAMAC') : (['200V', '200N'].includes(st.maq) ? 'ALSI' : 'ZAMAC'), weightWithSprueKg: w, weightOkGrs: c ? Number(c.weightOkGrs) || 0 : 0,
+          qtyTarget: qty, hoursToUse: Number((qty / rate).toFixed(2)), kgTotal: Number((qty * w).toFixed(1)), status: 'En Proceso', logs: [],
+          back: { date: d, moldVersion: c ? (c.mold || '') : '', dieCut: c ? (c.dieCut || '') : '', machiningDev: c ? (c.machiningDev || '') : '', endDate: '', endTime: '', unmountDate: '', unmountStart: '', unmountEnd: '',
+            upSupervisor: '', upStaff: '', downSupervisor: '', downStaff: '', daterExists: 'SI', daterPos: 'LADO FIJO', daterYear: d.slice(0, 4), daterMonth: d.slice(5, 7), eyeboltExists: 'SI',
+            coolClamps: '', coolBridges: '', coolHoses: '', comments: '' },
+          creadaPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : ''
+        };
+        productionOrders.unshift(o);
+        selectedOrderId = o.id;
+        saveProductionOrders();
+        try { renderProductionOrdersView(); } catch (e) { }
+        return o;
+      }
+
+      function guardarTurno() {
+        const o = productionOrders.find(x => x.id === st.ordId);
+        if (!o) return;
+        const ok = Number($('crOk').value);
+        if (!($('crOk').value !== '' && ok >= 0)) { showToast('Poné cuántas piezas buenas hiciste'); $('crOk').focus(); return; }
+        const t = TURNOS.find(x => x.id === st.turno) || TURNOS[0];
+        const operario = $('crOperario').value.trim();
+        if (!operario) { showToast('Poné tu nombre'); $('crOperario').focus(); return; }
+        const codigo = st.parada ? $('crCodigo').value : '';
+        const min = st.parada ? Number($('crMinutos').value) || 0 : 0;
+        if (st.parada && !codigo) { showToast('Elegí el motivo de la parada'); return; }
+        const obs = [codigo ? `Cód ${codigo.split('-')[0]}${min ? ' · ' + min + ' min' : ''}` : '', ($('crObs') || {}).value || ''].filter(Boolean).join(' — ');
+        if (!o.logs) o.logs = [];
+        o.logs.push({
+          id: 'lg-' + Date.now(), date: $('crFecha').value || hoy(), operator: operario, startTime: $('crIni').value || t.ini, endTime: $('crFin').value || t.fin,
+          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, obs, turno: t.nombre,
+          cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString()
+        });
+        pref.operario = operario; guardarPref();
+        const a = avance(o);
+        if (a.pct >= 100 && o.status !== 'Completada') o.status = 'Completada';
+        saveProductionOrders();
+        try { renderProductionOrdersView(); } catch (e) { }
+        showToast(`Turno guardado ✓ ${ok.toLocaleString('es-AR')} piezas buenas en ${o.part}`);
+        const box = $('inoferCR');
+        st.parada = false;
+        box.innerHTML = `<div class="space-y-4 py-6 text-center">
+          <div class="text-5xl">✅</div>
+          <div class="text-xl font-black text-white">¡Turno guardado!</div>
+          <div class="text-sm text-slate-300">${esc(o.part)} · ${ok.toLocaleString('es-AR')} piezas buenas · avance de la orden ${a.pct}%</div>
+          ${a.pct >= 100 ? '<div class="text-sm font-bold text-emerald-300">La orden llegó a la cantidad pedida y quedó como Completada.</div>' : ''}
+          <div class="flex flex-wrap justify-center gap-2 pt-2">
+            <button type="button" id="crOtroTurno" class="rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950">Cargar otro turno</button>
+            <button type="button" id="crOtraOrden" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200">Otra orden</button>
+          </div></div>`;
+      }
+
+      function infoPieza() {
+        const inp = $('crPieza'), info = $('crPiezaInfo');
+        if (!inp || !info) return;
+        const c = cat().find(x => norm(x.part) === norm(inp.value));
+        if (!c) { info.classList.toggle('hidden', !inp.value.trim()); info.innerHTML = inp.value.trim() ? '⚠️ Esa pieza no está en la base de datos. Se crea igual y después se completan los datos técnicos.' : ''; return; }
+        info.classList.remove('hidden');
+        info.innerHTML = `✓ <b>${esc(c.part)}</b> ${esc(c.desc || '')} · Molde ${esc(c.mold || '—')} · ${esc(c.cavities || 1)} boca/s · ${esc(c.unitsPerHour || '—')} u/h · ${esc(c.material || '')}`;
+        const plan = piezasDelGantt(st.maq).find(p => norm(p.part) === norm(c.part));
+        if (plan && !$('crCantidad').value) $('crCantidad').value = plan.qty;
+      }
+
+      function montar() {
+        const eff = $('orderSubViewEfficiency');
+        if (!eff || $('orderSubViewRapida')) return;
+        const ref = document.querySelector('.order-subtab-btn[data-order-subtab="list"]') || document.querySelector('.order-subtab-btn[data-order-subtab="efficiency"]');
+        if (ref) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.dataset.orderSubtab = 'rapida';
+          b.className = 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+          b.textContent = '⚡ Carga rápida';
+          ref.parentElement.insertBefore(b, ref);
+          b.addEventListener('click', () => switchOrderSubTab('rapida'));
+        }
+        const v = document.createElement('div');
+        v.id = 'orderSubViewRapida'; v.className = 'hidden';
+        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex items-center justify-between"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="text-[11px] text-slate-500">3 pasos, menos de un minuto</span></div><div id="inoferCR"></div></div>';
+        eff.parentElement.insertBefore(v, eff);
+
+        v.addEventListener('click', e => {
+          const g = s => e.target.closest(s);
+          let el;
+          if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; render(); }
+          else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
+          else if ((el = g('.cr-ord'))) { st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
+          else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
+          else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
+          else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
+          else if ((el = g('.cr-turno'))) {
+            st.turno = el.dataset.t; const t = TURNOS.find(x => x.id === st.turno);
+            v.querySelectorAll('.cr-turno').forEach(b => { const on = b.dataset.t === st.turno; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); b.classList.toggle('bg-slate-950', !on); b.classList.toggle('text-slate-300', !on); });
+            $('crIni').value = t.ini; $('crFin').value = t.fin;
+          }
+          else if ((el = g('.cr-parada'))) {
+            st.parada = el.dataset.p === '1';
+            $('crParadaBox').classList.toggle('hidden', !st.parada);
+            v.querySelectorAll('.cr-parada').forEach(b => { const on = (b.dataset.p === '1') === st.parada; const c = b.dataset.p === '1' ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+          }
+          else if ((el = g('.cr-min'))) { $('crMinutos').value = el.dataset.m; }
+          else if (g('#crOtroTurno')) { st.paso = 'turno'; render(); }
+          else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
+        });
+        v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); });
+        v.addEventListener('submit', e => {
+          e.preventDefault();
+          if (!puedeEditar()) { showToast('Tu usuario no puede cargar órdenes'); return; }
+          if (e.target.id === 'crNuevaForm') {
+            const part = $('crPieza').value.trim(), qty = Number($('crCantidad').value) || 0;
+            if (!part || qty <= 0) { showToast('Completá la pieza y la cantidad'); return; }
+            if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(part)) { showToast('Las piezas -R no se inyectan'); return; }
+            const o = crearOrden(part, qty, $('crNumero').value.trim());
+            showToast(`Orden ${o.ordNumber} creada para la ${o.part}`);
+            st.ordId = o.id; st.nueva = false; st.paso = 'turno'; st.turno = turnoActual(); render();
+          } else if (e.target.id === 'crTurnoForm') guardarTurno();
+        });
+
+        const prev = switchOrderSubTab;
+        switchOrderSubTab = function (sub) {
+          const rv = $('orderSubViewRapida');
+          if (sub === 'rapida') {
+            prev('list');
+            currentOrderSubTab = 'rapida';
+            const lv = $('orderSubViewList'); if (lv) lv.classList.add('hidden');
+            ['orderSubViewEfficiency', 'orderSubViewFront', 'orderSubViewBack', 'orderSubViewSheet', 'orderSubViewCatalog', 'orderSubViewGlobalReport'].forEach(i => $(i) && $(i).classList.add('hidden'));
+            rv.classList.remove('hidden');
+            document.querySelectorAll('.order-subtab-btn').forEach(btn => {
+              const hid = btn.classList.contains('hidden');
+              btn.className = btn.dataset.orderSubtab === 'rapida' ? 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-500 text-slate-950 shadow' : 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+              if (hid) btn.classList.add('hidden');
+            });
+            if (st.paso === 'turno' && !productionOrders.some(o => o.id === st.ordId)) st.paso = 'orden';
+            if (st.paso === 'maquina' && st.maq) st.paso = 'orden';
+            render();
+          } else { rv.classList.add('hidden'); prev(sub); }
+        };
+        if (typeof INOFER_EDIT_CONTROLS !== 'undefined') INOFER_EDIT_CONTROLS.ordenes.push('#crNuevaForm input', '#crNuevaForm button', '#crTurnoForm input', '#crTurnoForm select', '#crTurnoForm button');
+        // Los que no son administradores entran directo a la carga rápida
+        const esAdmin = typeof inoferIsAdmin === 'function' && inoferIsAdmin();
+        if (!esAdmin && puedeEditar()) switchOrderSubTab('rapida');
+      }
+      window.inoferCargaRapida = { estado: st, render };
+
+      // Limpiar los valores de ejemplo del formulario viejo (350 / 10 / 8) para que no se carguen datos falsos
+      function limpiarFormViejo() {
+        [['logOkPcs', ''], ['logLowStart', '0'], ['logScrap', '0']].forEach(([id, v]) => { const el = $(id); if (el) el.value = v; });
+        const op = $('logOperator'); if (op && !op.value) op.value = nombreOperario();
+      }
+      function iniciar() { try { montar(); } catch (e) { console.error(e); } try { limpiarFormViejo(); } catch (e) { } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+      // Al iniciar sesión, decidir la pestaña por defecto según el rol
+      if (typeof inoferApplyPermissions === 'function') {
+        const ap = inoferApplyPermissions;
+        inoferApplyPermissions = function () {
+          const r = ap.apply(this, arguments);
+          try {
+            if (inoferSession && !inoferIsAdmin() && puedeEditar() && currentOrderSubTab === 'list') switchOrderSubTab('rapida');
+            const op = $('logOperator'); if (op && !op.value) op.value = nombreOperario();
+          } catch (e) { }
+          return r;
+        };
+      }
     })();
   </script>
   <script>
