@@ -221,7 +221,7 @@ function reemplazarRegistros(entries) {
 // Permisos por área: 'none' (sin acceso) | 'view' (solo ver) | 'edit' (ver y modificar)
 // =====================================================================
 const USERS_SHEET_NAME = 'BD_Usuarios';
-const AREAS = ['partes', 'ordenes', 'catalogo', 'gantt', 'ia'];
+const AREAS = ['partes', 'ordenes', 'catalogo', 'gantt', 'ia', 'indicadores'];
 const SESION_DIAS = 30;
 
 function getUsersSheet() {
@@ -314,7 +314,7 @@ function puede(u, area, nivel) {
   return nivel === 'view' ? (v === 'view' || v === 'edit') : v === 'edit';
 }
 
-const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt' };
+const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores' };
 
 function modulosVisibles(u) {
   const all = obtenerEstadoModulos();

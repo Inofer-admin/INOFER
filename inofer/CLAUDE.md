@@ -20,7 +20,7 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Raíz del repo: `version.json` + `INOFER.jar` solo para que los programas viejos (2.3, URL de la raíz) se actualicen solos.
 
 ## Usuarios y permisos
-- Ingreso obligatorio. Áreas: partes, ordenes, catalogo, gantt, ia. Niveles: none / view / edit. Rol admin = todo + usuarios + nube.
+- Ingreso obligatorio. Áreas: partes, ordenes, catalogo, gantt, ia, indicadores. Niveles: none / view / edit. Rol admin = todo + usuarios + nube.
 - Modo nube (Codigo.gs nuevo): login/token y permisos validados en el servidor (hoja BD_Usuarios, sesiones en Script Properties).
 - Modo local (sin nube o Codigo.gs viejo): usuarios en localStorage `tablero_inyectoras_users_v1`, compartidos como módulo `users`.
 - Interfaz: `INOFER_EDIT_CONTROLS` en index.html lista los controles que modifican datos por área. Si se agrega un botón/campo
@@ -41,6 +41,11 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Auto-armado: inoferOrdenarPorPiston agrupa piezas del mismo pistón dentro de cada nivel de urgencia (ahorro de SET-UP);
   prefiere la máquina que lo tiene montado y suma CPIS al cambiar. Solo 200V/200N/180 cambian pistón (H50 y Z30: único).
 - Gantt: panel "⚙️ Pistones por máquina", avisos de cambios y de pistón faltante; carga manual bloqueada si la máquina no lo tiene.
+
+## Indicadores (KPI)
+- Solapa 📊 Indicadores (área de permisos `indicadores`): rebabado, scrap (menor es mejor), recuento cíclico, inyección.
+- Módulo `kpis`: { clave: { meta, datos:[{mes:'AAAA-MM', valor, nota}] } }. Gráfico estilo planilla (fondo #5b9bd5, línea negra),
+  informe imprimible (iframe), PNG, importar pegando o desde Excel/CSV. Recuento arranca con los datos del gráfico de la planta.
 
 ## Cómo aplicar un pedido del usuario
 1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).
