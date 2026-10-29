@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.33" />
+  <meta name="inofer-version" content="2026.10.29.34" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -4813,7 +4813,7 @@ ${lines}${trendNote}`;
     // ------------------------------------------------------------------ Gemini
     let aiConversation = [];
     let aiBusy = false;
-    const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+    const GEMINI_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
     function buildAiFullContext() {
       const ctx = buildDetailedPlantContext();

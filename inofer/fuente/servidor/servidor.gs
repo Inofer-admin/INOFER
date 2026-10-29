@@ -858,12 +858,14 @@ function accionMensajeria(u, body) {
 
 // ===================== IA (Gemini) a través del servidor: la clave queda guardada en la nube =====================
 const ACCIONES_IA = ['iaInfo', 'iaConfig', 'iaGenerar'];
-const IA_MODELOS_BASE = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+// Probados con una clave AQ del plan gratuito (29/10/2026): 3.5-flash, 3-flash-preview y 3.1-flash-lite responden en 1-3 s;
+// 3.7/3.8-flash quedaban colgados y 2.5-flash ya no está disponible para cuentas nuevas.
+const IA_MODELOS_BASE = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest'];
 // Descubre qué modelos "flash" tiene habilitados la clave (Google los va cambiando); se guarda 1 día
 function iaModelos_(clave) {
   const props = PropertiesService.getScriptProperties();
   try {
-    const c = JSON.parse(props.getProperty('IA_MODELOS_CACHE') || 'null');
+    const c = JSON.parse(props.getProperty('IA_MODELOS_CACHE2') || 'null');
     if (c && c.t > Date.now() - 24 * 3600 * 1000 && c.k === String(clave).slice(-6) && c.m && c.m.length) return c.m;
   } catch (e) {}
   let lista = [];
@@ -880,8 +882,11 @@ function iaModelos_(clave) {
       lista.sort(function (a, b) { return ((b === 'gemini-flash-latest') - (a === 'gemini-flash-latest')) || (ver(b) - ver(a)); });
     }
   } catch (e) {}
-  const m = lista.slice(0, 3).concat(IA_MODELOS_BASE).filter(function (x, i, arr) { return arr.indexOf(x) === i; });
-  if (lista.length) props.setProperty('IA_MODELOS_CACHE', JSON.stringify({ t: Date.now(), k: String(clave).slice(-6), m: m }));
+  // primero los modelos probados que la clave tiene habilitados; los demás solo como último recurso
+  const probados = lista.length ? IA_MODELOS_BASE.filter(function (x) { return lista.indexOf(x) !== -1; }) : IA_MODELOS_BASE.slice();
+  const m = probados.concat(lista.length ? [] : []).filter(function (x, i, arr) { return arr.indexOf(x) === i; });
+  if (!m.length) m.push('gemini-flash-latest');
+  if (lista.length) props.setProperty('IA_MODELOS_CACHE2', JSON.stringify({ t: Date.now(), k: String(clave).slice(-6), m: m }));
   return m;
 }
 function iaClave_() { const p = PropertiesService.getScriptProperties(); return p.getProperty('IA_KEY') || p.getProperty('GEMINI_KEY') || ''; }
@@ -952,7 +957,7 @@ function iaPedirGemini_(clave, modo, modelo, cuerpo) {
   const r = UrlFetchApp.fetch(url, op);
   let d = {}; try { d = JSON.parse(r.getContentText()); } catch (e) {}
   const partes = (((d.candidates || [])[0] || {}).content || {}).parts || [];
-  return { code: r.getResponseCode(), texto: r.getResponseCode() === 200 ? partes.map(function (p) { return p.text || ''; }).join('').trim() : '', msg: String((d.error && d.error.message) || r.getResponseCode()) };
+  return { code: r.getResponseCode(), texto: r.getResponseCode() === 200 ? partes.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('').trim() : '', msg: String((d.error && d.error.message) || r.getResponseCode()) };
 }
 function iaLlamar_(clave, cuerpo) {
   if (iaProveedor_(clave) === 'claude') return iaLlamarClaude_(clave, cuerpo);
@@ -968,7 +973,8 @@ function iaLlamar_(clave, cuerpo) {
       const r = iaPedirGemini_(clave, modo, IA_MODELOS[i], cuerpo);
       if (r.code === 200 && r.texto) { if (modo !== recordado) props.setProperty('IA_AUTH_MODO', modo); return { ok: true, texto: r.texto }; }
       if (r.code === 200) { ultimo = 'respuesta vacía'; continue; }
-      if (r.code === 429) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
+      if (r.code === 429 && i === IA_MODELOS.length - 1) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
+      if (r.code === 429 || r.code >= 500) { ultimo = IA_MODELOS[i] + ': ' + r.msg; continue; }
       const authErr = r.code === 401 || r.code === 403 || (r.code === 400 && /api key|credential|authenticat|token/i.test(r.msg));
       if (authErr) { authFallo = true; clave_mala = clave_mala || /api key not valid|API_KEY_INVALID/i.test(r.msg); ultimo = modo + ': ' + r.msg; break; }
       ultimo = IA_MODELOS[i] + ': ' + r.msg;
