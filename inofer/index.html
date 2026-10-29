@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.45" />
+  <meta name="inofer-version" content="2026.10.29.46" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -6469,7 +6469,8 @@ ${lines}${trendNote}`;
     }
 
     function getWeekDaysDates(startIsoDate) {
-      const d = new Date(startIsoDate + 'T00:00:00');
+      // columna 0 = domingo: se alinea con el día real de la semana de startDate
+      const d = new Date(startIsoDate + 'T00:00:00'); if (!isNaN(d)) d.setDate(d.getDate() - d.getDay());
       const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
       const days = [];
       for (let i = 0; i < 7; i++) {
@@ -6481,7 +6482,7 @@ ${lines}${trendNote}`;
           idx: i,
           name: dayNames[i],
           label: `${dayNames[i]} ${dd}/${mm}`,
-          iso: cur.toISOString().slice(0, 10)
+          iso: `${cur.getFullYear()}-${mm}-${dd}`
         });
       }
       return days;
@@ -6720,6 +6721,7 @@ ${lines}${trendNote}`;
                 </button>
               </div>
             </div>
+            ${typeof inoferBannerMaquina === 'function' ? inoferBannerMaquina(mach.id, week) : ''}
 
             <!-- Gantt Table for this Machine -->
             <div class="overflow-x-auto custom-scrollbar">
@@ -7743,6 +7745,9 @@ ${lines}${trendNote}`;
         // Pistón: solo máquinas que tengan ese diámetro; primero la que ya lo tiene montado (evita cambios)
         const pisPieza = pisDe(cleanPart);
         let machsOk = compatibleMachs;
+        // máquinas fuera de servicio todo el período: no se usan
+        if (typeof inoferMaquinaFueraTotal === 'function') { const disp = compatibleMachs.filter(m => !inoferMaquinaFueraTotal(m)); machsOk = disp.length ? disp : []; }
+        if (!machsOk.length) { lotesSinLugar++; return; }
         if (pisPieza && typeof inoferMaquinaAdmitePiston === 'function') {
           const ok = compatibleMachs.filter(m => inoferMaquinaAdmitePiston(m, pisPieza));
           if (ok.length) machsOk = ok;
@@ -7828,7 +7833,7 @@ ${lines}${trendNote}`;
           if (loteMinPieza) {
             const suC = includeSetup && typeof inoferSetupDe === 'function' ? inoferSetupDe(mId).total : 0;
             let libreC = 0;
-            for (let w2 = 0; w2 < 4; w2++) for (const d2 of activeDayIndices) libreC += Math.max(0, dailyHoursLimit - usedHours[mId][w2][d2]);
+            for (let w2 = 0; w2 < 4; w2++) for (const d2 of activeDayIndices) { if (typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(mId, ganttWeeksData[monthWeekCodes[w2]], d2)) continue; libreC += Math.max(0, dailyHoursLimit - usedHours[mId][w2][d2]); }
             if ((libreC - suC) * stdRate < Math.min(remainingQty, loteMinPieza)) { continue; }
           }
           maqAnterior = mId;
@@ -7841,6 +7846,7 @@ ${lines}${trendNote}`;
 
             for (const dIdx of activeDayIndices) {
               if (remainingQty <= 0) break;
+              if (typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(mId, weekObj, dIdx)) continue; // máquina fuera de servicio ese día
               let availHrs = dailyHoursLimit - usedHours[mId][wIdx][dIdx];
               if (availHrs <= 0.25) continue;
               const pmKey = pmPieza ? (pmPieza + '|' + wIdx + '|' + dIdx) : '';
@@ -12002,12 +12008,18 @@ ${lines}${trendNote}`;
       function maquinaPorDefecto(part) {
         const cat = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
         const ms = cat && Array.isArray(cat.machines) ? cat.machines : [];
-        return ms.find(m => MAQS().includes(m)) || null;
+        return ms.find(m => MAQS().includes(m) && !(typeof inoferMaquinaFueraTotal === 'function' && inoferMaquinaFueraTotal(m))) || ms.find(m => MAQS().includes(m)) || null;
       }
-      function validarUbicacion(week, part, m, dias) {
+      function validarUbicacion(week, part, m, dias, origen) {
         if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(part)) return `La ${part} termina en -R: no se inyecta, no la pongo en el Gantt.`;
+        if (typeof inoferMaquinaDisponibleDia === 'function') {
+          const fuera = (dias || []).filter(d => !inoferMaquinaDisponibleDia(m, week, d));
+          if (fuera.length) { const e = inoferMaquinaEstado(m); return `La ${m} está fuera de servicio${e.motivo ? ' (' + e.motivo + ')' : ''} el ${fuera.map(d => DIA_NOMBRE[d]).join(', ')}.`; }
+        }
         if (typeof inoferChoqueManual === 'function') {
-          const c = inoferChoqueManual(week, part, m, dias);
+          // al mover desde otra máquina, el molde sale de la de origen: esa no cuenta como choque
+          const wv = origen ? Object.assign({}, week, { machines: Object.fromEntries(Object.entries(week.machines || {}).filter(([k]) => k !== origen)) }) : week;
+          const c = inoferChoqueManual(wv, part, m, dias);
           if (c) return `La ${part} comparte portamolde ${c.pm} con la ${c.otra}, que ya está en la ${c.mach} el ${DIA_NOMBRE[c.dia]}. No pueden estar en máquina al mismo tiempo.`;
         }
         if (typeof inoferMaquinaAdmitePiston === 'function' && typeof inoferPistonDe === 'function') {
@@ -12108,7 +12120,7 @@ ${lines}${trendNote}`;
             const x = unico(buscar(week, op.part, op.from), op.part);
             if (x.m === op.to) throw `La ${x.it.part} ya está en la ${op.to}.`;
             const dias = op.days || [0, 1, 2, 3, 4, 5, 6].filter(d => Number(x.it.dailyQty[d]) > 0);
-            const err = validarUbicacion(week, x.it.part, op.to, dias); if (err) throw err;
+            const err = validarUbicacion(week, x.it.part, op.to, dias, x.m); if (err) throw err;
             const destino = asegurarMaquina(week, op.to);
             const sis = compañeras(week, x.m, x.it.part);
             if (op.days) {
@@ -12337,6 +12349,31 @@ Pedido: ${frase}`;
       window.inoferGanttChat = procesar;
       window.inoferGanttEjecutar = t => procesar(t, { devolver: true });
 
+      // Pasa a otra máquina compatible y disponible lo programado en una máquina fuera de servicio
+      window.inoferReubicarMaquina = function (m) {
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) { showToast('Tu usuario no puede modificar el Gantt'); return; }
+        const copia = JSON.stringify(ganttWeeksData);
+        let movidas = 0; const sinLugar = [];
+        Object.values(ganttWeeksData).forEach(w => {
+          const dias = [0, 1, 2, 3, 4, 5, 6].filter(d => !inoferMaquinaDisponibleDia(m, w, d));
+          if (!dias.length) return;
+          ((w.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion && dias.some(d => Number(it.dailyQty[d]) > 0)).slice().forEach(it => {
+            const c = (partsCatalog || []).find(x => norm(x.part) === norm(it.part));
+            const opciones = (c && c.machines ? c.machines : []).filter(x => x !== m && MAQS().includes(x));
+            const conDias = dias.filter(d => Number(it.dailyQty[d]) > 0);
+            const motivos = opciones.map(x => validarUbicacion(w, it.part, x, conDias, m));
+            const destino = opciones.find((x, i) => !motivos[i]);
+            if (!destino) { sinLugar.push(it.part + ' (' + w.code + ')' + (motivos.length ? ': ' + motivos[0] : ': solo se hace en la ' + m)); return; }
+            const yaEstaba = ((w.machines[destino] || {}).items || []).some(x => norm(x.part) === norm(it.part));
+            try { aplicar({ op: 'move_mach', part: it.part, from: m, to: destino, days: conDias }, w, []); movidas++; if (!yaEstaba && typeof inoferAgregarSetup === 'function') inoferAgregarSetup(w, destino, conDias[0]); } catch (e) { sinLugar.push(it.part + ' (' + w.code + '): ' + e); }
+          });
+          limpiarVacios(w);
+        });
+        if (movidas) { historial.push({ datos: copia, semana: activeGanttWeekCode }); saveGanttWeeks(); renderGanttView(); }
+        showToast(movidas ? `✓ ${movidas} pieza${movidas > 1 ? 's' : ''} pasada${movidas > 1 ? 's' : ''} a otra máquina` + (sinLugar.length ? ` · sin máquina compatible: ${sinLugar.join(', ')}` : '') : (sinLugar.length ? 'No hay otra máquina compatible para: ' + sinLugar.join(', ') : 'No había piezas para mover'));
+      };
+      document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('.inofer-reubicar'); if (b) window.inoferReubicarMaquina(b.dataset.m); });
+
       // ---------- semanas que planifica el asistente ----------
       const SEM_KEY = 'tablero_inyectoras_asistente_semanas_v1';
       function semanasElegidas() {
@@ -12462,6 +12499,7 @@ Pedido: ${frase}`;
         return { semanasSeleccionadas: semanas, semanaActiva: activeGanttWeekCode, semanasExistentes: Object.keys(ganttWeeksData), capacidadHorasPorDia: cap,
           diasIndice: '0=domingo,1=lunes,2=martes,3=miércoles,4=jueves,5=viernes,6=sábado (se trabaja lunes a viernes salvo que pidan sábado)',
           setupPorMaquinaHoras: Object.fromEntries(MAQS().map(m => [m, typeof inoferSetupDe === 'function' ? inoferSetupDe(m).total : 0])),
+          maquinasFueraDeServicio: MAQS().map(m => ({ m, e: typeof inoferMaquinaEstado === 'function' ? inoferMaquinaEstado(m) : { activa: true } })).filter(x => !x.e.activa).map(x => ({ maquina: x.m, motivo: x.e.motivo, desde: x.e.desde || null, hasta: x.e.hasta || null })),
           puedeModificar: perm.puedeEditar, puedeVerPrecios: perm.puedePrecios, catalogo };
       }
       const SISTEMA_IA = `Sos el asistente de programación (Gantt) de la planta de inyección INOFER, en Argentina. Hablás en español rioplatense, como un compañero de planta: claro y BREVE (una o dos oraciones), sin detallar lo que hacés salvo que te lo pidan.
@@ -12482,7 +12520,7 @@ Operaciones (agregá "semana":"SEM-NN" si corresponde a una semana específica; 
 {"op":"facturacion"}  cuánto factura (solo si puedeVerPrecios)
 {"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":null,"maquinas":null,"sinLimite":false}  llegar a un objetivo de facturación en pesos
 {"op":"show","mach"|null}
-Reglas de planta que respeta la app (no hace falta que las verifiques, pero tenelas en cuenta al proponer): piezas terminadas en -R no se inyectan; piezas del mismo portamolde (pm) no pueden estar en máquina el mismo día; cada pieza solo en sus máquinas compatibles (maq) y con su pistón (pis); no se programa menos que el lote mínimo (lote) salvo pedido explícito; cada pieza nueva en una máquina suma su set-up; capacidad por día según capacidadHorasPorDia.
+Reglas de planta que respeta la app (no hace falta que las verifiques, pero tenelas en cuenta al proponer): piezas terminadas en -R no se inyectan; piezas del mismo portamolde (pm) no pueden estar en máquina el mismo día; cada pieza solo en sus máquinas compatibles (maq) y con su pistón (pis); no se programa nada en maquinasFueraDeServicio en esas fechas; no se programa menos que el lote mínimo (lote) salvo pedido explícito; cada pieza nueva en una máquina suma su set-up; capacidad por día según capacidadHorasPorDia.
 Si puedeModificar es false, no devuelvas operaciones de cambio y explicá que no tiene permiso.
 Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta" sin operaciones.`;
       async function pedirIA(texto, sel, perm) {
@@ -13423,6 +13461,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           if (!rate) return;
           const ms = (c.machines || []).filter(m => maqs.includes(m));
           ms.forEach(m => {
+            if (typeof inoferMaquinaFueraTotal === 'function' && inoferMaquinaFueraTotal(m)) return;
             if (typeof inoferMaquinaAdmitePiston === 'function' && typeof inoferPistonDe === 'function') { const mm = inoferPistonDe(c.part); if (mm && !inoferMaquinaAdmitePiston(m, mm)) return; }
             const yaEnMaq = ((week.machines[m] || {}).items || []).some(it => !it.isSharedCompanion && clave(it.part) === clave(c.part));
             const urg = dem[clave(c.part)] ? dem[clave(c.part)].alcance : 50;
@@ -13450,7 +13489,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           if (!it && !loteM) { sinLote++; continue; } // pieza nueva sin lote mínimo conocido: no se sube un molde a ciegas
           if (!it && loteM) {
             // pieza nueva: tiene que entrar al menos el lote mínimo en las horas libres de la semana
-            const libreSem = dias.reduce((a, d) => a + Math.max(0, cap - horasUsadas(week, k.m, d)), 0) - SETUP;
+            const libreSem = dias.reduce((a, d) => a + ((typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(k.m, week, d)) ? 0 : Math.max(0, cap - horasUsadas(week, k.m, d))), 0) - SETUP;
             if (libreSem * k.rate < loteM) continue;
             if (resto < loteM) resto = loteM;
           }
@@ -13460,6 +13499,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           for (const d of ordenDias) {
             const faltaLote = snapshot && loteM && agregado < loteM;
             if ((falta <= 0 && !faltaLote) || resto <= 0) break;
+            if (typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(k.m, week, d)) continue;
             let libre = cap - horasUsadas(week, k.m, d) - (setupPend ? SETUP : 0);
             if (libre < 0.5) continue;
             if (typeof inoferChoqueManual === 'function' && inoferChoqueManual(week, k.c.part, k.m, [d])) continue;
@@ -13653,8 +13693,10 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
       Object.keys(DEF.maquinas).forEach(m => { cfg.maquinas[m] = Object.assign({}, DEF.maquinas[m], cfg.maquinas[m] || {}); });
       const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : Object.keys(DEF.maquinas));
 
+      let ultimoCambioLocal = 0;
       function guardar(subir) {
         try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { }
+        if (subir) { ultimoCambioLocal = Date.now(); }
         if (subir) { try { pushCloudModuleState('setup', cfg); } catch (e) { } }
       }
       function setupDe(m) {
@@ -13695,6 +13737,28 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         return m ? Math.max(0, Number((cfg.maquinas[m] || {}).loteMin) || 0) : 0;
       }
       window.inoferSetupCfg = () => cfg;
+      // ---------- máquinas fuera de servicio (mantenimiento / rotura) ----------
+      const isoMas = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      window.inoferFechaDia = (week, d) => { if (!week || !week.startDate) return ''; const b = new Date(week.startDate + 'T00:00:00'); return isNaN(b) ? '' : isoMas(week.startDate, d - b.getDay()); };
+      window.inoferMaquinaEstado = m => { const c = cfg.maquinas[m] || {}; return { activa: c.activa !== false, motivo: c.motivo || '', desde: c.desde || '', hasta: c.hasta || '' }; };
+      window.inoferMaquinaDisponible = (m, iso) => {
+        const c = cfg.maquinas[m] || {};
+        if (c.activa !== false) return true;
+        if (!c.desde && !c.hasta) return false;
+        if (!iso) return false;
+        return !((!c.desde || iso >= c.desde) && (!c.hasta || iso <= c.hasta));
+      };
+      window.inoferMaquinaDisponibleDia = (m, week, d) => inoferMaquinaDisponible(m, inoferFechaDia(week, d));
+      window.inoferMaquinaFueraTotal = m => { const c = cfg.maquinas[m] || {}; return c.activa === false && !c.desde && !c.hasta; };
+      window.inoferBannerMaquina = (m, week) => {
+        const e = inoferMaquinaEstado(m); if (e.activa) return '';
+        const dias = [0, 1, 2, 3, 4, 5, 6].filter(d => !inoferMaquinaDisponibleDia(m, week, d));
+        if (!dias.length) return '';
+        const N = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+        const conCarga = ((week.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion && dias.some(d => Number((it.dailyQty || [])[d]) > 0)).length;
+        return `<div class="flex flex-wrap items-center gap-2 border-b border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">⛔ <b>Fuera de servicio</b>${e.motivo ? ' · ' + esc(e.motivo) : ''}${e.desde || e.hasta ? ` · ${e.desde ? 'desde ' + esc(e.desde) : ''} ${e.hasta ? 'hasta ' + esc(e.hasta) : ''}` : ''} · ${dias.length === 7 ? 'toda la semana' : dias.map(d => N[d]).join(', ')}
+          ${conCarga ? `<span class="font-bold text-amber-300">· ${conCarga} pieza${conCarga > 1 ? 's' : ''} programada${conCarga > 1 ? 's' : ''} esos días</span><button type="button" class="inofer-reubicar ml-auto rounded-lg border border-amber-400/60 px-2 py-0.5 text-[11px] font-bold text-amber-200 hover:bg-amber-500/10" data-m="${esc(m)}">Pasarlas a otra máquina</button>` : ''}</div>`;
+      };
       window.inoferSetupDe = setupDe;
       window.inoferLoteMinDe = loteMinDe;
       window.inoferStdAux = (m, code) => {
@@ -13722,7 +13786,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         window.applyCloudModules = function (mods) {
           const out = am.apply(this, arguments);
           try {
-            if (mods && mods.setup && mods.setup.maquinas && JSON.stringify(mods.setup) !== JSON.stringify(cfg)) {
+            // si recién se cambió algo en este equipo, no se pisa con una respuesta vieja de la nube
+            if (mods && mods.setup && mods.setup.maquinas && Date.now() - ultimoCambioLocal > 20000 && JSON.stringify(mods.setup) !== JSON.stringify(cfg)) {
               cfg = mods.setup; Object.keys(DEF.maquinas).forEach(m => { cfg.maquinas[m] = Object.assign({}, DEF.maquinas[m], cfg.maquinas[m] || {}); });
               guardar(false);
               const a = document.activeElement;
@@ -13749,14 +13814,21 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const conLote = Object.keys(mapaPlanilla()).length;
         box.innerHTML = `<summary class="cursor-pointer select-none text-sm font-extrabold text-violet-300">⏱️ Set-up por máquina y lotes mínimos <span class="ml-1 text-[11px] font-normal text-slate-400">— ${MAQS().map(m => `${m}: ${setupDe(m).total} h`).join(' · ')}</span></summary>
           <div class="mt-3 overflow-x-auto"><table class="w-full text-left">
-            <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3 text-right">Cambio de molde (h)</th><th class="py-1 pr-3 text-right">Puesta a punto (h)</th><th class="py-1 pr-3 text-right">Total set-up</th><th class="py-1 text-right">Lote mínimo por defecto (u)</th></tr></thead>
+            <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3 text-right">Cambio de molde (h)</th><th class="py-1 pr-3 text-right">Puesta a punto (h)</th><th class="py-1 pr-3 text-right">Total set-up</th><th class="py-1 pr-3 text-right">Lote mínimo por defecto (u)</th><th class="py-1 pl-3">Estado</th></tr></thead>
             <tbody>${MAQS().map(m => { const c = cfg.maquinas[m] || {}; return `<tr class="border-t border-slate-800">
               <td class="py-1.5 pr-3 font-bold text-white">${esc(m)}</td>
               <td class="py-1.5 pr-3 text-right"><input type="number" min="0" step="0.25" class="${inp}" data-m="${esc(m)}" data-k="cmo" value="${Number(c.cmo) || 0}" ${puede ? '' : 'disabled'}></td>
               <td class="py-1.5 pr-3 text-right"><input type="number" min="0" step="0.25" class="${inp}" data-m="${esc(m)}" data-k="alis" value="${Number(c.alis) || 0}" ${puede ? '' : 'disabled'}></td>
               <td class="py-1.5 pr-3 text-right font-bold text-violet-200">${setupDe(m).total} h</td>
-              <td class="py-1.5 text-right"><input type="number" min="0" step="1" class="${inp}" data-m="${esc(m)}" data-k="loteMin" value="${Number(c.loteMin) || ''}" placeholder="sin mínimo" ${puede ? '' : 'disabled'}></td>
+              <td class="py-1.5 pr-3 text-right"><input type="number" min="0" step="1" class="${inp}" data-m="${esc(m)}" data-k="loteMin" value="${Number(c.loteMin) || ''}" placeholder="sin mínimo" ${puede ? '' : 'disabled'}></td>
+              <td class="py-1.5 pl-3">${(() => { const on = c.activa !== false; return `<div class="flex flex-wrap items-center gap-1.5">
+                <button type="button" class="inofer-maq-estado rounded-lg border px-2 py-1 text-[11px] font-bold ${on ? 'border-emerald-500/50 text-emerald-300' : 'border-rose-500/60 bg-rose-500/10 text-rose-200'}" data-m="${esc(m)}" ${puede ? '' : 'disabled'}>${on ? '✅ Disponible' : '⛔ Fuera de servicio'}</button>
+                ${on ? '' : `<input class="inofer-setup-cfg w-40 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-[11px] text-white" data-m="${esc(m)}" data-k="motivo" data-texto="1" value="${esc(c.motivo || '')}" placeholder="Motivo (ej: rotura bomba)" ${puede ? '' : 'disabled'}>
+                <label class="text-[10px] text-slate-400">desde <input type="date" class="inofer-setup-cfg rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px] text-white" data-m="${esc(m)}" data-k="desde" data-texto="1" value="${esc(c.desde || '')}" ${puede ? '' : 'disabled'}></label>
+                <label class="text-[10px] text-slate-400">hasta <input type="date" class="inofer-setup-cfg rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px] text-white" data-m="${esc(m)}" data-k="hasta" data-texto="1" value="${esc(c.hasta || '')}" ${puede ? '' : 'disabled'}></label>`}
+              </div>`; })()}</td>
             </tr>`; }).join('')}</tbody></table></div>
+          <p class="mt-2 text-[11px] text-rose-200/80">⛔ Una máquina fuera de servicio no recibe piezas nuevas (Gantt automático, asistente y plan por facturación). Sin fechas queda parada hasta que la vuelvas a habilitar; con fechas, solo esos días.</p>
           <p class="mt-2 text-[11px] text-slate-400">Cada vez que una pieza entra a una máquina se cargan estas horas de cambio de molde y puesta a punto, en el Gantt automático, en el asistente y en el plan por facturación. El lote mínimo de cada pieza se toma de la planilla de demanda del Gantt automático (la cantidad de las columnas M1, M2, M3…; ${conLote} piezas). Si una pieza no está en la planilla, se usa el lote de la Base de Datos o, si no tiene, el de la máquina. Nunca se programa una tirada menor al lote mínimo.</p>`;
         box.open = abierto;
       }
@@ -13766,9 +13838,22 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) return;
         const m = el.dataset.m, k = el.dataset.k;
         cfg.maquinas[m] = cfg.maquinas[m] || {};
-        cfg.maquinas[m][k] = Math.max(0, Number(el.value) || 0);
+        cfg.maquinas[m][k] = el.dataset.texto ? String(el.value || '').trim() : Math.max(0, Number(el.value) || 0);
         guardar(true); render();
+        if (el.dataset.texto) { try { renderGanttView(); } catch (e) { } return; }
         showToast(k === 'loteMin' ? `${m}: lote mínimo ${cfg.maquinas[m][k] || 'sin definir'}` : `${m}: set-up ${setupDe(m).total} h`);
+      });
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-maq-estado'); if (!b) return;
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) return;
+        const m = b.dataset.m; cfg.maquinas[m] = cfg.maquinas[m] || {};
+        const on = cfg.maquinas[m].activa !== false;
+        cfg.maquinas[m].activa = !on;
+        if (!on) { delete cfg.maquinas[m].motivo; delete cfg.maquinas[m].desde; delete cfg.maquinas[m].hasta; }
+        guardar(true);
+        const box = $('inoferPanelSetup'); if (box) box.open = true;
+        render(); try { renderGanttView(); } catch (er) { }
+        showToast(on ? `⛔ ${m} fuera de servicio` : `✅ ${m} disponible de nuevo`);
       });
 
       // ---------- lote mínimo por pieza en la base de datos ----------
@@ -13805,6 +13890,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         window.renderGanttView = function () { const r = rg.apply(this, arguments); try { render(); } catch (e) { } return r; };
       }
       function iniciar() { try { render(); } catch (e) { console.error(e); } }
+      // al iniciar sesión / cambiar permisos, el panel se vuelve a dibujar con lo que puede hacer el usuario
+      if (typeof window.inoferApplyPermissions === 'function') { const ap = window.inoferApplyPermissions; window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); try { render(); } catch (e) { } return r; }; }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
     })();
   </script>
@@ -14859,7 +14946,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           const nombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
           const filas = MAQS().map(m => {
             const its = ((w.machines[m.id] || {}).items || []).filter(i => !i.isSharedCompanion && (i.dailyQty || []).some(q => Number(q) > 0));
-            return `<tr class="border-t border-slate-800"><td class="py-2 pr-4 align-top text-3xl font-black text-amber-300">${esc(m.short || m.id)}</td>
+            const fueraP = typeof inoferMaquinaEstado === 'function' && !inoferMaquinaEstado(m.id).activa && [1, 2, 3, 4, 5].some(dd => !inoferMaquinaDisponibleDia(m.id, w, dd));
+            return `<tr class="border-t border-slate-800"><td class="py-2 pr-4 align-top text-3xl font-black text-amber-300">${esc(m.short || m.id)}${fueraP ? '<div class="text-base font-bold text-rose-400">⛔ fuera de servicio</div>' : ''}</td>
               <td class="py-2">${its.length ? its.map(i => `<div class="flex items-center gap-3 py-0.5 text-xl"><span class="w-44 shrink-0 font-bold text-white">${esc(i.part)}</span>${dias.map(dd => `<span class="w-24 text-center ${Number(i.dailyQty[dd]) > 0 ? 'rounded bg-sky-500/20 font-bold text-sky-200' : 'text-slate-700'}">${Number(i.dailyQty[dd]) > 0 ? Number(i.dailyQty[dd]).toLocaleString('es-AR') : '·'}</span>`).join('')}</div>`).join('') : '<span class="text-xl text-slate-500">Sin piezas programadas</span>'}</td></tr>`;
           }).join('');
           cont.innerHTML = tit('Plan de inyección', esc(w.name || w.code)) + `<div class="overflow-hidden"><table class="w-full"><thead><tr><th></th><th class="text-left"><div class="flex gap-3 text-lg text-slate-400"><span class="w-44 shrink-0">Pieza</span>${dias.map(dd => `<span class="w-24 text-center">${nombres[dd]}</span>`).join('')}</div></th></tr></thead><tbody>${filas}</tbody></table></div>`;
