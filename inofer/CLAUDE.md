@@ -36,6 +36,11 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
   vez por equipo tras sincronizar (flag `tablero_inyectoras_moldesbase_v1`), completando solo portamoldes vacíos.
 - Piezas `-R` (inoferEsPiezaR) no se inyectan: fuera del análisis/auto-armado, bloqueadas a mano, aviso para quitarlas.
 
+## Pistones
+- Pieza: `pistonMm` (diámetro de pistón). Módulo `pistones` (área gantt): disponibles y montado por máquina + horasCambio.
+- Auto-armado: solo máquinas con ese pistón, prefiere la que lo tiene montado, suma CPIS (cambio de pistón) al cambiar.
+- Gantt: panel "⚙️ Pistones por máquina", avisos de cambios y de pistón faltante; carga manual bloqueada si la máquina no lo tiene.
+
 ## Cómo aplicar un pedido del usuario
 1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).
 2. Si se tocó Java: subir `VERSION` en `Main.java` (ej. 2.3 → 2.4). Si solo cambia la web, no hace falta.

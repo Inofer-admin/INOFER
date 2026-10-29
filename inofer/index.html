@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.04" />
+  <meta name="inofer-version" content="2026.10.29.05" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1586,6 +1586,10 @@
                 <input type="text" id="cat_portamolde" list="inoferPortamoldeList" placeholder="Ej: PM-34111 → las piezas con el mismo portamolde NO pueden estar en máquina a la vez" class="w-full rounded-lg border border-orange-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-orange-300 placeholder:text-slate-500 placeholder:font-normal" />
                 <datalist id="inoferPortamoldeList"></datalist>
                 <p id="cat_portamolde_info" class="mt-1 text-[10px] text-orange-200/80">Dejalo vacío si el molde es único. Escribí el mismo código en todas las piezas que salen del mismo portamolde (ej: 34111-PB y 34548-PB).</p>
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-sky-300 mb-1">⚙️ Diámetro de pistón (mm)</label>
+                <input type="number" id="cat_piston" min="0" step="1" placeholder="Ej: 70" class="w-full rounded-lg border border-sky-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-sky-300" />
               </div>
               <div class="flex items-end">
                 <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
@@ -5382,6 +5386,7 @@ ${lines}${trendNote}`;
             (it.desc || '').toLowerCase().includes(q) ||
             (it.mold || '').toLowerCase().includes(q) ||
             (it.portamolde || '').toLowerCase().includes(q) ||
+            (it.pistonMm ? String(it.pistonMm) + 'mm' : '').includes(q.replace(/\s+/g, '')) ||
             (it.material || '').toLowerCase().includes(q) ||
             (it.machines || []).join(' ').toLowerCase().includes(q)
           )
@@ -5420,6 +5425,8 @@ ${lines}${trendNote}`;
             </div>
             <div class="mt-1 flex items-center gap-1">
               <span class="text-[10px] text-orange-300 font-semibold">🧩 Portamolde:</span>
+              <span class="ml-1 text-[10px] text-sky-300 font-semibold">⚙️</span>
+              <input type="number" min="0" step="1" data-inline-piston="${item.id}" value="${item.pistonMm || ''}" placeholder="mm" class="inline-piston-input w-14 rounded border ${item.pistonMm ? 'border-sky-500/60 bg-sky-950/40 text-sky-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1 py-0.5 text-[11px] font-bold focus:border-sky-400 focus:outline-none" title="Diámetro del pistón (mm) con que se inyecta" />
               <input type="text" data-inline-portamolde="${item.id}" value="${item.portamolde || ''}" list="inoferPortamoldeList" placeholder="Único" class="inline-portamolde-input w-24 rounded border ${item.portamolde ? 'border-orange-500/60 bg-orange-950/40 text-orange-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-[11px] font-bold focus:border-orange-400 focus:outline-none" title="Piezas con el mismo portamolde no pueden estar en máquina a la vez" />
             </div>
             ${typeof inoferPortamoldeHermanas === 'function' && item.portamolde ? (() => { const h = inoferPortamoldeHermanas(item); return h.length ? `<div class="mt-0.5 text-[10px] text-orange-200/80">Mismo portamolde que: <b>${h.map(x => x.part).join(', ')}</b></div>` : ''; })() : ''}
@@ -5553,6 +5560,8 @@ ${lines}${trendNote}`;
           if (shInp) shInp.value = item.sharedMoldWith || '';
           const pmInp = document.getElementById('cat_portamolde');
           if (pmInp) { pmInp.value = item.portamolde || ''; pmInp.dispatchEvent(new Event('input')); }
+          const pisInp = document.getElementById('cat_piston');
+          if (pisInp) pisInp.value = item.pistonMm || '';
           const formEl = document.getElementById('catalogForm');
           if (formEl && typeof formEl.scrollIntoView === 'function') {
             formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -6285,7 +6294,8 @@ ${lines}${trendNote}`;
       { code: 'ALIS', name: 'ALISTAMIENTO MÁQUINA', stdHours: 0.67 },
       { code: 'DESG', name: 'DESGACIFICADO', stdHours: 2.00 },
       { code: 'LING', name: 'LINGOTEO', stdHours: 0.33 },
-      { code: 'LIMP', name: 'LIMPIEZA', stdHours: 1.00 }
+      { code: 'LIMP', name: 'LIMPIEZA', stdHours: 1.00 },
+      { code: 'CPIS', name: 'CAMBIO DE PISTÓN', stdHours: 2.00 }
     ];
 
     const INITIAL_GANTT_WEEKS = {
@@ -6294,11 +6304,11 @@ ${lines}${trendNote}`;
         name: 'Semana 37 (Sep 2026)',
         startDate: '2026-09-07',
         machines: {
-          '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] }
+          '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] }
         }
       },
       'SEM-38': {
@@ -6376,16 +6386,16 @@ ${lines}${trendNote}`;
         name: 'Semana 43 (Oct 2026 - Actual)',
         startDate: '2026-10-26',
         machines: {
-          '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
+          '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
           '180': {
-            aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0.5,0,0,0,0,0], 'ALIS': [0,0.5,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] },
+            aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0.5,0,0,0,0,0], 'ALIS': [0,0.5,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] },
             items: [
               { id: 'gi-43-1', part: '07615/1', desc: 'PB TAPA VA 1/8', totalQty: 700, mat: 'zamac', stdRate: 180, weightKg: 0.065, recuperoKg: 0.049, dailyQty: [0, 350, 350, 0, 0, 0, 0], orderId: 'ord-406' }
             ]
           },
-          'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-          'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] }
+          'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+          'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] }
         }
       }
     };
@@ -7616,11 +7626,11 @@ ${lines}${trendNote}`;
           name: `Semana ${wNum} (M${mIdx + 1} · ${monthLabel} - Sem ${wOffset + 1}/4)`,
           startDate: isoStart,
           machines: {
-            '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] }
+            '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] }
           }
         };
       }
@@ -7639,6 +7649,12 @@ ${lines}${trendNote}`;
       const pmMaquina = {};   // portamolde -> máquina donde quedó armado este mes
       const pmOcupado = {};   // portamolde|semana|día -> máquina que lo usa
       const pmDe = part => (typeof inoferPortamoldeDe === 'function' ? inoferPortamoldeDe(part) : '');
+      // Pistones: se arranca con el pistón montado hoy en cada máquina
+      const pisCfg = typeof inoferPistonesCfg === 'function' ? inoferPistonesCfg() : { maquinas: {}, horasCambio: 2 };
+      const pistonActual = {};
+      Object.keys(pisCfg.maquinas || {}).forEach(m => { pistonActual[m] = Number(pisCfg.maquinas[m].montado) || 0; });
+      const pisDe = part => (typeof inoferPistonDe === 'function' ? inoferPistonDe(part) : 0);
+      let pistonChangesCount = 0;
 
       demandList.forEach((req, idx) => {
         if (alreadyScheduledSisterParts.has(req.part.trim().toLowerCase())) {
@@ -7677,9 +7693,17 @@ ${lines}${trendNote}`;
           ? catEntry.machines
           : ['200V'];
 
-        let chosenMach = compatibleMachs[0];
-        if (balanceMode === 'balance' && compatibleMachs.length > 1) {
-          chosenMach = compatibleMachs.slice().sort((a, b) => (totalMachHours[a] || 0) - (totalMachHours[b] || 0))[0];
+        // Pistón: solo máquinas que tengan ese diámetro; primero la que ya lo tiene montado (evita cambios)
+        const pisPieza = pisDe(cleanPart);
+        let machsOk = compatibleMachs;
+        if (pisPieza && typeof inoferMaquinaAdmitePiston === 'function') {
+          const ok = compatibleMachs.filter(m => inoferMaquinaAdmitePiston(m, pisPieza));
+          if (ok.length) machsOk = ok;
+        }
+        const yaMontado = m => (pisPieza && pistonActual[m] === pisPieza) ? 0 : 1;
+        let chosenMach = machsOk.slice().sort((a, b) => yaMontado(a) - yaMontado(b))[0];
+        if (balanceMode === 'balance' && machsOk.length > 1) {
+          chosenMach = machsOk.slice().sort((a, b) => (yaMontado(a) - yaMontado(b)) || ((totalMachHours[a] || 0) - (totalMachHours[b] || 0)))[0];
         }
         const pmPieza = pmDe(cleanPart);
         if (pmPieza && pmMaquina[pmPieza] && compatibleMachs.includes(pmMaquina[pmPieza])) {
@@ -7737,8 +7761,8 @@ ${lines}${trendNote}`;
 
         const candidateMachines = pmPieza
           ? [chosenMach] // con portamolde compartido no se reparte en otras máquinas
-          : (balanceMode === 'balance' && compatibleMachs.length > 1
-            ? [chosenMach, ...compatibleMachs.filter(m => m !== chosenMach)]
+          : (balanceMode === 'balance' && machsOk.length > 1
+            ? [chosenMach, ...machsOk.filter(m => m !== chosenMach)]
             : [chosenMach]);
         if (pmPieza && !pmMaquina[pmPieza]) pmMaquina[pmPieza] = chosenMach;
 
@@ -7757,6 +7781,17 @@ ${lines}${trendNote}`;
               if (availHrs <= 0.25) continue;
               const pmKey = pmPieza ? (pmPieza + '|' + wIdx + '|' + dIdx) : '';
               if (pmKey && pmOcupado[pmKey] && pmOcupado[pmKey] !== mId) continue; // ese día el portamolde está en otra máquina
+              if (pisPieza && pistonActual[mId] && pistonActual[mId] !== pisPieza) {
+                const hc = Number(pisCfg.horasCambio) || 2; // cambio de pistón antes de inyectar
+                if (availHrs <= hc + 0.25) continue;
+                const auxW = weekObj.machines[mId].aux;
+                if (!auxW['CPIS']) auxW['CPIS'] = [0, 0, 0, 0, 0, 0, 0];
+                auxW['CPIS'][dIdx] = Number(((Number(auxW['CPIS'][dIdx]) || 0) + hc).toFixed(2));
+                usedHours[mId][wIdx][dIdx] += hc; totalMachHours[mId] += hc; availHrs -= hc;
+                pistonActual[mId] = pisPieza; pistonChangesCount++;
+              } else if (pisPieza && !pistonActual[mId]) {
+                pistonActual[mId] = pisPieza;
+              }
 
               if (includeSetup && !setupAddedForThisOrder) {
                 const setupH = 1.5;
@@ -7827,7 +7862,8 @@ ${lines}${trendNote}`;
         scheduledPartsCount,
         criticalPartsCount,
         sharedMoldsScheduledCount,
-        createdOrdersCount
+        createdOrdersCount,
+        pistonChangesCount
       };
     }
 
@@ -8399,11 +8435,11 @@ ${lines}${trendNote}`;
           name: `Semana ${nextWeekNum} (Nueva)`,
           startDate: new Date().toISOString().slice(0, 10),
           machines: {
-            '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] },
-            'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0] }, items: [] }
+            '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            '200N': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            '180': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            'H50': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
+            'Z30': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] }
           }
         };
         ganttWeeksData[code] = newWeek;
@@ -8789,6 +8825,8 @@ ${lines}${trendNote}`;
         if (shInp) shInp.value = '';
         const pmInp = document.getElementById('cat_portamolde');
         if (pmInp) { pmInp.value = ''; pmInp.dispatchEvent(new Event('input')); }
+        const pisInp = document.getElementById('cat_piston');
+        if (pisInp) pisInp.value = '';
       };
 
       document.getElementById('catalogResetFormBtn').addEventListener('click', resetCatalogForm);
@@ -8813,6 +8851,7 @@ ${lines}${trendNote}`;
           mold: moldVal,
           sharedMoldWith: sharedVal,
           portamolde: (document.getElementById('cat_portamolde')?.value || '').trim().toUpperCase(),
+          pistonMm: Number(document.getElementById('cat_piston')?.value) || 0,
           cavities: Number(document.getElementById('cat_cavities').value) || 1,
           unitsPerHour: Number(document.getElementById('cat_units_hr').value) || 180,
           machines: checkedMachs,
@@ -10221,10 +10260,10 @@ ${lines}${trendNote}`;
         '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea'],
       catalogo: ['#importCatalogCsvInput', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#restoreDemoCatalogBtn', '#catalogResetFormBtn', '#catSubmitBtn', '#loadFullExcelCatalogBtn',
         '#orderSubViewCatalog form input', '#orderSubViewCatalog form select', '#orderSubViewCatalog form textarea', '#selectAllCatalogCheckbox', 'input[data-cat-id]',
-        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inofer-pm-armada-select', '#inoferCargarMBBtn'],
+        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inofer-pm-armada-select', '#inoferCargarMBBtn', '.inline-piston-input'],
       gantt: ['#toggleAutoGanttPanelBtn', '#openGanttCatalogBtn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '#saveGanttBtn',
         '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#runAutoGanttMonthBtn', '#autoGanttPasteArea', '#clearAutoGanttPasteBtn',
-        '.gantt-aux-input', '.gantt-item-qty-input', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '.del-gantt-item-btn', '.add-piece-to-mach-btn'],
+        '.gantt-aux-input', '.gantt-item-qty-input', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '.del-gantt-item-btn', '.add-piece-to-mach-btn', '.inofer-piston-cfg'],
       ia: ['#clearInoferMemoryBtn', '#inoferTeachInput', '#inoferTeachBtn', '.del-inofer-note-btn']
     };
     const INOFER_ADMIN_ONLY = ['#openCloudModalBtn', '#restoreDemoDataBtn', '#clearAllRecordsBtn'];
@@ -10339,7 +10378,7 @@ ${lines}${trendNote}`;
           return origPush.apply(this, arguments);
         };
       }
-      const MOD_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', users: 'admin' };
+      const MOD_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', users: 'admin', pistones: 'gantt' };
       const origMod = window.pushCloudModuleState;
       if (typeof origMod === 'function') {
         window.pushCloudModuleState = function (key) {
@@ -10980,6 +11019,179 @@ ${lines}${trendNote}`;
       if (ev.target && (ev.target.id === 'cat_portamolde' || ev.target.id === 'cat_part')) inoferInfoPortamoldeForm();
     });
     window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); }, 300); });
+  </script>
+
+  <script>
+    // =====================================================================
+    // PISTONES: diámetro con que se inyecta cada pieza y pistones de cada máquina.
+    // Módulo "pistones" (área gantt): { maquinas: { '200V': { disponibles: [60,70], montado: 70 } }, horasCambio: 2 }
+    // =====================================================================
+    const INOFER_PISTONES_KEY = 'tablero_inyectoras_pistones_v1';
+    let inoferPistones = { maquinas: {}, horasCambio: 2 };
+    try { const g = JSON.parse(localStorage.getItem(INOFER_PISTONES_KEY) || 'null'); if (g && typeof g === 'object') inoferPistones = Object.assign({ maquinas: {}, horasCambio: 2 }, g); } catch (e) { }
+
+    function inoferPistonesCfg() { return inoferPistones; }
+    function inoferPistonDe(part) { const c = typeof inoferCatDe === 'function' ? inoferCatDe(part) : null; return c ? (Number(c.pistonMm) || 0) : 0; }
+    function inoferDisponibles(m) { return ((inoferPistones.maquinas[m] || {}).disponibles || []).map(Number).filter(x => x > 0); }
+    function inoferMaquinaAdmitePiston(m, mm) {
+      if (!mm) return true;
+      const d = inoferDisponibles(m);
+      return !d.length || d.includes(Number(mm)); // sin lista cargada = no se restringe
+    }
+    function inoferGuardarPistones() {
+      try { localStorage.setItem(INOFER_PISTONES_KEY, JSON.stringify(inoferPistones)); } catch (e) { }
+      try { pushCloudModuleState('pistones', inoferPistones); } catch (e) { }
+    }
+
+    // Recibir cambios de la nube
+    const _inoferApplyModsPis = window.applyCloudModules;
+    if (typeof _inoferApplyModsPis === 'function') {
+      window.applyCloudModules = function (mods) {
+        const out = _inoferApplyModsPis.apply(this, arguments);
+        try {
+          if (mods && mods.pistones && typeof mods.pistones === 'object' && JSON.stringify(mods.pistones) !== JSON.stringify(inoferPistones)) {
+            inoferPistones = Object.assign({ maquinas: {}, horasCambio: 2 }, mods.pistones);
+            try { localStorage.setItem(INOFER_PISTONES_KEY, JSON.stringify(inoferPistones)); } catch (e) { }
+            const a = document.activeElement;
+            if (!(a && a.classList && a.classList.contains('inofer-piston-cfg'))) { try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { } }
+          }
+        } catch (e) { }
+        return out;
+      };
+    }
+
+    // ---------- panel de pistones por máquina (en el Plan Gantt)
+    function inoferRenderPanelPistones() {
+      const gv = document.getElementById('viewGantt');
+      if (!gv) return;
+      let box = document.getElementById('inoferPanelPistones');
+      if (!box) {
+        box = document.createElement('details'); box.id = 'inoferPanelPistones';
+        box.className = 'rounded-2xl border border-sky-500/30 bg-slate-900/80 p-3.5 shadow-xl text-xs';
+        gv.insertBefore(box, gv.firstChild);
+      }
+      const abierto = box.open;
+      const filas = GANTT_MACHINES_CONFIG.map(mc => {
+        const cfg = inoferPistones.maquinas[mc.id] || {};
+        const disp = inoferDisponibles(mc.id);
+        const opciones = disp.length ? disp : (cfg.montado ? [Number(cfg.montado)] : []);
+        return `<tr class="border-t border-slate-800">
+          <td class="py-2 pr-3 font-extrabold text-white whitespace-nowrap">${inoferEsc(mc.name)}</td>
+          <td class="py-2 pr-3"><input type="text" data-pis-disp="${mc.id}" value="${disp.join(', ')}" placeholder="Ej: 60, 70, 80" class="inofer-piston-cfg w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white" /></td>
+          <td class="py-2"><select data-pis-mont="${mc.id}" class="inofer-piston-cfg rounded-lg border border-sky-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-sky-200">
+            <option value="">— Sin definir —</option>
+            ${opciones.map(mm => `<option value="${mm}" ${Number(cfg.montado) === mm ? 'selected' : ''}>${mm} mm</option>`).join('')}
+          </select></td></tr>`;
+      }).join('');
+      const conPiston = (partsCatalog || []).filter(x => Number(x.pistonMm) > 0).length;
+      box.innerHTML = `
+        <summary class="cursor-pointer select-none font-extrabold text-sky-300">⚙️ Pistones por máquina <span class="ml-1 font-normal text-slate-400">— montado hoy: ${GANTT_MACHINES_CONFIG.map(mc => `${mc.short || mc.id} ${(inoferPistones.maquinas[mc.id] || {}).montado ? (inoferPistones.maquinas[mc.id].montado + ' mm') : '—'}`).join(' · ')}</span></summary>
+        <div class="mt-3 space-y-2">
+          <p class="text-[11px] text-slate-400">Cargá qué diámetros de pistón tiene cada máquina y cuál está montado hoy. El armado automático del Gantt pone cada pieza en una máquina con su pistón, prefiere la que ya lo tiene montado y suma el tiempo de cambio (fila <b>CPIS</b>). El diámetro de cada pieza se carga en la Base de Datos de Piezas (${conPiston} pieza${conPiston === 1 ? '' : 's'} con pistón cargado).</p>
+          <div class="overflow-x-auto"><table class="w-full text-left">
+            <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3">Pistones que tiene (mm)</th><th class="py-1">Montado hoy</th></tr></thead>
+            <tbody>${filas}</tbody></table></div>
+          <label class="inline-flex items-center gap-2 text-[11px] text-slate-300">Horas por cambio de pistón
+            <input type="number" min="0" step="0.25" data-pis-horas="1" value="${Number(inoferPistones.horasCambio) || 2}" class="inofer-piston-cfg w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white" /></label>
+        </div>`;
+      box.open = abierto;
+      try { inoferLockControls(); } catch (e) { }
+    }
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains('inofer-piston-cfg')) return;
+      if (el.dataset.pisDisp) {
+        const m = el.dataset.pisDisp;
+        const lista = [...new Set(String(el.value).split(/[^0-9.]+/).map(Number).filter(x => x > 0))].sort((a, b) => a - b);
+        const cfg = inoferPistones.maquinas[m] = inoferPistones.maquinas[m] || {};
+        cfg.disponibles = lista;
+        if (cfg.montado && lista.length && !lista.includes(Number(cfg.montado))) cfg.montado = '';
+      } else if (el.dataset.pisMont) {
+        const cfg = inoferPistones.maquinas[el.dataset.pisMont] = inoferPistones.maquinas[el.dataset.pisMont] || {};
+        cfg.montado = el.value ? Number(el.value) : '';
+      } else if (el.dataset.pisHoras) {
+        inoferPistones.horasCambio = Math.max(0, Number(el.value) || 0);
+      }
+      inoferGuardarPistones();
+      inoferRenderPanelPistones(); inoferRevisarPistones();
+      showToast('Pistones guardados');
+    });
+
+    // ---------- avisos del Gantt: cambios de pistón y pistones que la máquina no tiene
+    const INOFER_DIAS_CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    function inoferAnalisisPistones(week) {
+      const cambios = [], sinPiston = [];
+      if (!week || !week.machines) return { cambios, sinPiston };
+      GANTT_MACHINES_CONFIG.forEach(mc => {
+        const items = ((week.machines[mc.id] || {}).items || [])
+          .map(it => ({ it, mm: inoferPistonDe(it.part), dia: (it.dailyQty || []).findIndex(q => Number(q) > 0) }))
+          .filter(x => x.dia >= 0 && x.mm > 0)
+          .sort((a, b) => a.dia - b.dia);
+        let actual = Number((inoferPistones.maquinas[mc.id] || {}).montado) || 0;
+        items.forEach(x => {
+          if (!inoferMaquinaAdmitePiston(mc.id, x.mm)) sinPiston.push({ mach: mc.short || mc.id, part: x.it.part, mm: x.mm });
+          if (actual && actual !== x.mm) cambios.push({ mach: mc.short || mc.id, part: x.it.part, de: actual, a: x.mm, dia: x.dia });
+          actual = x.mm;
+        });
+      });
+      return { cambios, sinPiston };
+    }
+    function inoferRevisarPistones() {
+      try {
+        const a = inoferAnalisisPistones(getActiveGanttWeek());
+        inoferAvisoBox('inoferPisAvisoError', 'viewGantt', a.sinPiston.length ? `
+          <div class="mb-1 text-sm font-extrabold text-rose-300">⛔ Pistón que la máquina no tiene</div>
+          <ul class="list-disc space-y-0.5 pl-5 text-rose-100">${a.sinPiston.map(x => `<li>${inoferEsc(x.part)} necesita pistón de <b>${x.mm} mm</b> y la <b>${inoferEsc(x.mach)}</b> no lo tiene cargado</li>`).join('')}</ul>` : '');
+        const be = document.getElementById('inoferPisAvisoError'); if (be) be.className = 'rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-xs shadow';
+        inoferAvisoBox('inoferPisAvisoCambio', 'viewGantt', a.cambios.length ? `
+          <div class="mb-1 text-sm font-extrabold text-sky-300">⚙️ Cambios de pistón esta semana (${a.cambios.length})</div>
+          <ul class="list-disc space-y-0.5 pl-5 text-sky-100">${a.cambios.map(c => `<li><b>${inoferEsc(c.mach)}</b> · ${INOFER_DIAS_CORTOS[c.dia] || ''}: de ${c.de} mm a <b>${c.a} mm</b> para la ${inoferEsc(c.part)}</li>`).join('')}</ul>
+          <p class="mt-1 text-[11px] text-sky-200/70">Agrupá en cada máquina las piezas del mismo pistón para hacer menos cambios.</p>` : '');
+        const bc = document.getElementById('inoferPisAvisoCambio'); if (bc) bc.className = 'rounded-2xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs shadow';
+        // el panel de pistones siempre arriba de todo
+        const panel = document.getElementById('inoferPanelPistones'), gv = document.getElementById('viewGantt');
+        if (panel && gv && gv.firstChild !== panel) gv.insertBefore(panel, gv.firstChild);
+      } catch (e) { }
+    }
+
+    // ---------- carga manual: no dejar una pieza en una máquina sin su pistón
+    document.addEventListener('submit', ev => {
+      if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+      const part = (document.getElementById('ganttModalPart')?.value || '').trim();
+      const mach = document.getElementById('ganttModalMachine')?.value;
+      const mm = inoferPistonDe(part);
+      if (mm && !inoferMaquinaAdmitePiston(mach, mm)) {
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        const ok = GANTT_MACHINES_CONFIG.filter(mc => inoferMaquinaAdmitePiston(mc.id, mm)).map(mc => mc.short || mc.id);
+        showToast(`🚫 ${part} se inyecta con pistón de ${mm} mm y la ${mach} no lo tiene.${ok.length ? ' Lo tienen: ' + ok.join(', ') + '.' : ''}`);
+      }
+    }, true);
+
+    // ---------- pistón de cada pieza editable desde la tabla
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains('inline-piston-input')) return;
+      const item = (partsCatalog || []).find(x => String(x.id) === String(el.dataset.inlinePiston));
+      if (!item) return;
+      item.pistonMm = Math.max(0, Number(el.value) || 0);
+      savePartsCatalog();
+      showToast(item.pistonMm ? `${item.part}: pistón de ${item.pistonMm} mm` : `${item.part}: sin pistón definido`);
+    });
+
+    // Enganches
+    const _inoferRenderGanttPis = window.renderGanttView;
+    if (typeof _inoferRenderGanttPis === 'function') {
+      window.renderGanttView = function () {
+        const r = _inoferRenderGanttPis.apply(this, arguments);
+        try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { }
+        return r;
+      };
+    }
+    const _inoferSaveGanttPis = window.saveGanttWeeks;
+    if (typeof _inoferSaveGanttPis === 'function') {
+      window.saveGanttWeeks = function () { const r = _inoferSaveGanttPis.apply(this, arguments); try { inoferRevisarPistones(); } catch (e) { } return r; };
+    }
+    window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { } }, 400); });
   </script>
 
   <script>
