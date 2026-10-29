@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.20" />
+  <meta name="inofer-version" content="2026.10.29.21" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -6608,20 +6608,25 @@ ${lines}${trendNote}`;
         const auxRowsHtml = GANTT_AUX_TASKS.map(auxTask => {
           const rowVals = mData.aux[auxTask.code] || [0, 0, 0, 0, 0, 0, 0];
           const rowSumH = rowVals.reduce((a, b) => a + (Number(b) || 0), 0);
+          // Las horas por unidad son fijas (columna Std): en cada día se cargan UNIDADES y las horas salen solas
+          const stdA = Number(typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, auxTask.code) : auxTask.stdHours) || 0;
+          const r2 = v => Math.round(v * 100) / 100;
+          const unidDe = h => stdA > 0 ? r2((Number(h) || 0) / stdA) : 0;
+          const rowSumU = r2(rowVals.reduce((a, b) => a + unidDe(b), 0));
           const dayInputsHtml = days.map((d, dIdx) => `
+            <td class="p-1 text-center border ${cellBorder} text-[11px] font-bold ${isExcelTheme ? 'text-sky-800 bg-slate-50/50' : 'text-cyan-300 bg-slate-950/40'}">${Number(rowVals[dIdx]) > 0 ? r2(rowVals[dIdx]).toFixed(2) : '-'}</td>
             <td class="p-1 text-center border ${cellBorder} ${isExcelTheme ? 'bg-amber-50/30' : 'bg-slate-950/40'}">
-              <input type="number" step="0.25" min="0" data-mach="${mach.id}" data-aux="${auxTask.code}" data-day="${dIdx}" value="${rowVals[dIdx] || 0}" class="gantt-aux-input w-14 text-center rounded border px-1 py-0.5 text-xs font-semibold ${isExcelTheme ? 'border-amber-200 bg-white text-amber-900' : 'border-slate-800 bg-slate-900 text-slate-300'} focus:outline-none" />
+              <input type="number" step="1" min="0" data-mach="${mach.id}" data-aux="${auxTask.code}" data-day="${dIdx}" data-std="${stdA}" value="${unidDe(rowVals[dIdx]) || 0}" ${stdA > 0 ? '' : 'disabled'} title="${stdA > 0 ? `Unidades (1 = ${stdA} h)` : 'Sin tiempo estándar en esta máquina'}" class="gantt-aux-input w-14 text-center rounded border px-1 py-0.5 text-xs font-semibold ${isExcelTheme ? 'border-amber-200 bg-white text-amber-900' : 'border-slate-800 bg-slate-900 text-slate-300'} focus:outline-none ${stdA > 0 ? '' : 'opacity-40'}" />
             </td>
-            <td class="p-1 text-center border ${cellBorder} text-[11px] ${isExcelTheme ? 'text-slate-400 bg-slate-50/50' : 'text-slate-600 bg-slate-950/40'}">-</td>
           `).join('');
 
           return `
             <tr class="text-xs transition ${isExcelTheme ? 'hover:bg-amber-50/50' : 'hover:bg-slate-800/30'}">
               <td class="py-1 px-2.5 font-bold ${isExcelTheme ? 'text-amber-800 bg-amber-50/60' : 'text-amber-300 bg-slate-900/60'} border ${cellBorder}">${auxTask.code}</td>
               <td class="py-1 px-2 font-medium ${isExcelTheme ? 'text-slate-700' : 'text-slate-300'} border ${cellBorder}">${auxTask.name}</td>
-              <td class="py-1 px-2 text-right font-bold ${isExcelTheme ? 'text-slate-900' : 'text-white'} border ${cellBorder}">${rowSumH.toFixed(2)} h</td>
+              <td class="py-1 px-2 text-right font-bold ${isExcelTheme ? 'text-slate-900' : 'text-white'} border ${cellBorder}">${rowSumU ? rowSumU + ' u' : '-'}<span class="block text-[10px] font-normal ${isExcelTheme ? 'text-slate-500' : 'text-slate-400'}">${rowSumH > 0 ? rowSumH.toFixed(2) + ' h' : ''}</span></td>
               <td class="py-1 px-2 text-center text-slate-400 border ${cellBorder}">-</td>
-              <td class="py-1 px-2 text-right text-slate-500 border ${cellBorder}">${typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, auxTask.code) : auxTask.stdHours}</td>
+              <td class="py-1 px-2 text-right text-slate-500 border ${cellBorder}" title="Horas por unidad">${stdA} h/u</td>
               ${dayInputsHtml}
               <td class="border ${cellBorder}" colspan="3"></td>
             </tr>
@@ -6805,11 +6810,12 @@ ${lines}${trendNote}`;
 
       // Attach event listeners for Aux inputs
       container.querySelectorAll('.gantt-aux-input').forEach(inp => {
-        inp.addEventListener('input', (e) => {
+        inp.addEventListener('change', (e) => {
           const mId = inp.getAttribute('data-mach');
           const auxCode = inp.getAttribute('data-aux');
           const dayIdx = Number(inp.getAttribute('data-day'));
-          const val = parseFloat(inp.value) || 0;
+          const stdU = Number(inp.getAttribute('data-std')) || 0;
+          const val = Math.round(Math.max(0, parseFloat(String(inp.value).replace(',', '.')) || 0) * stdU * 100) / 100; // unidades × horas fijas
           if (week.machines[mId] && week.machines[mId].aux) {
             if (!week.machines[mId].aux[auxCode]) week.machines[mId].aux[auxCode] = [0,0,0,0,0,0,0];
             week.machines[mId].aux[auxCode][dayIdx] = val;
@@ -7233,12 +7239,12 @@ ${lines}${trendNote}`;
                             <td class="border-r border-black py-0.5 px-1 font-bold text-amber-800">${aux.code}</td>
                             <td class="border-r border-black py-0.5 px-1 text-left">${aux.name}</td>
                             <td class="border-r border-black py-0.5 px-1 text-right font-bold">${rSum > 0 ? rSum.toFixed(1) + 'h' : '-'}</td>
-                            <td class="border-r border-black py-0.5 px-1 text-center">-</td>
-                            <td class="border-r border-black py-0.5 px-1 text-right text-slate-500">${aux.stdHours}</td>
-                            ${filteredDays.map(d => `
-                              <td class="border-r border-slate-300 py-0.5 px-1 text-center font-bold">${vals[d.idx] > 0 ? vals[d.idx] : '-'}</td>
-                              <td class="border-r border-black py-0.5 px-1 text-center text-slate-400">-</td>
-                            `).join('')}
+                            <td class="border-r border-black py-0.5 px-1 text-center">${(() => { const sd = Number(typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, aux.code) : aux.stdHours) || 0; const u = sd > 0 ? Math.round(rSum / sd * 100) / 100 : 0; return u || '-'; })()}</td>
+                            <td class="border-r border-black py-0.5 px-1 text-right text-slate-500">${typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, aux.code) : aux.stdHours}</td>
+                            ${filteredDays.map(d => { const sd = Number(typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, aux.code) : aux.stdHours) || 0; const h = Number(vals[d.idx]) || 0; return `
+                              <td class="border-r border-slate-300 py-0.5 px-1 text-center">${h > 0 ? Math.round(h * 100) / 100 : '-'}</td>
+                              <td class="border-r border-black py-0.5 px-1 text-center font-bold">${h > 0 ? (sd > 0 ? Math.round(h / sd * 100) / 100 : '-') : '-'}</td>
+                            `; }).join('')}
                             <td class="border-r border-black py-0.5 px-1" colspan="2"></td>
                           </tr>
                         `;
@@ -8621,7 +8627,7 @@ ${lines}${trendNote}`;
           GANTT_AUX_TASKS.forEach(aux => {
             const vals = mData.aux[aux.code] || [0,0,0,0,0,0,0];
             rows.push([
-              week.code, mach.short, 'AUXILIAR', aux.code, aux.name, '', '', aux.stdHours,
+              week.code, mach.short, 'AUXILIAR', aux.code, aux.name, '', '', (typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, aux.code) : aux.stdHours),
               vals[0], '', vals[1], '', vals[2], '', vals[3], '', vals[4], '', vals[5], '', vals[6], ''
             ].join(','));
           });
@@ -11825,7 +11831,11 @@ ${lines}${trendNote}`;
         Object.keys(AUX).forEach(code => {
           if (r.aux) return;
           const sin = [code.toLowerCase()].concat(AUX[code]);
-          for (const s of sin) { if (new RegExp('\\b' + s + '\\b').test(t) && /\bhoras?\b|\bhs\b|\bh\b/.test(t)) { r.aux = code; break; } }
+          const conHoras = /\bhoras?\b|\bhs\b|\bh\b/.test(t);
+          for (const s of sin) {
+            const largo = s.includes(' ') || s === code.toLowerCase();
+            if (new RegExp('\\b' + s + '\\b').test(t) && (conHoras || largo || /\b(unidad|unidades|un|una|cambios?)\b/.test(t))) { r.aux = code; r.auxHoras = conHoras; break; }
+          }
         });
         if (/todos los dias|toda la semana|cada dia/.test(t)) r.todosDias = true;
         // piezas: códigos con guion o números de 4+ cifras seguidos de "de la/pieza" etc.
@@ -11892,7 +11902,10 @@ ${lines}${trendNote}`;
         if (x.aux && num != null && maq.length) {
           const ds = x.todosDias ? [1, 2, 3, 4, 5] : (dias.length ? dias : null);
           if (!ds) return [{ op: 'error', msg: 'Decime qué día van esas horas (o "todos los días").' }];
-          return ds.map(d => ({ op: 'aux', mach: maq[0], code: x.aux, day: d, hours: /sac|borr|elimin|quit/.test(f) ? 0 : num, add: /^sum|agreg|añad|anad/.test(f) }));
+          const stdX = typeof inoferStdAux === 'function' ? Number(inoferStdAux(maq[0], x.aux)) || 0 : 1;
+          if (!x.auxHoras && !stdX) return [{ op: 'error', msg: `La ${maq[0]} no tiene tiempo estándar para esa tarea.` }];
+          const horasX = x.auxHoras ? num : num * stdX;
+          return ds.map(d => ({ op: 'aux', mach: maq[0], code: x.aux, day: d, hours: /sac|borr|elimin|quit/.test(f) ? 0 : horasX, add: /^sum|agreg|añad|anad/.test(f) }));
         }
         if (!part) return [{ op: 'error', msg: 'No encontré qué pieza querés modificar. Nombrala con su código, ej: "34111-PB" o "26608".' }];
 
@@ -13354,6 +13367,7 @@ Pedido: ${frase}`;
         const s = setupDe(m);
         if (code === 'CMO') return s.cmo;
         if (code === 'ALIS') return s.alis;
+        if (code === 'CPIS' && typeof inoferPistonesCfg === 'function') { const hc = Number((inoferPistonesCfg() || {}).horasCambio); if (hc > 0) return hc; }
         const t = (typeof GANTT_AUX_TASKS !== 'undefined' ? GANTT_AUX_TASKS : []).find(a => a.code === code);
         return t ? t.stdHours : 0;
       };
