@@ -64,3 +64,9 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Claves de localStorage `tablero_inyectoras_*` y carpeta de datos `%APPDATA%\INOFER_MES` (datos de la planta).
 - Puerto 47821 y la firma `INOFER_MES_JAVA` (/api/ping) — los usa la detección de instancia abierta.
 - El usuario escribe en español rioplatense y no es programador: explicar en pasos simples.
+
+## Asistente del Gantt y Lista de órdenes (bloque "Asistente del Gantt (chat / voz) + Lista de órdenes")
+- Panel `#inoferGanttChat` en viewGantt: `inoferGanttChat(texto)` interpreta frases en español (parser local; si no entiende y hay `geminiApiKey`, pide ops JSON a Gemini) y aplica ops: set, add, move_day, move_mach, swap, remove, aux, week, undo, show. Índices de día = columnas del Gantt (0=Dom,1=Lun…6=Sáb).
+- Valida -R (`inoferEsPiezaR`), portamolde (`inoferChoqueManual`), pistón (`inoferMaquinaAdmitePiston`); avisa >24 h/día. Guarda con `saveGanttWeeks()`; historial local para "deshacer". Requiere permiso gantt edit (ver solo consulta).
+- Micrófono con Web Speech API (es-AR) cuando el navegador lo permite.
+- Sub-pestaña `list` (📂 Lista de órdenes, `#orderSubViewList`) por defecto en Órdenes: tarjetas con buscar/filtrar, Abrir (efficiency), Editar (front), Borrar (va a la papelera). `switchOrderSubTab` y `renderProductionOrdersView` quedan envueltos.
