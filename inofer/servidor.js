@@ -992,7 +992,7 @@ function accionIA(u, body) {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador configura la IA.' };
     const k = String(body.clave || '').trim();
     if (!k) { PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY'); PropertiesService.getScriptProperties().deleteProperty('IA_KEY'); return { status: 'ok', configurada: false }; }
-    const prueba = iaLlamar_(k, { contents: [{ role: 'user', parts: [{ text: 'Respondé solamente: OK' }] }], generationConfig: { maxOutputTokens: 10 } });
+    const prueba = iaLlamar_(k, { contents: [{ role: 'user', parts: [{ text: 'Respondé solamente: OK' }] }] }); // sin límite de tokens: los modelos nuevos "piensan" antes de responder
     if (!prueba.ok) return { status: 'error', error: prueba.error };
     PropertiesService.getScriptProperties().setProperty('IA_KEY', k);
     PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY');
