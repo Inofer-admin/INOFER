@@ -115,3 +115,4 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Selector de semanas `#inoferGanttSemanas` (chips, local `tablero_inyectoras_asistente_semanas_v1`).
 - IA INOFER: pedidos de cambio (verbo de acción + algo del plan) se ejecutan con `inoferGanttEjecutar`; el resto sigue con el análisis de siempre.
 - Test: gas_mock_server.js simula Gemini con /tmp/work/gemini_fake.js.
+- IA: el servidor acepta clave de Claude (sk-ant-…, API de Anthropic, modelos claude-sonnet-5-5 → claude-haiku-5-5) o de Gemini (AIza…); Script Property `IA_KEY`. `iaLlamarClaude_` convierte el formato Gemini (systemInstruction/contents/generationConfig) a Messages API. La clave de Claude nunca se guarda en el equipo; `inoferLLM` usa primero la nube.

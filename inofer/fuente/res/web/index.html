@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.29" />
+  <meta name="inofer-version" content="2026.10.29.30" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -870,13 +870,13 @@
             <div class="border-t border-slate-800 pt-2.5">
               <details class="group text-xs">
                 <summary class="cursor-pointer font-semibold text-slate-400 hover:text-slate-200 flex items-center justify-between">
-                  <span>⚙️ Conectar API Key de Google Gemini (Opcional)</span>
+                  <span>⚙️ Conectar la IA: Claude o Gemini</span>
                   <span id="aiEngineModeBadge" class="rounded bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-300">Motor OEE Integrado</span>
                 </summary>
                 <div class="mt-2.5 space-y-2 rounded-xl bg-slate-950 p-3 border border-slate-800">
-                  <p class="text-[11px] text-slate-400">INOFER funciona sin clave usando su motor experto integrado. Si querés conectarlo con Gemini 2.5 Flash en vivo, pegá tu clave:</p>
+                  <p class="text-[11px] text-slate-400">INOFER funciona sin clave usando su motor experto integrado. Para que entienda todo lo que le escribas, pegá una clave de <b>Claude</b> (empieza con sk-ant-) o de <b>Gemini</b> (empieza con AIza). Al guardarla queda en la nube para todos los usuarios.</p>
                   <input type="password" id="geminiApiKeyInput" placeholder="AIzaSy..." class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-violet-400 focus:outline-none" />
-                  <p class="text-[11px] text-slate-500">Clave gratis en <span class="text-violet-300">aistudio.google.com/apikey</span> (botón "Create API key").</p>
+                  <p class="text-[11px] text-slate-500">Claude: <span class="text-violet-300">console.anthropic.com</span> → API Keys (pago por uso). Gemini: gratis en <span class="text-violet-300">aistudio.google.com/apikey</span>.</p>
                   <label class="flex items-center gap-2 text-[11px] text-slate-400"><input type="checkbox" id="geminiShareKeyChk" class="accent-violet-500" /> Usar esta clave en todos los dispositivos conectados a la nube</label>
                   <div class="flex justify-end gap-2">
                     <button id="saveGeminiKeyBtn" type="button" class="rounded-lg bg-violet-500 px-3 py-1 text-xs font-bold text-slate-950 hover:bg-violet-400">
@@ -14493,22 +14493,25 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         }
         throw new Error(ultimo);
       }
+      let proveedor = '';
       window.inoferLLM = async function (cuerpo) {
-        if (typeof geminiApiKey !== 'undefined' && geminiApiKey) {
-          try { return await directo(cuerpo, geminiApiKey); } catch (e) { if (!(iaServidor && enNube())) throw e; }
-        }
+        // primero la IA de la nube (Claude o Gemini, la que cargó el administrador)
         if (iaServidor && enNube()) {
           const d = await inoferCloudPost({ action: 'iaGenerar', token: inoferAuthToken(), cuerpo });
           if (d && d.status === 'ok') return d.texto;
-          throw new Error((d && d.error) || 'la IA no respondió');
+          if (!(typeof geminiApiKey !== 'undefined' && geminiApiKey)) throw new Error((d && d.error) || 'la IA no respondió');
         }
+        if (typeof geminiApiKey !== 'undefined' && geminiApiKey && !/^sk-ant-/.test(geminiApiKey)) return await directo(cuerpo, geminiApiKey);
         throw new Error('la IA no está configurada');
       };
       async function info() {
         if (!enNube()) return;
-        try { const d = await inoferCloudPost({ action: 'iaInfo', token: inoferAuthToken() }); iaServidor = !!(d && d.status === 'ok' && d.configurada); } catch (e) { }
+        try { const d = await inoferCloudPost({ action: 'iaInfo', token: inoferAuthToken() }); iaServidor = !!(d && d.status === 'ok' && d.configurada); proveedor = (d && d.proveedor) || ''; } catch (e) { }
         const badge = document.getElementById('aiEngineModeBadge');
-        if (badge && inoferIaDisponible()) badge.textContent = 'IA Gemini activa ✓';
+        if (badge && inoferIaDisponible()) badge.textContent = proveedor === 'claude' ? 'IA Claude activa ✓' : 'IA Gemini activa ✓';
+        const lbl = document.querySelector('label[for="geminiApiKeyInput"]') || (document.getElementById('geminiApiKeyInput') || {}).previousElementSibling;
+        if (lbl && lbl.tagName === 'LABEL' && !lbl.dataset.inoferIa) { lbl.dataset.inoferIa = '1'; lbl.textContent = 'Clave de IA: Claude (sk-ant-…) o Gemini (AIza…)'; }
+        const ki = document.getElementById('geminiApiKeyInput'); if (ki) ki.placeholder = 'sk-ant-… (Claude) o AIza… (Gemini)';
       }
       window.inoferIaInfo = info;
       // al guardar la clave en la pestaña IA, el administrador también la deja en la nube para todos
@@ -14516,6 +14519,18 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const b = ev.target.closest && ev.target.closest('#saveGeminiKeyBtn');
         if (!b || !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()) || !enNube()) return;
         const k = (document.getElementById('geminiApiKeyInput') || {}).value || '';
+        if (/^sk-ant-/.test(k.trim())) {
+          // clave de Claude: se prueba y se guarda solo en la nube (no queda en el equipo)
+          ev.preventDefault(); ev.stopImmediatePropagation();
+          const badge = document.getElementById('aiEngineModeBadge'); if (badge) badge.textContent = 'Probando Claude…';
+          inoferCloudPost({ action: 'iaConfig', token: inoferAuthToken(), clave: k.trim() }).then(d => {
+            if (d && d.status === 'ok') { iaServidor = true; proveedor = 'claude'; document.getElementById('geminiApiKeyInput').value = '';
+              try { geminiApiKey = ''; localStorage.removeItem('tablero_inyectoras_gemini_key'); } catch (e) { }
+              if (badge) badge.textContent = 'IA Claude activa ✓'; showToast('Claude activado para todos los usuarios ✓'); }
+            else { if (badge) badge.textContent = 'Motor OEE Integrado'; showToast('No se pudo activar Claude: ' + ((d && d.error) || '')); }
+          }).catch(() => showToast('Sin conexión con la nube'));
+          return;
+        }
         setTimeout(async () => {
           try {
             const d = await inoferCloudPost({ action: 'iaConfig', token: inoferAuthToken(), clave: k.trim() });

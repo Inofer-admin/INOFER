@@ -859,8 +859,49 @@ function accionMensajeria(u, body) {
 // ===================== IA (Gemini) a través del servidor: la clave queda guardada en la nube =====================
 const ACCIONES_IA = ['iaInfo', 'iaConfig', 'iaGenerar'];
 const IA_MODELOS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
-function iaClave_() { return PropertiesService.getScriptProperties().getProperty('GEMINI_KEY') || ''; }
+function iaClave_() { const p = PropertiesService.getScriptProperties(); return p.getProperty('IA_KEY') || p.getProperty('GEMINI_KEY') || ''; }
+function iaProveedor_(clave) { return /^sk-ant-/.test(String(clave || '')) ? 'claude' : 'gemini'; }
+// Claude (Anthropic): convierte el pedido con formato Gemini al de la API de Claude
+const CLAUDE_MODELOS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
+function iaLlamarClaude_(clave, cuerpo) {
+  const sistema = cuerpo.systemInstruction && cuerpo.systemInstruction.parts ? cuerpo.systemInstruction.parts.map(function (p) { return p.text || ''; }).join('\n') : '';
+  const msgs = [];
+  (cuerpo.contents || []).forEach(function (c) {
+    const rol = c.role === 'model' ? 'assistant' : 'user';
+    const t = (c.parts || []).map(function (p) { return p.text || ''; }).join('\n');
+    if (!t) return;
+    if (msgs.length && msgs[msgs.length - 1].role === rol) msgs[msgs.length - 1].content += '\n' + t; else msgs.push({ role: rol, content: t });
+  });
+  while (msgs.length && msgs[0].role !== 'user') msgs.shift();
+  const gc = cuerpo.generationConfig || {};
+  let sys = sistema;
+  if (gc.responseMimeType === 'application/json') sys += '\nDevolvé únicamente JSON válido, sin texto antes ni después.';
+  let ultimo = 'sin respuesta';
+  for (let i = 0; i < CLAUDE_MODELOS.length; i++) {
+    const payload = { model: CLAUDE_MODELOS[i], max_tokens: Math.min(4096, Number(gc.maxOutputTokens) || 2048), messages: msgs };
+    if (sys) payload.system = sys;
+    if (gc.temperature != null) payload.temperature = Number(gc.temperature);
+    const r = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true,
+      headers: { 'x-api-key': clave, 'anthropic-version': '2023-06-01' }
+    });
+    const code = r.getResponseCode();
+    let d = {};
+    try { d = JSON.parse(r.getContentText()); } catch (e) {}
+    if (code === 200) {
+      const t = (d.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('').trim();
+      if (t) return { ok: true, texto: t };
+      ultimo = 'respuesta vacía'; continue;
+    }
+    const msg = String((d.error && d.error.message) || code);
+    if (code === 401) return { ok: false, error: 'la clave de Claude no es válida' };
+    if (code === 400 && /credit|billing/i.test(msg)) return { ok: false, error: 'la cuenta de Claude no tiene saldo (cargá crédito en console.anthropic.com)' };
+    ultimo = msg;
+  }
+  return { ok: false, error: ultimo };
+}
 function iaLlamar_(clave, cuerpo) {
+  if (iaProveedor_(clave) === 'claude') return iaLlamarClaude_(clave, cuerpo);
   let ultimo = 'sin respuesta';
   for (let i = 0; i < IA_MODELOS.length; i++) {
     const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent?key=' + encodeURIComponent(clave), {
@@ -885,15 +926,16 @@ function iaLlamar_(clave, cuerpo) {
 }
 function accionIA(u, body) {
   if (ACCIONES_IA.indexOf(body.action) === -1) return null;
-  if (body.action === 'iaInfo') return { status: 'ok', configurada: !!iaClave_() };
+  if (body.action === 'iaInfo') return { status: 'ok', configurada: !!iaClave_(), proveedor: iaClave_() ? iaProveedor_(iaClave_()) : '' };
   if (body.action === 'iaConfig') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador configura la IA.' };
     const k = String(body.clave || '').trim();
-    if (!k) { PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY'); return { status: 'ok', configurada: false }; }
+    if (!k) { PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY'); PropertiesService.getScriptProperties().deleteProperty('IA_KEY'); return { status: 'ok', configurada: false }; }
     const prueba = iaLlamar_(k, { contents: [{ role: 'user', parts: [{ text: 'Respondé solamente: OK' }] }], generationConfig: { maxOutputTokens: 10 } });
     if (!prueba.ok) return { status: 'error', error: prueba.error };
-    PropertiesService.getScriptProperties().setProperty('GEMINI_KEY', k);
-    return { status: 'ok', configurada: true };
+    PropertiesService.getScriptProperties().setProperty('IA_KEY', k);
+    PropertiesService.getScriptProperties().deleteProperty('GEMINI_KEY');
+    return { status: 'ok', configurada: true, proveedor: iaProveedor_(k) };
   }
   if (body.action === 'iaGenerar') {
     const k = iaClave_();
