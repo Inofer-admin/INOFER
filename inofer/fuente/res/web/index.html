@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.21" />
+  <meta name="inofer-version" content="2026.10.29.22" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -6309,7 +6309,7 @@ ${lines}${trendNote}`;
     ];
 
     const GANTT_AUX_TASKS = [
-      { code: 'CMA', name: 'CAMBIO DE MATERIAL', stdHours: 0.04 },
+      { code: 'CMA', name: 'CAMBIO DE MATERIAL', stdHours: 24 },
       { code: 'CMO', name: 'CAMBIO DE MOLDE', stdHours: 0.20 },
       { code: 'ALIS', name: 'ALISTAMIENTO MÁQUINA', stdHours: 0.67 },
       { code: 'DESG', name: 'DESGACIFICADO', stdHours: 2.00 },
@@ -7683,6 +7683,7 @@ ${lines}${trendNote}`;
       Object.keys(pisCfg.maquinas || {}).forEach(m => { pistonActual[m] = Number(pisCfg.maquinas[m].montado) || 0; });
       const pisDe = part => (typeof inoferPistonDe === 'function' ? inoferPistonDe(part) : 0);
       let pistonChangesCount = 0;
+      let lotesSinLugar = 0;
 
       demandList.forEach((req, idx) => {
         if (alreadyScheduledSisterParts.has(req.part.trim().toLowerCase())) {
@@ -7808,6 +7809,13 @@ ${lines}${trendNote}`;
             if ((lmM && remainingQty < lmM) || remainingQty / stdRate < sM) break;
             setupAddedForThisOrder = false;
           }
+          // Lote mínimo: no se sube un molde si en esta máquina no entra al menos el lote mínimo
+          if (loteMinPieza) {
+            const suC = includeSetup && typeof inoferSetupDe === 'function' ? inoferSetupDe(mId).total : 0;
+            let libreC = 0;
+            for (let w2 = 0; w2 < 4; w2++) for (const d2 of activeDayIndices) libreC += Math.max(0, dailyHoursLimit - usedHours[mId][w2][d2]);
+            if ((libreC - suC) * stdRate < Math.min(remainingQty, loteMinPieza)) { continue; }
+          }
           maqAnterior = mId;
           for (let wIdx = 0; wIdx < 4; wIdx++) {
             if (remainingQty <= 0) break;
@@ -7904,6 +7912,7 @@ ${lines}${trendNote}`;
             }
           }
         }
+        if (loteMinPieza && remainingQty === req.qty) { lotesSinLugar++; return; }
         scheduledPartsCount++;
       });
 
@@ -7913,7 +7922,8 @@ ${lines}${trendNote}`;
         criticalPartsCount,
         sharedMoldsScheduledCount,
         createdOrdersCount,
-        pistonChangesCount
+        pistonChangesCount,
+        lotesSinLugar
       };
     }
 
@@ -7932,6 +7942,7 @@ ${lines}${trendNote}`;
       }
 
       let allGeneratedWeeks = [];
+      let totalSinLugar = 0;
       let totalScheduled = 0;
       let totalCritical = 0;
       let totalShared = 0;
@@ -7948,6 +7959,7 @@ ${lines}${trendNote}`;
         totalCritical += res.criticalPartsCount;
         totalShared += res.sharedMoldsScheduledCount;
         totalOps += res.createdOrdersCount;
+        totalSinLugar += res.lotesSinLugar || 0;
       });
 
       if (allGeneratedWeeks.length > 0) {
@@ -7961,7 +7973,7 @@ ${lines}${trendNote}`;
       const banner = document.getElementById('autoGanttResultBanner');
       if (banner) {
         banner.classList.remove('hidden');
-        banner.innerHTML = `✅ <strong>¡Gantt armado automáticamente desde la planilla (${selTarget})!</strong> Se programaron <strong>${totalScheduled} lotes de inyección</strong> (priorizando <strong>${totalCritical} piezas en 🔴 Rojo Urgente &lt; 3 meses</strong> en el inicio del mes y sincronizando <strong>${totalShared} moldes compartidos</strong>) a lo largo de las semanas <strong>${allGeneratedWeeks.join(', ')}</strong>.`;
+        banner.innerHTML = `✅ <strong>¡Gantt armado automáticamente desde la planilla (${selTarget})!</strong> Se programaron <strong>${totalScheduled} lotes de inyección</strong> (priorizando <strong>${totalCritical} piezas en 🔴 Rojo Urgente &lt; 3 meses</strong> en el inicio del mes y sincronizando <strong>${totalShared} moldes compartidos</strong>) a lo largo de las semanas <strong>${allGeneratedWeeks.join(', ')}</strong>.${totalSinLugar ? ` <br>⚠️ ${totalSinLugar} pieza${totalSinLugar > 1 ? 's' : ''} no se programaron porque no entraba su lote mínimo completo en las máquinas compatibles.` : ''}`;
       }
       showToast(`Gantt generado para ${selTarget} (${allGeneratedWeeks.join(', ')})`);
     }
@@ -12214,7 +12226,7 @@ Pedido: ${frase}`;
             detalles.push(full);
             if (quiereDetalle) respuestas.push(full);
             else if (r.yaCumple) respuestas.push(`✓ El programa ya factura ${inoferPlata(r.antes)}, alcanza el objetivo.`);
-            else if (r.faltante > 0) respuestas.push(`🎯 Llegué a <b>${inoferPlata(r.despues)}</b>; faltan ${inoferPlata(r.faltante)} para el objetivo de ${inoferPlata(r.objetivo)} (no hay más capacidad o demanda).`);
+            else if (r.faltante > 0) respuestas.push(`🎯 Llegué a <b>${inoferPlata(r.despues)}</b>; faltan ${inoferPlata(r.faltante)} para el objetivo de ${inoferPlata(r.objetivo)} (no hay más capacidad o demanda).${r.avisos.length ? '<br><span class="text-slate-400">' + r.avisos.map(esc).join(' ') + '</span>' : ''}`);
             else respuestas.push(`🎯 Listo: el programa ahora factura <b>${inoferPlata(r.despues)}</b>.`);
             continue;
           }
@@ -13100,6 +13112,7 @@ Pedido: ${frase}`;
         });
         candidatos.sort((a, b) => b.valorHora - a.valorHora);
         let falta = objetivo - f0.total;
+        let sinLote = 0;
         const usadaEn = {}; // pieza -> máquina elegida (no repartir una pieza nueva en varias máquinas)
         Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => { if (!it.isSharedCompanion && !usadaEn[clave(it.part)]) usadaEn[clave(it.part)] = m; }));
         for (const k of candidatos) {
@@ -13115,6 +13128,7 @@ Pedido: ${frase}`;
           let agregado = 0, setupPend = !it;
           const SETUP = setupM(k.m).total;
           const loteM = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(k.c.part, k.m) : 0;
+          if (!it && !loteM) { sinLote++; continue; } // pieza nueva sin lote mínimo conocido: no se sube un molde a ciegas
           if (!it && loteM) {
             // pieza nueva: tiene que entrar al menos el lote mínimo en las horas libres de la semana
             const libreSem = dias.reduce((a, d) => a + Math.max(0, cap - horasUsadas(week, k.m, d)), 0) - SETUP;
@@ -13161,6 +13175,7 @@ Pedido: ${frase}`;
         res.faltante = Math.max(0, objetivo - res.despues);
         if (!hayDemanda && !opts.sinLimite) res.avisos.push('No hay listado de demanda cargado en el Gantt automático: solo subí piezas que ya estaban programadas (hasta el doble).');
         res.capHoras = cap;
+        if (sinLote && res.faltante > 0) res.avisos.push('No agregué piezas nuevas que no tienen lote mínimo cargado (en la planilla o en la base de datos).');
         return res;
       }
       window.inoferPlanMeta = planMeta;
