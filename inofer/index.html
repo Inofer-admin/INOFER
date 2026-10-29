@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.23" />
+  <meta name="inofer-version" content="2026.10.29.24" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -782,7 +782,7 @@
                   🎯 <strong class="text-rose-300">Tips para Reducir Scrap y Arranque en Baja</strong>
                   <span class="block text-[11px] text-slate-400">Recomendaciones sobre temperatura de molde, rechupes, poros y rebabas</span>
                 </button>
-                <button type="button" data-ai-prompt="Analizá el estado de herramental (dorso de las órdenes: refrigeración, fechador, cáncamo, subida/bajada) y los 28 códigos de parada INOFER." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                <button type="button" data-ai-prompt="Analizá el estado de herramental (dorso de las órdenes: refrigeración, fechador, cáncamo, subida/bajada) y los 29 códigos de parada INOFER." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
                   🛠️ <strong class="text-cyan-300">Auditoría de Herramental y Códigos de Parada</strong>
                   <span class="block text-[11px] text-slate-400">Checklist preventivo de mangueras, puentes, correderas y moldes</span>
                 </button>
@@ -1156,7 +1156,7 @@
                 </div>
                 <div class="col-span-2 sm:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
                   <div>
-                    <label class="block text-[10px] text-slate-400 mb-0.5">Código de Parada INOFER (1 a 28)</label>
+                    <label class="block text-[10px] text-slate-400 mb-0.5">Código de Parada INOFER (1 a 29)</label>
                     <select id="logStopCode" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white">
                       <option value="">Sin parada registrada</option>
                     </select>
@@ -1298,7 +1298,7 @@
 
           <!-- Reference Table of the 28 Official INOFER Stoppage Codes -->
           <div class="mt-4 border-t border-slate-800 pt-4">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Referencia Oficial: 28 Códigos de Paradas de Inyectoras INOFER (Rev. 0 - Fecha 8/23)</h4>
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Referencia Oficial: 29 Códigos de Paradas de Inyectoras INOFER (Rev. 0 - Fecha 8/23)</h4>
             <div id="inofer28CodesGrid" class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-4 text-[11px] text-slate-300">
               <!-- Populated by JS -->
             </div>
@@ -4598,7 +4598,7 @@ ${lines}${trendNote}`;
         'Relevo al pie de máquina sin detener el ciclo en los cambios de turno.'
       ],
       otros: [
-        'Desglosar "Otros" usando los 28 códigos de parada: lo que no se mide no se puede mejorar.',
+        'Desglosar "Otros" usando los 29 códigos de parada: lo que no se mide no se puede mejorar.',
         'Revisar semanalmente los partes con "Otros" alto y reclasificarlos.'
       ]
     };
@@ -5006,7 +5006,8 @@ ${lines}${trendNote}`;
       '25-Problemas quemador del horno',
       '26-Corte de fuerza motriz',
       '27-Falta de gas',
-      '28-Desgasificado'
+      '28-Desgasificado',
+      '29-Carga de nitrógeno'
     ];
 
     const INITIAL_ORDERS = [
@@ -9411,6 +9412,8 @@ ${lines}${trendNote}`;
           shift: document.getElementById('modalShift').value,
           available: avail
         };
+        const paradasCod = typeof inoferParadasDelModal === 'function' ? inoferParadasDelModal() : undefined;
+        if (paradasCod) entry.paradas = paradasCod;
         CATEGORIES.forEach(c => {
           const val = Math.max(0, Number(document.getElementById('modal_' + c.key).value) || 0);
           entry[c.key] = val;
@@ -13737,7 +13740,7 @@ Pedido: ${frase}`;
       // Código de parada INOFER (1 a 28) -> categoría del tablero
       const COD_CAT = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
         16: 'parada_maquina', 2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
-        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
       window.INOFER_CODIGO_CATEGORIA = COD_CAT;
       const horas = (a, b) => (typeof calcHoursDiff === 'function' ? calcHoursDiff(a, b) : 0);
       function registrosDeOrdenes() {
@@ -13806,13 +13809,12 @@ Pedido: ${frase}`;
       }
       // no hay carga de horas aparte: todo sale de las órdenes
       function sinCargaAparte() {
-        ['openNewEntryModalBtn', 'simSaveToRecordsBtn'].forEach(id => { const el = $(id); if (el) { el.classList.add('hidden'); el.dataset.inoferPermOculto = '1'; } });
         const v = $('viewDashboard');
         if (v && !$('inoferTableroAviso')) {
           const d = document.createElement('div');
           d.id = 'inoferTableroAviso';
           d.className = 'rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200';
-          d.innerHTML = '📋 El tablero y los velocímetros se calculan solos con los turnos cargados en las <b>Órdenes de Producción</b> (horas del turno y paradas por código). No hace falta cargar horas aparte.';
+          d.innerHTML = '📋 El tablero y los velocímetros suman solos los turnos cargados en las <b>Órdenes de Producción</b>, más los partes de horas cargados a mano.';
           v.insertBefore(d, v.firstChild);
         }
       }
@@ -13822,6 +13824,103 @@ Pedido: ${frase}`;
       }
       function iniciar() { arrancarObs(); try { sinCargaAparte(); aplicarOcultos(); refreshAll(); } catch (e) { } }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>
+  <script>
+    // ===== Parte de horas manual con las mismas paradas (códigos) que la Orden de Producción =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const CODS = () => (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []);
+      const catDeCodigo = cod => { const n = parseInt(String(cod || ''), 10); return (window.INOFER_CODIGO_CATEGORIA || {})[n] || 'otros'; };
+      const fmtMin = m => { const h = Math.floor(m / 60), r = Math.round(m % 60); return h ? (h + ' h' + (r ? ' ' + r + ' min' : '')) : (r + ' min'); };
+      let modoCategorias = false; // registros viejos cargados por categoría
+
+      function fila(p) {
+        p = p || {};
+        const pm = Number(p.min) || 0;
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-center text-xs font-bold text-white';
+        return `<div class="pp-row flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-2">
+          <select class="pp-cod min-w-[180px] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">
+            <option value="">Elegí el motivo…</option>${CODS().map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+          </select>
+          <label class="flex items-center gap-1 text-[11px] text-slate-400"><input type="number" min="0" class="pp-h ${inp}" style="width:3.8rem" placeholder="0" value="${pm >= 60 ? Math.floor(pm / 60) : ''}"> h</label>
+          <label class="flex items-center gap-1 text-[11px] text-slate-400"><input type="number" min="0" class="pp-m ${inp}" style="width:3.8rem" placeholder="0" value="${pm % 60 || ''}"> min</label>
+          <button type="button" class="pp-del rounded-lg border border-slate-700 px-2 py-1 text-xs text-rose-300" title="Quitar">✕</button>
+        </div>`;
+      }
+      function leer() {
+        return [...document.querySelectorAll('#ppLista .pp-row')].map(r => ({
+          codigo: r.querySelector('.pp-cod').value,
+          min: (Number(r.querySelector('.pp-h').value) || 0) * 60 + (Number(r.querySelector('.pp-m').value) || 0)
+        })).filter(p => p.codigo || p.min);
+      }
+      // Pasa las paradas por código a las horas por categoría del tablero (inputs ocultos modal_*)
+      function volcar() {
+        if (modoCategorias) return;
+        const tot = {};
+        (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { tot[c.key] = 0; });
+        leer().forEach(p => { const k = catDeCodigo(p.codigo); tot[k] = (tot[k] || 0) + p.min / 60; });
+        Object.keys(tot).forEach(k => { const el = $('modal_' + k); if (el) el.value = Math.round(tot[k] * 100) / 100; });
+        const sum = leer().reduce((a, p) => a + p.min, 0);
+        const t = $('ppTotal'); if (t) t.textContent = leer().length ? `${leer().length} parada${leer().length > 1 ? 's' : ''} · ${fmtMin(sum)}` : 'Sin paradas';
+        try { updateModalPreview(); } catch (e) { }
+      }
+      window.inoferParadasDelModal = () => (modoCategorias ? undefined : leer().filter(p => p.codigo && p.min));
+
+      function modo(cat) {
+        modoCategorias = cat;
+        const grid = $('modal_parada_maquina') && $('modal_parada_maquina').closest('.grid');
+        if (grid) grid.classList.toggle('hidden', !cat);
+        $('ppBox').classList.toggle('hidden', cat);
+        $('ppLegacy').classList.toggle('hidden', !cat);
+      }
+      function montar() {
+        const grid = $('modal_parada_maquina') && $('modal_parada_maquina').closest('.grid');
+        if (!grid || $('ppBox')) return;
+        const box = document.createElement('div');
+        box.id = 'ppBox'; box.className = 'space-y-2';
+        box.innerHTML = `<div class="flex items-center justify-between gap-2"><span class="text-xs font-bold text-slate-300">Paradas (mismos códigos que la Orden de Producción)</span><span id="ppTotal" class="text-[11px] text-slate-400">Sin paradas</span></div>
+          <div id="ppLista" class="space-y-2"></div>
+          <button type="button" id="ppAdd" class="rounded-lg border border-dashed border-rose-500/40 px-3 py-1.5 text-xs font-bold text-rose-200">+ Agregar parada</button>`;
+        const legacy = document.createElement('div');
+        legacy.id = 'ppLegacy'; legacy.className = 'hidden rounded-lg border border-slate-700 bg-slate-950/60 p-2 text-[11px] text-slate-400';
+        legacy.innerHTML = 'Este parte se cargó antes, con las horas por categoría. Podés corregirlo así o <button type="button" id="ppPasarCodigos" class="font-bold text-cyan-300 underline">cargarlo con los códigos de parada</button>.';
+        grid.parentElement.insertBefore(box, grid);
+        grid.parentElement.insertBefore(legacy, grid);
+        grid.classList.add('hidden');
+        $('ppAdd').addEventListener('click', () => { $('ppLista').insertAdjacentHTML('beforeend', fila()); volcar(); });
+        $('ppPasarCodigos').addEventListener('click', () => { modo(false); $('ppLista').innerHTML = fila(); volcar(); });
+        box.addEventListener('click', e => { const d = e.target.closest('.pp-del'); if (d) { d.closest('.pp-row').remove(); volcar(); } });
+        box.addEventListener('input', volcar);
+        box.addEventListener('change', volcar);
+        // validar antes de guardar
+        $('newEntryForm').addEventListener('submit', e => {
+          if (modoCategorias) return;
+          const ps = leer();
+          if (ps.some(p => !p.codigo)) { e.preventDefault(); e.stopImmediatePropagation(); showToast('Elegí el motivo de cada parada'); return; }
+          if (ps.some(p => !p.min)) { e.preventDefault(); e.stopImmediatePropagation(); showToast('Poné cuánto duró cada parada'); return; }
+          volcar();
+        }, true);
+        // abrir nuevo
+        $('openNewEntryModalBtn').addEventListener('click', () => { modo(false); $('ppLista').innerHTML = ''; volcar(); });
+        // abrir para editar
+        if (typeof window.openEditRecordModal === 'function') {
+          const oe = window.openEditRecordModal;
+          window.openEditRecordModal = function (id) {
+            const r = oe.apply(this, arguments);
+            try {
+              const rec = (records || []).find(x => String(x.id) === String(id));
+              const ps = rec && Array.isArray(rec.paradas) ? rec.paradas : [];
+              const hayCat = rec && (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).some(c => Number(rec[c.key]) > 0);
+              if (ps.length || !hayCat) { modo(false); $('ppLista').innerHTML = ps.map(p => fila(p)).join(''); volcar(); }
+              else modo(true);
+            } catch (e) { }
+            return r;
+          };
+        }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(montar, 0)); else setTimeout(montar, 0);
     })();
   </script>
   <script>

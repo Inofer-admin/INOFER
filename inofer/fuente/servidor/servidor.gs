@@ -16,8 +16,11 @@ function getDbSheet() {
       'id', 'date', 'machine', 'shift', 'available',
       'parada_maquina', 'setup_molde', 'puesta_punto',
       'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at'
+      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at', 'paradas'
     ]);
+  }
+  if (String(sheet.getRange(1, 18).getValue ? sheet.getRange(1, 18).getValue() : 'paradas') !== 'paradas') {
+    sheet.getRange(1, 18, 1, 1).setValues([['paradas']]);
   }
   if (String(sheet.getRange(1, 15).getValue ? sheet.getRange(1, 15).getValue() : 'cargado_por') !== 'cargado_por') {
     sheet.getRange(1, 15, 1, 3).setValues([['cargado_por', 'modificado_por', 'cargado_at']]);
@@ -107,10 +110,21 @@ function obtenerRegistros() {
       actualizado: r[13] instanceof Date ? r[13].toISOString() : String(r[13] || ''),
       cargadoPor: String(r[14] || ''),
       modificadoPor: String(r[15] || ''),
-      cargadoAt: String(r[16] || '')
+      cargadoAt: String(r[16] || ''),
+      paradas: leerParadasJson_(r[17])
     });
   }
   return list;
+}
+
+// Paradas por código (las mismas de la Orden de Producción) guardadas como JSON en la columna 18
+function leerParadasJson_(v) {
+  if (!v) return [];
+  try { const a = JSON.parse(String(v)); return Array.isArray(a) ? a.slice(0, 40) : []; } catch (e) { return []; }
+}
+function paradasJson_(entry) {
+  const a = Array.isArray(entry && entry.paradas) ? entry.paradas.slice(0, 40).map(function (p) { return { codigo: String(p.codigo || '').slice(0, 80), min: Number(p.min) || 0 }; }) : [];
+  return a.length ? JSON.stringify(a) : '';
 }
 
 function obtenerTodoElSistema() {
@@ -133,7 +147,7 @@ function guardarRegistro(entry) {
       Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
       Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
       Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-      Number(entry.otros) || 0, ahora, USUARIO_ACTUAL || entry.cargadoPor || '', '', ahora
+      Number(entry.otros) || 0, ahora, USUARIO_ACTUAL || entry.cargadoPor || '', '', ahora, paradasJson_(entry)
     ]);
     return obtenerRegistros();
   } finally {
@@ -150,14 +164,14 @@ function editarRegistro(entry) {
     const rows = sheet.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(entry.id)) {
-        sheet.getRange(i + 1, 1, 1, 17).setValues([[
+        sheet.getRange(i + 1, 1, 1, 18).setValues([[
           entry.id, entry.date, entry.machine, entry.shift,
           Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
           Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
           Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
           Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
           Number(entry.otros) || 0, new Date().toISOString(),
-          String(rows[i][14] || entry.cargadoPor || ''), USUARIO_ACTUAL || entry.modificadoPor || '', String(rows[i][16] || '')
+          String(rows[i][14] || entry.cargadoPor || ''), USUARIO_ACTUAL || entry.modificadoPor || '', String(rows[i][16] || ''), paradasJson_(entry)
         ]]);
         found = true;
         break;
@@ -171,7 +185,7 @@ function editarRegistro(entry) {
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
         Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-        Number(entry.otros) || 0, ahora, entry.cargadoPor || USUARIO_ACTUAL || '', USUARIO_ACTUAL || '', ahora
+        Number(entry.otros) || 0, ahora, entry.cargadoPor || USUARIO_ACTUAL || '', USUARIO_ACTUAL || '', ahora, paradasJson_(entry)
       ]);
     }
     return obtenerRegistros();
@@ -208,7 +222,7 @@ function reemplazarRegistros(entries) {
       'id', 'date', 'machine', 'shift', 'available',
       'parada_maquina', 'setup_molde', 'puesta_punto',
       'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at'
+      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at', 'paradas'
     ]);
     (entries || []).slice().reverse().forEach(entry => {
       sheet.appendRow([
@@ -219,7 +233,7 @@ function reemplazarRegistros(entries) {
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
         Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
         Number(entry.otros) || 0, entry.actualizado || new Date().toISOString(),
-        entry.cargadoPor || USUARIO_ACTUAL || '', entry.modificadoPor || '', entry.cargadoAt || ''
+        entry.cargadoPor || USUARIO_ACTUAL || '', entry.modificadoPor || '', entry.cargadoAt || '', paradasJson_(entry)
       ]);
     });
     return obtenerRegistros();
