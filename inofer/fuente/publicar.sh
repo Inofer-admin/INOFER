@@ -50,5 +50,11 @@ rm -f "$OUT/INOFER-PC.zip"; (cd "$Z" && zip -q -X "$OUT/INOFER-PC.zip" INOFER.ja
 # Servidor de Apps Script: el cargador (Codigo.gs) descarga este archivo
 { cat "$SRC/servidor/servidor.gs"; printf '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin };\n'; } > "$OUT/servidor.js"
 touch "$OUT/.nojekyll"
+
+# Compatibilidad: los INOFER.jar viejos (2.3) buscaban actualizaciones en la raíz del sitio.
+# Se les deja ahí el programa nuevo (solo programa, sin pantallas) para que se actualicen solos.
+RAIZ="$(cd "$OUT/.." && pwd)"
+cp "$OUT/INOFER.jar" "$RAIZ/INOFER.jar"
+printf '{\n  "jar": "%s",\n  "jarSha256": "%s"\n}\n' "$VJAR" "$SHA" > "$RAIZ/version.json"
 rm -rf "$B"
 echo "web=$VWEB jar=$VJAR sha=$SHA"

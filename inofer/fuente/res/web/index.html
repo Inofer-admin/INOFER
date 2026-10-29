@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.28.08" />
+  <meta name="inofer-version" content="2026.10.29.01" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -2842,7 +2842,13 @@ function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmi
 
     function loadState() {
       try {
-        cloudApiUrl = localStorage.getItem('tablero_inyectoras_cloud_url') || INOFER_NUBE_PREDETERMINADA || '';
+        // Siempre la nube de la planta: así una PC que tenía guardada una dirección vieja
+        // (de otra implementación sin usuarios) no queda pidiendo "crear administrador".
+        const guardada = localStorage.getItem('tablero_inyectoras_cloud_url') || '';
+        cloudApiUrl = INOFER_NUBE_PREDETERMINADA || guardada;
+        if (INOFER_NUBE_PREDETERMINADA && guardada !== INOFER_NUBE_PREDETERMINADA) {
+          try { localStorage.setItem('tablero_inyectoras_cloud_url', INOFER_NUBE_PREDETERMINADA); } catch (e) {}
+        }
         const inputEl = document.getElementById('cloudEndpointInput');
         if (inputEl && cloudApiUrl) inputEl.value = cloudApiUrl;
         const saved = localStorage.getItem('tablero_inyectoras_records_v2');

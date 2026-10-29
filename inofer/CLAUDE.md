@@ -15,6 +15,10 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
   `servidor.js`; el cargador la descarga (caché 2 min, copia de respaldo en la hoja BD_Servidor). Debe exponer
   doGet, doPost y restablecerClaveAdmin y contener el texto INOFER_SERVIDOR_OK.
 
+## Nube
+- `INOFER_NUBE_PREDETERMINADA` (index.html) = URL /exec de la planta; tiene prioridad sobre la guardada en cada equipo.
+- Raíz del repo: `version.json` + `INOFER.jar` solo para que los programas viejos (2.3, URL de la raíz) se actualicen solos.
+
 ## Usuarios y permisos
 - Ingreso obligatorio. Áreas: partes, ordenes, catalogo, gantt, ia. Niveles: none / view / edit. Rol admin = todo + usuarios + nube.
 - Modo nube (Codigo.gs nuevo): login/token y permisos validados en el servidor (hoja BD_Usuarios, sesiones en Script Properties).
