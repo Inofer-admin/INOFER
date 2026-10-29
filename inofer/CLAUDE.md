@@ -30,7 +30,9 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Papelera (solo admin, solapa 🗑️): el servidor registra en BD_Papelera lo que desaparece al guardar (partes, órdenes,
   piezas, semanas/ítems del Gantt, cierres) comparando el estado anterior con el nuevo; acciones listPapelera/restaurarPapelera/vaciarPapelera.
 - Catálogo: campo `portamolde` (molde base compartido). Piezas con el mismo portamolde no pueden estar en máquinas distintas el
-  mismo día: aviso en Gantt (inoferConflictosGantt) y en órdenes en proceso.
+  mismo día: el auto-armado los pone en la misma máquina y salta días ocupados; a mano se bloquea (inoferChoqueManual).
+- `armada: true` marca la versión montada hoy en cada portamolde (panel en la base de datos); el Gantt avisa cambios de versión.
+- Piezas `-R` (inoferEsPiezaR) no se inyectan: fuera del análisis/auto-armado, bloqueadas a mano, aviso para quitarlas.
 
 ## Cómo aplicar un pedido del usuario
 1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).

@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.02" />
+  <meta name="inofer-version" content="2026.10.29.03" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -5405,7 +5405,7 @@ ${lines}${trendNote}`;
             <input type="checkbox" data-cat-id="${item.id}" class="catalog-row-checkbox h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0 cursor-pointer" ${isChecked ? 'checked' : ''} />
           </td>
           <td class="py-2 px-2.5">
-            <span class="font-extrabold text-cyan-300 block">${item.part}</span>
+            <span class="font-extrabold text-cyan-300 block">${item.part}${typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(item.part) ? ' <span class="ml-1 rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-300" title="Las piezas -R no se inyectan: no entran en el Gantt">NO SE INYECTA</span>' : ''}${item.portamolde && item.armada ? ' <span class="ml-1 rounded bg-orange-500/25 px-1.5 py-0.5 text-[9px] font-bold text-orange-200" title="Esta es la versión armada hoy en el portamolde">🔧 ARMADA</span>' : ''}</span>
             <span class="text-[10px] text-slate-400 truncate block max-w-[170px]" title="${item.desc || ''}">${item.desc || ''}</span>
           </td>
           <td class="py-2 px-2.5">
@@ -7476,7 +7476,10 @@ ${lines}${trendNote}`;
       if (sortByReach) {
         enriched.sort((a, b) => a.effectiveReachMonths - b.effectiveReachMonths);
       }
-      return enriched;
+      // Las piezas -R no se inyectan: quedan fuera del análisis y del Gantt
+      const sinR = enriched.filter(x => !(typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(x.part)));
+      window.__inoferExcluidasR = enriched.length - sinR.length;
+      return sinR;
     }
 
     function renderStockAnalysisPreview() {
@@ -7633,6 +7636,9 @@ ${lines}${trendNote}`;
       let sharedMoldsScheduledCount = 0;
       let createdOrdersCount = 0;
       const alreadyScheduledSisterParts = new Set();
+      const pmMaquina = {};   // portamolde -> máquina donde quedó armado este mes
+      const pmOcupado = {};   // portamolde|semana|día -> máquina que lo usa
+      const pmDe = part => (typeof inoferPortamoldeDe === 'function' ? inoferPortamoldeDe(part) : '');
 
       demandList.forEach((req, idx) => {
         if (alreadyScheduledSisterParts.has(req.part.trim().toLowerCase())) {
@@ -7674,6 +7680,10 @@ ${lines}${trendNote}`;
         let chosenMach = compatibleMachs[0];
         if (balanceMode === 'balance' && compatibleMachs.length > 1) {
           chosenMach = compatibleMachs.slice().sort((a, b) => (totalMachHours[a] || 0) - (totalMachHours[b] || 0))[0];
+        }
+        const pmPieza = pmDe(cleanPart);
+        if (pmPieza && pmMaquina[pmPieza] && compatibleMachs.includes(pmMaquina[pmPieza])) {
+          chosenMach = pmMaquina[pmPieza]; // las versiones del mismo portamolde van a la misma máquina (cambio de versión)
         }
 
         let linkedOrderId = '';
@@ -7725,9 +7735,12 @@ ${lines}${trendNote}`;
         let remainingQty = req.qty;
         let setupAddedForThisOrder = false;
 
-        const candidateMachines = balanceMode === 'balance' && compatibleMachs.length > 1
-          ? [chosenMach, ...compatibleMachs.filter(m => m !== chosenMach)]
-          : [chosenMach];
+        const candidateMachines = pmPieza
+          ? [chosenMach] // con portamolde compartido no se reparte en otras máquinas
+          : (balanceMode === 'balance' && compatibleMachs.length > 1
+            ? [chosenMach, ...compatibleMachs.filter(m => m !== chosenMach)]
+            : [chosenMach]);
+        if (pmPieza && !pmMaquina[pmPieza]) pmMaquina[pmPieza] = chosenMach;
 
         for (const mId of candidateMachines) {
           if (remainingQty <= 0) break;
@@ -7742,6 +7755,8 @@ ${lines}${trendNote}`;
               if (remainingQty <= 0) break;
               let availHrs = dailyHoursLimit - usedHours[mId][wIdx][dIdx];
               if (availHrs <= 0.25) continue;
+              const pmKey = pmPieza ? (pmPieza + '|' + wIdx + '|' + dIdx) : '';
+              if (pmKey && pmOcupado[pmKey] && pmOcupado[pmKey] !== mId) continue; // ese día el portamolde está en otra máquina
 
               if (includeSetup && !setupAddedForThisOrder) {
                 const setupH = 1.5;
@@ -7759,6 +7774,7 @@ ${lines}${trendNote}`;
               const hrsToUseNow = Math.min(availHrs, hrsNeeded);
               const qtyNow = Math.min(remainingQty, Math.round(hrsToUseNow * stdRate));
               if (qtyNow > 0) {
+                if (pmKey) pmOcupado[pmKey] = mId;
                 dailyQtyForThisWeek[dIdx] += qtyNow;
                 allocatedInThisWeek += qtyNow;
                 remainingQty -= qtyNow;
@@ -10205,7 +10221,7 @@ ${lines}${trendNote}`;
         '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea'],
       catalogo: ['#importCatalogCsvInput', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#restoreDemoCatalogBtn', '#catalogResetFormBtn', '#catSubmitBtn', '#loadFullExcelCatalogBtn',
         '#orderSubViewCatalog form input', '#orderSubViewCatalog form select', '#orderSubViewCatalog form textarea', '#selectAllCatalogCheckbox', 'input[data-cat-id]',
-        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input'],
+        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inofer-pm-armada-select'],
       gantt: ['#toggleAutoGanttPanelBtn', '#openGanttCatalogBtn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '#saveGanttBtn',
         '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#runAutoGanttMonthBtn', '#autoGanttPasteArea', '#clearAutoGanttPasteBtn',
         '.gantt-aux-input', '.gantt-item-qty-input', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '.del-gantt-item-btn', '.add-piece-to-mach-btn'],
@@ -10675,7 +10691,18 @@ ${lines}${trendNote}`;
 
     function inoferRevisarPortamoldes() {
       try {
-        const cg = inoferConflictosGantt(getActiveGanttWeek());
+        const semana = getActiveGanttWeek();
+        const piezasR = inoferPiezasRenGantt(semana);
+        const cambios = inoferCambiosVersion(semana);
+        inoferAvisoBox('inoferPmAvisoR', 'viewGantt', piezasR.length ? `
+          <div class="mb-1 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-extrabold text-orange-300">🚫 Piezas -R en el Gantt (no se inyectan)</span>
+          <button type="button" onclick="inoferQuitarPiezasR()" class="del-gantt-item-btn rounded-lg bg-orange-500 px-3 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-orange-400">Quitarlas del Gantt</button></div>
+          <p class="text-orange-200/80">${piezasR.map(x => `${inoferEsc(x.part)} (${inoferEsc(x.mach)})`).join(', ')}</p>` : '');
+        inoferAvisoBox('inoferPmAvisoVersion', 'viewGantt', cambios.length ? `
+          <div class="mb-1 text-sm font-extrabold text-sky-300">🔧 Cambios de versión en portamoldes esta semana</div>
+          <ul class="list-disc space-y-0.5 pl-5 text-sky-100">${cambios.map(c => `<li>${inoferEsc(c.part)} en la <b>${inoferEsc(c.mach)}</b>: el portamolde <b>${inoferEsc(c.pm)}</b> tiene armada la ${inoferEsc(c.arm)} → hay que cambiar la versión</li>`).join('')}</ul>` : '');
+        const cv = document.getElementById('inoferPmAvisoVersion'); if (cv) cv.className = 'rounded-2xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs shadow';
+        const cg = inoferConflictosGantt(semana);
         inoferAvisoBox('inoferPmAvisoGantt', 'viewGantt', cg.length ? `
           <div class="mb-1 text-sm font-extrabold text-orange-300">⚠️ Portamolde en uso en dos máquinas a la vez</div>
           <p class="mb-1.5 text-orange-200/80">Estas piezas salen del mismo molde base y no pueden estar en máquina al mismo tiempo. Mové una de ellas a otro día o a la misma máquina (como cambio de versión).</p>
@@ -10702,13 +10729,147 @@ ${lines}${trendNote}`;
         : 'Es la primera pieza con este portamolde. Poné el mismo código en las otras versiones.';
     }
 
+    // ---------- piezas -R: no se inyectan
+    function inoferEsPiezaR(part) { return /-R(?![A-Za-z])/i.test(String(part || '').trim()); }
+
+    // ---------- versión armada en cada portamolde
+    function inoferGruposPortamolde() {
+      const g = {};
+      (partsCatalog || []).forEach(x => { const pm = inoferPmNorm(x.portamolde); if (pm) (g[pm] = g[pm] || []).push(x); });
+      return g;
+    }
+    function inoferArmadaDe(pm) {
+      const lista = inoferGruposPortamolde()[inoferPmNorm(pm)] || [];
+      const a = lista.find(x => x.armada);
+      return a ? a.part : '';
+    }
+    function inoferSetArmada(pm, part) {
+      const lista = inoferGruposPortamolde()[inoferPmNorm(pm)] || [];
+      lista.forEach(x => { x.armada = String(x.part) === String(part); });
+      savePartsCatalog();
+      try { renderPartsCatalogView(); } catch (e) { }
+      try { renderGanttView(); } catch (e) { }
+      showToast(part ? `Portamolde ${inoferPmNorm(pm)}: ahora está armada la ${part}` : `Portamolde ${inoferPmNorm(pm)}: sin versión armada`);
+    }
+    function inoferRenderPanelPortamoldes() {
+      const cat = document.getElementById('orderSubViewCatalog');
+      if (!cat) return;
+      let box = document.getElementById('inoferPanelPortamoldes');
+      if (!box) {
+        box = document.createElement('div'); box.id = 'inoferPanelPortamoldes';
+        box.className = 'rounded-2xl border border-orange-500/30 bg-slate-900/80 p-4 shadow-xl';
+        const form = document.getElementById('catalogForm');
+        const ancla = form ? (form.closest('#orderSubViewCatalog > *') || form) : null;
+        if (ancla && ancla.parentNode === cat) cat.insertBefore(box, ancla.nextSibling); else cat.insertBefore(box, cat.firstChild);
+      }
+      const g = inoferGruposPortamolde();
+      const claves = Object.keys(g).sort();
+      box.innerHTML = `
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div><div class="text-sm font-extrabold text-orange-300">🧩 Portamoldes compartidos — versión armada</div>
+          <div class="text-[11px] text-slate-400">Elegí qué pieza está armada hoy en cada portamolde. El Gantt avisa cuando programás otra versión (hace falta cambio de versión).</div></div>
+          <span class="rounded-lg bg-orange-500/15 px-2.5 py-1 text-[11px] font-bold text-orange-200">${claves.length} portamolde${claves.length === 1 ? '' : 's'}</span>
+        </div>
+        ${claves.length ? `<div class="overflow-x-auto"><table class="w-full text-left text-xs">
+          <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1.5 pr-3">Portamolde</th><th class="py-1.5 pr-3">Versiones (piezas)</th><th class="py-1.5">Armada hoy</th></tr></thead>
+          <tbody>${claves.map(pm => {
+            const arm = (g[pm].find(x => x.armada) || {}).part || '';
+            return `<tr class="border-t border-slate-800">
+              <td class="py-2 pr-3 font-extrabold text-orange-200">${inoferEsc(pm)}</td>
+              <td class="py-2 pr-3 text-slate-300">${g[pm].map(x => `<span class="mr-1 inline-block rounded bg-slate-800 px-1.5 py-0.5 ${x.part === arm ? 'text-orange-200 font-bold' : ''}">${inoferEsc(x.part)}</span>`).join('')}</td>
+              <td class="py-2"><select data-pm-armada="${inoferEsc(pm)}" class="inofer-pm-armada-select rounded-lg border border-orange-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-orange-200">
+                <option value="">— Sin definir —</option>
+                ${g[pm].map(x => `<option value="${inoferEsc(x.part)}" ${x.part === arm ? 'selected' : ''}>${inoferEsc(x.part)}</option>`).join('')}
+              </select></td></tr>`;
+          }).join('')}</tbody></table></div>`
+        : '<p class="text-[11px] text-slate-500">Todavía no hay piezas con portamolde. Cargalo en el campo "🧩 Portamolde" de cada pieza.</p>'}`;
+      try { inoferLockControls(); } catch (e) { }
+    }
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (el && el.classList && el.classList.contains('inofer-pm-armada-select')) inoferSetArmada(el.dataset.pmArmada, el.value);
+    });
+
+    // ---------- Gantt: piezas -R y cambios de versión
+    function inoferPiezasRenGantt(week) {
+      const out = [];
+      if (!week || !week.machines) return out;
+      Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => { if (inoferEsPiezaR(it.part)) out.push({ mach: m, part: it.part }); }));
+      return out;
+    }
+    function inoferCambiosVersion(week) {
+      const out = [];
+      if (!week || !week.machines) return out;
+      Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => {
+        const pm = inoferPortamoldeDe(it.part); if (!pm) return;
+        const arm = inoferArmadaDe(pm);
+        if (arm && arm.toLowerCase() !== String(it.part).toLowerCase() && (it.dailyQty || []).some(q => Number(q) > 0)) out.push({ mach: m, part: it.part, pm, arm });
+      }));
+      return out;
+    }
+    function inoferQuitarPiezasR() {
+      const w = getActiveGanttWeek(); if (!w) return;
+      let n = 0;
+      Object.keys(w.machines || {}).forEach(m => { const it = (w.machines[m] || {}).items || []; const quedan = it.filter(x => !inoferEsPiezaR(x.part)); n += it.length - quedan.length; w.machines[m].items = quedan; });
+      saveGanttWeeks(); renderGanttView();
+      showToast(`Se quitaron ${n} pieza${n === 1 ? '' : 's'} -R del Gantt (quedan en la papelera)`);
+    }
+
+    // ---------- bloqueos al cargar el Gantt a mano
+    function inoferChoqueManual(week, part, mach, dias) {
+      const pm = inoferPortamoldeDe(part);
+      if (!pm || !week || !week.machines) return null;
+      for (const m of Object.keys(week.machines)) {
+        if (m === mach) continue;
+        for (const it of ((week.machines[m] || {}).items || [])) {
+          if (inoferPortamoldeDe(it.part) !== pm) continue;
+          const d = dias.find(i => Number((it.dailyQty || [])[i]) > 0);
+          if (d !== undefined) return { pm, otra: it.part, mach: m, dia: d };
+        }
+      }
+      return null;
+    }
+    const INOFER_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    document.addEventListener('submit', ev => {
+      if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+      const part = (document.getElementById('ganttModalPart')?.value || '').trim();
+      const mach = document.getElementById('ganttModalMachine')?.value;
+      if (inoferEsPiezaR(part)) {
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        showToast(`🚫 ${part} es una pieza -R: no se inyecta, no se puede cargar en el Gantt`);
+        return;
+      }
+      const dias = [0, 1, 2, 3, 4, 5, 6].filter(i => Number(document.getElementById('ganttDayQty_' + i)?.value) > 0);
+      const c = inoferChoqueManual(getActiveGanttWeek(), part, mach, dias);
+      if (c) {
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        showToast(`🚫 No se puede: ${part} y ${c.otra} comparten el portamolde ${c.pm} y la ${c.otra} ya está el ${INOFER_DIAS[c.dia]} en la ${c.mach}. Elegí otro día o la misma máquina.`);
+      }
+    }, true);
+    document.addEventListener('input', ev => {
+      const inp = ev.target;
+      if (!inp || !inp.classList || !inp.classList.contains('gantt-item-qty-input')) return;
+      const val = parseInt(inp.value) || 0;
+      if (val <= 0) return;
+      const week = getActiveGanttWeek(); if (!week) return;
+      const mach = inp.getAttribute('data-mach'), idx = Number(inp.getAttribute('data-item-idx')), dia = Number(inp.getAttribute('data-day'));
+      const item = (((week.machines || {})[mach] || {}).items || [])[idx];
+      if (!item) return;
+      const c = inoferChoqueManual(week, item.part, mach, [dia]);
+      if (c) {
+        ev.stopImmediatePropagation();
+        inp.value = (item.dailyQty || [])[dia] || 0;
+        showToast(`🚫 El ${INOFER_DIAS[dia]} el portamolde ${c.pm} ya está en la ${c.mach} con la ${c.otra}. No pueden estar en máquina a la vez.`);
+      }
+    }, true);
+
     // Enganches con las pantallas existentes
     ['renderGanttView', 'renderPartsCatalogView', 'renderProductionOrdersView'].forEach(fn => {
       const orig = window[fn];
       if (typeof orig !== 'function') return;
       window[fn] = function () {
         const r = orig.apply(this, arguments);
-        try { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); } catch (e) { }
+        try { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); if (fn === 'renderPartsCatalogView') inoferRenderPanelPortamoldes(); } catch (e) { }
         return r;
       };
     });
