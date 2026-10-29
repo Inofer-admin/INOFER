@@ -47,10 +47,21 @@ Function AbrirInofer
 FunctionEnd
 
 !macro CerrarInofer
-  ; cierra solo los procesos de INOFER (no otros programas Java)
-  nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' or Name='java.exe'\" | Where-Object { $$_.CommandLine -like '*INOFER*.jar*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"`
-  Pop $0
-  Sleep 800
+  ; Si INOFER está abierto, se le pide al usuario que lo cierre (sin forzar procesos: los antivirus
+  ; desconfían de los instaladores que cierran programas con PowerShell)
+  StrCpy $8 "$INSTDIR\runtime\bin\javaw.exe"
+  IfFileExists $8 inofer_probar 0
+  StrCpy $8 "$INSTDIR\INOFER.jar"
+  IfFileExists $8 inofer_probar inofer_libre
+  inofer_probar:
+  ClearErrors
+  FileOpen $9 $8 a
+  IfErrors 0 inofer_cerrar
+  MessageBox MB_RETRYCANCEL|MB_ICONINFORMATION "INOFER está abierto.$\r$\n$\r$\nCerralo (botón Salir del panel INOFER, en la barra de tareas) y tocá Reintentar." IDRETRY inofer_probar
+  Abort
+  inofer_cerrar:
+  FileClose $9
+  inofer_libre:
 !macroend
 
 Section "INOFER" SecMain
