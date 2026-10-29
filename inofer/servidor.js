@@ -19,6 +19,7 @@ function getDbSheet() {
       'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at', 'paradas'
     ]);
   }
+  fechasComoTexto_(sheet);
   if (String(sheet.getRange(1, 18).getValue ? sheet.getRange(1, 18).getValue() : 'paradas') !== 'paradas') {
     sheet.getRange(1, 18, 1, 1).setValues([['paradas']]);
   }
@@ -26,6 +27,34 @@ function getDbSheet() {
     sheet.getRange(1, 15, 1, 3).setValues([['cargado_por', 'modificado_por', 'cargado_at']]);
   }
   return sheet;
+}
+// ---------- Fechas de los partes: siempre como texto AAAA-MM-DD ----------
+// Google Sheets convertía "2026-10-29" en fecha con hora y, al leerla con otra zona horaria, la corría un día.
+function zonaHoja_() {
+  try { const z = getSs().getSpreadsheetTimeZone(); if (z) return z; } catch (e) {}
+  return Session.getScriptTimeZone();
+}
+function fechaTexto_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, zonaHoja_(), 'yyyy-MM-dd');
+  const s = String(v == null ? '' : v).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m2) return m2[3] + '-' + ('0' + m2[2]).slice(-2) + '-' + ('0' + m2[1]).slice(-2);
+  return s;
+}
+// Una sola vez: pasa la columna de fechas a texto plano para que no se vuelva a convertir
+function fechasComoTexto_(sheet) {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('FECHAS_TEXTO_V1') === 'ok') return;
+  const n = sheet.getLastRow();
+  if (n > 1) {
+    const vals = sheet.getRange(2, 2, n - 1, 1).getValues().map(function (r) { return [fechaTexto_(r[0])]; });
+    sheet.getRange(2, 2, n - 1, 1).setNumberFormat('@');
+    sheet.getRange(2, 2, n - 1, 1).setValues(vals);
+  }
+  sheet.getRange('B:B').setNumberFormat('@');
+  props.setProperty('FECHAS_TEXTO_V1', 'ok');
 }
 // Usuario que hace el pedido actual (lo completa doPost)
 let USUARIO_ACTUAL = '';
@@ -95,7 +124,7 @@ function obtenerRegistros() {
     if (!r[0]) continue;
     list.unshift({
       id: String(r[0]),
-      date: r[1] instanceof Date ? Utilities.formatDate(r[1], Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(r[1]),
+      date: fechaTexto_(r[1]),
       machine: String(r[2]),
       shift: String(r[3]),
       available: Number(r[4]) || 0,
@@ -142,7 +171,7 @@ function guardarRegistro(entry) {
     const ahora = new Date().toISOString();
     sheet.appendRow([
       entry.id || ('rec-' + new Date().getTime()),
-      entry.date, entry.machine, entry.shift,
+      fechaTexto_(entry.date), entry.machine, entry.shift,
       Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
       Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
       Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
@@ -165,7 +194,7 @@ function editarRegistro(entry) {
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(entry.id)) {
         sheet.getRange(i + 1, 1, 1, 18).setValues([[
-          entry.id, entry.date, entry.machine, entry.shift,
+          entry.id, fechaTexto_(entry.date), entry.machine, entry.shift,
           Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
           Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
           Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
@@ -180,7 +209,7 @@ function editarRegistro(entry) {
     if (!found) {
       const ahora = new Date().toISOString();
       sheet.appendRow([
-        entry.id, entry.date, entry.machine, entry.shift,
+        entry.id, fechaTexto_(entry.date), entry.machine, entry.shift,
         Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
@@ -227,7 +256,7 @@ function reemplazarRegistros(entries) {
     (entries || []).slice().reverse().forEach(entry => {
       sheet.appendRow([
         entry.id || ('rec-' + new Date().getTime()),
-        entry.date, entry.machine, entry.shift,
+        fechaTexto_(entry.date), entry.machine, entry.shift,
         Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,

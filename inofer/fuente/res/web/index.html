@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.37" />
+  <meta name="inofer-version" content="2026.10.29.38" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14790,9 +14790,15 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         play.on = true; play.pausa = false; mostrar(0);
         clearInterval(play.reloj); play.reloj = setInterval(tic, 1000); tic();
         setTimeout(() => { const a = $('presAyuda'); if (a) a.style.opacity = '0'; }, 6000);
+        pedirPantallaEncendida();
         try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => { }); } catch (e) { }
       }
+      // que la tele / el monitor no se apague mientras pasa la presentación
+      let bloqueo = null;
+      async function pedirPantallaEncendida() { try { if ('wakeLock' in navigator && !bloqueo) { bloqueo = await navigator.wakeLock.request('screen'); bloqueo.addEventListener('release', () => { bloqueo = null; }); } } catch (e) { } }
+      document.addEventListener('visibilitychange', () => { if (play.on && document.visibilityState === 'visible') pedirPantallaEncendida(); });
       function detener() {
+        try { if (bloqueo) bloqueo.release(); } catch (e) { } bloqueo = null;
         play.on = false; clearTimeout(play.t); clearInterval(play.reloj);
         const p = $('presPlayer'); if (p) { p.classList.add('hidden'); p.classList.remove('flex'); }
         try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { }
@@ -14928,7 +14934,8 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         let arrancada = false;
         window.inoferApplyPermissions = function () {
           const r = ap.apply(this, arguments);
-          try { boton(); if (esPantalla() && !arrancada) { arrancada = true; setTimeout(iniciarPres, 2500); } if (!inoferSession) arrancada = false; } catch (e) { }
+          const pideTV = /[?&#](tv|pantalla)\b/i.test(location.search + location.hash);
+          try { boton(); if ((esPantalla() || (pideTV && inoferSession)) && !arrancada) { arrancada = true; setTimeout(iniciarPres, 2500); } if (!inoferSession) arrancada = false; } catch (e) { }
           return r;
         };
       }
