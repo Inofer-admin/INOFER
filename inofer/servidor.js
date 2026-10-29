@@ -868,7 +868,9 @@ function iaModelos_(clave) {
   } catch (e) {}
   let lista = [];
   try {
-    const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { muteHttpExceptions: true, headers: { 'x-goog-api-key': clave } });
+    let r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { muteHttpExceptions: true, headers: { 'x-goog-api-key': clave } });
+    if (r.getResponseCode() !== 200) r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(clave), { muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + clave } });
     if (r.getResponseCode() === 200) {
       const d = JSON.parse(r.getContentText());
       lista = (d.models || []).filter(function (m) {
@@ -923,39 +925,58 @@ function iaLlamarClaude_(clave, cuerpo) {
   }
   return { ok: false, error: ultimo };
 }
+// Formas de mandar la clave a Google: las claves nuevas (AQ.…) no funcionan igual en todas las cuentas
+const IA_AUTH_MODOS = ['header', 'query', 'bearer', 'openai'];
+function iaPedirGemini_(clave, modo, modelo, cuerpo) {
+  const base = 'https://generativelanguage.googleapis.com/v1beta/';
+  if (modo === 'openai') {
+    // endpoint compatible con OpenAI (Authorization: Bearer)
+    const msgs = [];
+    const sis = cuerpo.systemInstruction && cuerpo.systemInstruction.parts ? cuerpo.systemInstruction.parts.map(function (p) { return p.text || ''; }).join('\n') : '';
+    const gc = cuerpo.generationConfig || {};
+    if (sis || gc.responseMimeType === 'application/json') msgs.push({ role: 'system', content: sis + (gc.responseMimeType === 'application/json' ? '\nDevolvé únicamente JSON válido.' : '') });
+    (cuerpo.contents || []).forEach(function (c) { msgs.push({ role: c.role === 'model' ? 'assistant' : 'user', content: (c.parts || []).map(function (p) { return p.text || ''; }).join('\n') }); });
+    const pl = { model: modelo, messages: msgs };
+    if (gc.temperature != null) pl.temperature = gc.temperature;
+    if (gc.maxOutputTokens) pl.max_tokens = gc.maxOutputTokens;
+    const r = UrlFetchApp.fetch(base + 'openai/chat/completions', { method: 'post', contentType: 'application/json', payload: JSON.stringify(pl), muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + clave } });
+    let d = {}; try { d = JSON.parse(r.getContentText()); } catch (e) {}
+    if (Array.isArray(d)) d = d[0] || {};
+    const t = r.getResponseCode() === 200 ? String((((d.choices || [])[0] || {}).message || {}).content || '').trim() : '';
+    return { code: r.getResponseCode(), texto: t, msg: String((d.error && d.error.message) || r.getResponseCode()) };
+  }
+  const url = base + 'models/' + modelo + ':generateContent' + (modo === 'query' ? '?key=' + encodeURIComponent(clave) : '');
+  const op = { method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true };
+  if (modo === 'header') op.headers = { 'x-goog-api-key': clave };
+  if (modo === 'bearer') op.headers = { Authorization: 'Bearer ' + clave };
+  const r = UrlFetchApp.fetch(url, op);
+  let d = {}; try { d = JSON.parse(r.getContentText()); } catch (e) {}
+  const partes = (((d.candidates || [])[0] || {}).content || {}).parts || [];
+  return { code: r.getResponseCode(), texto: r.getResponseCode() === 200 ? partes.map(function (p) { return p.text || ''; }).join('').trim() : '', msg: String((d.error && d.error.message) || r.getResponseCode()) };
+}
 function iaLlamar_(clave, cuerpo) {
   if (iaProveedor_(clave) === 'claude') return iaLlamarClaude_(clave, cuerpo);
-  let ultimo = 'sin respuesta', primero = '';
+  const props = PropertiesService.getScriptProperties();
+  const recordado = props.getProperty('IA_AUTH_MODO') || '';
+  const modos = recordado ? [recordado].concat(IA_AUTH_MODOS.filter(function (m) { return m !== recordado; })) : IA_AUTH_MODOS.slice();
   const IA_MODELOS = iaModelos_(clave);
-  for (let i = 0; i < IA_MODELOS.length; i++) {
-    // las claves nuevas (AQ.…) y las viejas (AIza…) van en el encabezado x-goog-api-key
-    let r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent', {
-      method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true, headers: { 'x-goog-api-key': clave }
-    });
-    if (r.getResponseCode() === 401 || r.getResponseCode() === 403) {
-      const r2 = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent?key=' + encodeURIComponent(clave), {
-        method: 'post', contentType: 'application/json', payload: JSON.stringify(cuerpo), muteHttpExceptions: true
-      });
-      if (r2.getResponseCode() === 200) r = r2;
+  let ultimo = 'sin respuesta', primero = '', clave_mala = false;
+  for (let mi = 0; mi < modos.length; mi++) {
+    const modo = modos[mi];
+    let authFallo = false;
+    for (let i = 0; i < IA_MODELOS.length; i++) {
+      const r = iaPedirGemini_(clave, modo, IA_MODELOS[i], cuerpo);
+      if (r.code === 200 && r.texto) { if (modo !== recordado) props.setProperty('IA_AUTH_MODO', modo); return { ok: true, texto: r.texto }; }
+      if (r.code === 200) { ultimo = 'respuesta vacía'; continue; }
+      if (r.code === 429) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
+      const authErr = r.code === 401 || r.code === 403 || (r.code === 400 && /api key|credential|authenticat|token/i.test(r.msg));
+      if (authErr) { authFallo = true; clave_mala = clave_mala || /api key not valid|API_KEY_INVALID/i.test(r.msg); ultimo = modo + ': ' + r.msg; break; }
+      ultimo = IA_MODELOS[i] + ': ' + r.msg;
+      if (!primero && r.code !== 404 && !/no longer available|not found|not supported/i.test(r.msg)) primero = ultimo;
     }
-    const code = r.getResponseCode();
-    let d = {};
-    try { d = JSON.parse(r.getContentText()); } catch (e) {}
-    if (code === 200) {
-      const partes = (((d.candidates || [])[0] || {}).content || {}).parts || [];
-      const t = partes.map(function (p) { return p.text || ''; }).join('').trim();
-      if (t) return { ok: true, texto: t };
-      ultimo = 'respuesta vacía';
-      continue;
-    }
-    const msg = String((d.error && d.error.message) || code);
-    if (code === 400 && /api key/i.test(msg)) return { ok: false, error: 'la clave de Gemini no es válida' };
-    if (code === 401) return { ok: false, error: 'Google rechazó la clave (' + msg.slice(0, 120) + ')' };
-    if (code === 429) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
-    if (code === 403) return { ok: false, error: 'la clave de Gemini no tiene permiso' };
-    ultimo = IA_MODELOS[i] + ': ' + msg;
-    if (!primero && code !== 404 && !/no longer available|not found|not supported/i.test(msg)) primero = ultimo;
+    if (!authFallo) break; // la clave anduvo pero ningún modelo respondió: no tiene sentido otra forma de autenticar
   }
+  if (!primero && clave_mala) return { ok: false, error: 'Google dice que la clave no es válida (' + ultimo.slice(0, 140) + ')' };
   return { ok: false, error: primero || ultimo };
 }
 function accionIA(u, body) {
