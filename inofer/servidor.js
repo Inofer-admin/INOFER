@@ -259,6 +259,11 @@ function normalizarPermisos(rol, permisos) {
     const v = rol === 'admin' ? 'edit' : (permisos && permisos[a]);
     out[a] = (v === 'edit' || v === 'view') ? v : 'none';
   });
+  // permisos detallados dentro de cada pestaña (true/false por acción)
+  if (rol !== 'admin' && permisos && permisos.detalle && typeof permisos.detalle === 'object') {
+    out.detalle = {};
+    Object.keys(permisos.detalle).forEach(function (k) { if (/^[a-z_]{3,30}$/.test(k)) out.detalle[k] = permisos.detalle[k] !== false; });
+  }
   return out;
 }
 

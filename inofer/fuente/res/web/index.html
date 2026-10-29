@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.22" />
+  <meta name="inofer-version" content="2026.10.29.23" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -5905,6 +5905,7 @@ ${lines}${trendNote}`;
               <td class="py-2 px-2.5 text-right text-rose-400">${lg.scrapPcs || 0}</td>
               <td class="py-2 px-2.5 text-slate-300">${[lg.stopCode, lg.obs].filter(Boolean).join(' — ') || '-'}</td>
               <td class="py-2 px-2.5 text-center">
+                <button type="button" onclick="inoferEditarTurno('${ord.id}', '${lg.id}')" class="inofer-edit-log-btn rounded bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/25">✏️ Editar</button>
                 <button type="button" data-del-log="${lg.id}" class="del-order-log-btn rounded bg-rose-500/10 px-2 py-0.5 text-[11px] font-semibold text-rose-400 hover:bg-rose-500/20">Borrar</button>
               </td>
             </tr>
@@ -12182,7 +12183,8 @@ Pedido: ${frase}`;
         texto = String(texto || '').trim();
         if (!texto) return;
         agregarMsg('user', esc(texto));
-        const puedeEditar = typeof inoferCan !== 'function' || inoferCan('gantt', 'edit');
+        const puedeEditar = (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('gantt_asistente'));
+        const puedePrecios = typeof inoferPuede !== 'function' || inoferPuede('precios_ver');
         let week = getActiveGanttWeek();
         if (!week) { agregarMsg('bot', 'No hay ninguna semana abierta en el Gantt.'); return; }
         const frases = texto.split(/\n|;|\.(?=\s|$)|\by despues\b|\by luego\b/i).map(s => s.trim()).filter(Boolean);
@@ -12207,6 +12209,7 @@ Pedido: ${frase}`;
           if (op.op === 'detalle') { respuestas.push(ultimoDetalle || 'Todavía no hice cambios en esta sesión.'); continue; }
           if (op.op === 'error') { errores.push(op.msg); continue; }
           if (op.op === 'show') { respuestas.push(resumen(week, op.mach)); continue; }
+          if ((op.op === 'facturacion' || op.op === 'meta') && !puedePrecios) { errores.push('Tu usuario no tiene permiso para ver precios y facturación.'); continue; }
           if (op.op === 'facturacion') {
             if (typeof inoferFacturacion !== 'function') { respuestas.push('No hay precios cargados.'); continue; }
             if (quiereDetalle) { respuestas.push(inoferResumenFacturacion(week)); continue; }
@@ -12567,7 +12570,11 @@ Pedido: ${frase}`;
             </div>`;
         } else if (st.paso === 'orden') {
           const ords = productionOrders.filter(o => maqDeOrden(o) === st.maq && abierta(o));
-          if (st.nueva || !ords.length) {
+          const puedeCrear = typeof inoferPuede !== 'function' || inoferPuede('ord_crear');
+          if ((st.nueva || !ords.length) && !puedeCrear) {
+            html = `<h3 class="mb-2 text-lg font-black text-white">No hay órdenes abiertas en la ${esc(st.maq)}</h3>
+              <p class="text-sm text-slate-300">Tu usuario solo puede cargar producción en órdenes ya creadas. Pedile al supervisor que cree la orden, o elegí otra máquina.</p>`;
+          } else if (st.nueva || !ords.length) {
             const plan = piezasDelGantt(st.maq);
             const piezasMaq = cat().filter(c => (c.machines || []).includes(st.maq) || norm(c.machine) === norm(fullDe(st.maq)));
             html = `<h3 class="mb-1 text-lg font-black text-white">Orden nueva en la ${esc(st.maq)}</h3>
@@ -12598,7 +12605,7 @@ Pedido: ${frase}`;
                   <span class="flex items-center justify-between"><span class="text-xl text-amber-300">${esc(o.part || 'Sin pieza')}</span><span class="text-sm text-slate-300">${a.pct}%</span></span>
                   <span class="block text-[11px] font-normal text-slate-400">OP ${esc(o.ordNumber)} · ${a.ok.toLocaleString('es-AR')} de ${Number(o.qtyTarget || 0).toLocaleString('es-AR')} u</span>
                   <span class="mt-2 block h-2 overflow-hidden rounded-full bg-slate-800"><span class="block h-full bg-amber-400" style="width:${a.pct}%"></span></span></button>`; }).join('')}
-                <button type="button" id="crNuevaBtn" class="${BTN} border-dashed border-slate-600 bg-transparent text-center text-slate-300 hover:border-amber-400 hover:text-white"><span class="block text-2xl">+</span><span class="text-sm">Empezar una orden nueva</span></button>
+                ${puedeCrear ? `<button type="button" id="crNuevaBtn" class="${BTN} border-dashed border-slate-600 bg-transparent text-center text-slate-300 hover:border-amber-400 hover:text-white"><span class="block text-2xl">+</span><span class="text-sm">Empezar una orden nueva</span></button>` : ''}
               </div>`;
           }
         } else {
@@ -12646,11 +12653,58 @@ Pedido: ${frase}`;
                 <input id="crOperario" value="${esc(nombreOperario())}" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-base font-bold text-white focus:border-amber-400 focus:outline-none"></label>
               <details class="text-xs text-slate-400"><summary class="cursor-pointer">Agregar una observación (opcional)</summary>
                 <input id="crObs" placeholder="Ej: cambié noyo" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></details>
-              <button type="submit" class="w-full rounded-2xl bg-emerald-500 px-4 py-4 text-lg font-black text-slate-950 hover:bg-emerald-400">💾 Guardar turno</button>
+              <button type="submit" class="w-full rounded-2xl bg-emerald-500 px-4 py-4 text-lg font-black text-slate-950 hover:bg-emerald-400">${st.editLogId ? '💾 Guardar cambios' : '💾 Guardar turno'}</button>
+              ${st.editLogId ? '<button type="button" id="crCancelEdit" class="w-full rounded-2xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Cancelar edición</button>' : ''}
             </form>`;
+          if (st.editLogId) {
+            const lg = (o.logs || []).find(x => x.id === st.editLogId);
+            if (lg) html = `<div class="mb-3 rounded-xl border border-amber-400/60 bg-amber-500/10 px-3 py-2 text-sm font-bold text-amber-200">✏️ Editando el turno del ${esc(lg.date)} (${esc(lg.turno || (lg.startTime + ' a ' + lg.endTime))} · ${esc(lg.operator)})</div>` + html;
+          }
+          const logs = (o.logs || []).slice().sort((a, b) => String(b.date + b.startTime).localeCompare(String(a.date + a.startTime))).slice(0, 12);
+          const puedeEditarTurnos = typeof inoferPuede !== 'function' || inoferPuede('ord_editar_turnos');
+          if (logs.length) html += `<div class="mt-5 space-y-2"><div class="text-xs font-bold uppercase tracking-wider text-slate-400">Turnos cargados en esta orden</div>
+            ${logs.map(l => `<div class="flex items-center justify-between gap-2 rounded-xl border ${l.id === st.editLogId ? 'border-amber-400' : 'border-slate-800'} bg-slate-950/60 px-3 py-2">
+              <div class="min-w-0 text-xs"><div class="font-bold text-white">${esc(l.date)} · ${esc(l.turno || (l.startTime + '–' + l.endTime))} · <span class="text-emerald-300">${Number(l.okPcs || 0).toLocaleString('es-AR')} buenas</span>${Number(l.scrapPcs) ? ` · <span class="text-rose-300">${l.scrapPcs} scrap</span>` : ''}</div>
+                <div class="truncate text-[11px] text-slate-400">${esc(l.operator)}${l.obs ? ' · ' + esc(l.obs) : ''}${l.modificadoPor ? ` · editado por ${esc(l.modificadoPor)}` : ''}</div></div>
+              ${puedeEditarTurnos ? `<div class="flex shrink-0 gap-1"><button type="button" class="cr-log-edit rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-bold text-cyan-300" data-id="${esc(l.id)}">✏️ Editar</button>
+                <button type="button" class="cr-log-del rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-bold text-rose-300" data-id="${esc(l.id)}">🗑️</button></div>` : ''}
+            </div>`).join('')}</div>`;
         }
         box.innerHTML = migas + html;
+        if (st.paso === 'turno' && st.editLogId) { try { precargarTurno(); } catch (e) { console.error(e); } }
       }
+      function precargarTurno() {
+        const o = productionOrders.find(x => x.id === st.ordId);
+        const l = o && (o.logs || []).find(x => x.id === st.editLogId);
+        if (!l) return;
+        $('crFecha').value = l.date || hoy();
+        $('crIni').value = l.startTime || ''; $('crFin').value = l.endTime || '';
+        $('crOk').value = Number(l.okPcs) || 0; $('crScrap').value = Number(l.scrapPcs) || ''; $('crBaja').value = Number(l.lowStartPcs) || '';
+        $('crOperario').value = l.operator || '';
+        if ($('crObs')) $('crObs').value = l.obsUsuario != null ? l.obsUsuario : '';
+        const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
+        if (ps.length) {
+          st.parada = true;
+          $('crParadaBox').classList.remove('hidden');
+          $('crParadasList').innerHTML = ps.map(p => filaParada(p)).join('');
+          const v = $('orderSubViewRapida');
+          v.querySelectorAll('.cr-parada').forEach(b => { const on = b.dataset.p === '1'; const c = on ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+          totalParadas();
+        }
+      }
+      window.inoferEditarTurno = function (ordId, logId) {
+        const o = productionOrders.find(x => x.id === ordId);
+        if (!o) return;
+        if (typeof inoferPuede === 'function' && !inoferPuede('ord_editar_turnos')) { showToast('Tu usuario no puede editar turnos cargados'); return; }
+        const l = (o.logs || []).find(x => x.id === logId);
+        st.maq = maqDeOrden(o) || st.maq; st.ordId = ordId; st.paso = 'turno'; st.editLogId = logId; st.parada = false;
+        const t = l && turnos().find(x => x.nombre === l.turno || (x.ini === l.startTime && x.fin === l.endTime));
+        if (t) st.turno = t.id;
+        selectedOrderId = ordId;
+        try { switchTab('orders'); } catch (e) { }
+        switchOrderSubTab('rapida');
+        try { $('orderSubViewRapida').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
+      };
 
       // ---------- editor de turnos (solo administrador) ----------
       function renderCfgTurnos() {
@@ -12750,18 +12804,20 @@ Pedido: ${frase}`;
       }
 
       // ---------- paradas (varias por turno, sin límite de duración) ----------
-      function filaParada() {
+      function filaParada(p) {
+        p = p || {};
+        const pmin = Number(p.min) || 0;
         const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-center text-base font-bold text-white';
         return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2">
           <div class="flex gap-2">
             <select class="cr-pcod flex-1 rounded-lg border-2 border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-white">
-              <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+              <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
             </select>
             <button type="button" class="cr-pdel rounded-lg border border-slate-700 px-3 text-sm text-rose-300" title="Quitar">✕</button>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-ph ${inp}" style="width:4.5rem" placeholder="0"> h</label>
-            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-pm ${inp}" style="width:4.5rem" placeholder="0"> min</label>
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-ph ${inp}" style="width:4.5rem" placeholder="0" value="${pmin >= 60 ? Math.floor(pmin / 60) : ''}"> h</label>
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-pm ${inp}" style="width:4.5rem" placeholder="0" value="${pmin % 60 || ''}"> min</label>
             <span class="flex gap-1">${[15, 30, 60].map(m => `<button type="button" class="cr-padd rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200" data-m="${m}">+${m < 60 ? m + ' min' : '1 h'}</button>`).join('')}</span>
           </div>
         </div>`;
@@ -12797,22 +12853,30 @@ Pedido: ${frase}`;
         const codigo = paradas.length ? paradas[0].codigo : '';
         const obs = [paradas.map(p => `Cód ${p.codigo.split('-')[0]} · ${fmtMin(p.min)}`).join('; '), ($('crObs') || {}).value || ''].filter(Boolean).join(' — ');
         if (!o.logs) o.logs = [];
-        o.logs.push({
-          id: 'lg-' + Date.now(), date: $('crFecha').value || hoy(), operator: operario, startTime: $('crIni').value || t.ini, endTime: $('crFin').value || t.fin,
-          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, paradas, obs, turno: t.nombre,
-          cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString()
-        });
+        const datos = {
+          date: $('crFecha').value || hoy(), operator: operario, startTime: $('crIni').value || t.ini, endTime: $('crFin').value || t.fin,
+          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, paradas, obs,
+          obsUsuario: ($('crObs') || {}).value || '', turno: (turnos().find(x => x.ini === ($('crIni').value || t.ini) && x.fin === ($('crFin').value || t.fin)) || {}).nombre || t.nombre
+        };
+        const editando = st.editLogId && o.logs.find(x => x.id === st.editLogId);
+        if (editando) {
+          Object.assign(editando, datos, { modificadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', modificadoAt: new Date().toISOString() });
+        } else {
+          o.logs.push(Object.assign({ id: 'lg-' + Date.now() }, datos, { cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString() }));
+        }
+        st.editLogId = '';
         pref.operario = operario; guardarPref();
         const a = avance(o);
-        if (a.pct >= 100 && o.status !== 'Completada') o.status = 'Completada';
+        if (a.pct >= 100 && o.status !== 'Completada') { o.status = 'Completada'; o.autoCompletada = true; }
+        else if (a.pct < 100 && o.status === 'Completada' && o.autoCompletada) { o.status = 'En Proceso'; o.autoCompletada = false; }
         saveProductionOrders();
         try { renderProductionOrdersView(); } catch (e) { }
-        showToast(`Turno guardado ✓ ${ok.toLocaleString('es-AR')} piezas buenas en ${o.part}`);
+        showToast(editando ? `Turno corregido ✓ (${o.part})` : `Turno guardado ✓ ${ok.toLocaleString('es-AR')} piezas buenas en ${o.part}`);
         const box = $('inoferCR');
         st.parada = false;
         box.innerHTML = `<div class="space-y-4 py-6 text-center">
           <div class="text-5xl">✅</div>
-          <div class="text-xl font-black text-white">¡Turno guardado!</div>
+          <div class="text-xl font-black text-white">${editando ? '¡Turno corregido!' : '¡Turno guardado!'}</div>
           <div class="text-sm text-slate-300">${esc(o.part)} · ${ok.toLocaleString('es-AR')} piezas buenas · avance de la orden ${a.pct}%</div>
           ${a.pct >= 100 ? '<div class="text-sm font-bold text-emerald-300">La orden llegó a la cantidad pedida y quedó como Completada.</div>' : ''}
           <div class="flex flex-wrap justify-center gap-2 pt-2">
@@ -12856,7 +12920,7 @@ Pedido: ${frase}`;
           let el;
           if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; render(); }
           else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
-          else if ((el = g('.cr-ord'))) { st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
+          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
           else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
           else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
@@ -12875,7 +12939,19 @@ Pedido: ${frase}`;
           else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
           else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
           else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
-          else if (g('#crOtroTurno')) { st.paso = 'turno'; render(); }
+          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; render(); }
+          else if ((el = g('.cr-log-edit'))) { window.inoferEditarTurno(st.ordId, el.dataset.id); }
+          else if (g('#crCancelEdit')) { st.editLogId = ''; st.parada = false; render(); }
+          else if ((el = g('.cr-log-del'))) {
+            if (typeof inoferPuede === 'function' && !inoferPuede('ord_editar_turnos')) { showToast('Tu usuario no puede borrar turnos'); return; }
+            const o = productionOrders.find(x => x.id === st.ordId); const l = o && (o.logs || []).find(x => x.id === el.dataset.id);
+            if (!l || !confirm(`¿Borrar el turno del ${l.date} (${l.okPcs} piezas buenas)?`)) return;
+            o.logs = o.logs.filter(x => x.id !== l.id);
+            if (st.editLogId === l.id) st.editLogId = '';
+            if (o.status === 'Completada' && o.autoCompletada && avance(o).pct < 100) { o.status = 'En Proceso'; o.autoCompletada = false; }
+            saveProductionOrders(); try { renderProductionOrdersView(); } catch (e) { }
+            showToast('Turno borrado'); render();
+          }
           else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
         });
         v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
@@ -13486,6 +13562,265 @@ Pedido: ${frase}`;
         window.renderGanttView = function () { const r = rg.apply(this, arguments); try { render(); } catch (e) { } return r; };
       }
       function iniciar() { try { render(); } catch (e) { console.error(e); } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>
+  <script>
+    // ===== Permisos detallados por pestaña + Tablero alimentado por las Órdenes de Producción =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+      // ---------- catálogo de permisos detallados ----------
+      const DETALLE = {
+        ordenes: [
+          { k: 'ord_turnos', t: 'Cargar la producción de los turnos (Carga rápida)' },
+          { k: 'ord_editar_turnos', t: 'Corregir o borrar turnos ya cargados' },
+          { k: 'ord_crear', t: 'Crear órdenes nuevas' },
+          { k: 'ord_editar', t: 'Modificar los datos de la orden (frente y dorso)' },
+          { k: 'ord_borrar', t: 'Borrar órdenes' }
+        ],
+        gantt: [
+          { k: 'gantt_manual', t: 'Modificar el Gantt a mano (cantidades, piezas, semanas)' },
+          { k: 'gantt_asistente', t: 'Pedirle cambios al asistente del Gantt' },
+          { k: 'gantt_auto', t: 'Generar el Gantt automático desde la planilla' },
+          { k: 'gantt_setup', t: 'Cambiar set-up, pistones y lotes por máquina' }
+        ],
+        catalogo: [
+          { k: 'cat_piezas', t: 'Modificar piezas y moldes' },
+          { k: 'precios_ver', t: 'Ver precios y facturación', nivel: 'view' },
+          { k: 'precios_editar', t: 'Modificar precios' }
+        ]
+      };
+      const AREA_DE = {};
+      Object.keys(DETALLE).forEach(a => DETALLE[a].forEach(d => { AREA_DE[d.k] = { area: a, nivel: d.nivel || 'edit' }; }));
+      function inoferPuede(k) {
+        if (typeof inoferSession === 'undefined' || !inoferSession) return true; // sin sesión: la app está bloqueada igual
+        if (inoferSession.rol === 'admin') return true;
+        const def = AREA_DE[k];
+        if (!def) return true;
+        if (!inoferCan(def.area, def.nivel)) return false;
+        if (k === 'precios_editar' && !inoferPuede('precios_ver')) return false;
+        const det = (inoferSession.permisos || {}).detalle || {};
+        return det[k] !== false;
+      }
+      window.inoferPuede = inoferPuede;
+
+      // conservar "detalle" al normalizar permisos
+      if (typeof window.inoferNormPerms === 'function') {
+        const np = window.inoferNormPerms;
+        window.inoferNormPerms = function (rol, p) {
+          const out = np.apply(this, arguments);
+          if (p && p.detalle && typeof p.detalle === 'object') {
+            out.detalle = {};
+            Object.keys(p.detalle).forEach(k => { if (AREA_DE[k]) out.detalle[k] = p.detalle[k] !== false; });
+          }
+          return out;
+        };
+      }
+
+      // ---------- qué controla cada permiso ----------
+      const CONTROLES = {
+        ord_turnos: ['#crTurnoForm input', '#crTurnoForm select', '#crTurnoForm button', '#quickOrderLogForm input', '#quickOrderLogForm select', '#quickOrderLogForm button'],
+        ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
+        ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn', '#crNuevaForm input', '#crNuevaForm button', '.cr-plan'],
+        ord_editar: ['#saveOrderFrontBtn', '#saveOrderBackBtn', '#orderSubViewFront input', '#orderSubViewFront select', '#orderSubViewFront textarea', '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea', '.inofer-ord-editar', '.use-cat-btn', '#catalogQuickPicker'],
+        ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        gantt_manual: ['.gantt-aux-input', '.gantt-item-qty-input', '.del-gantt-item-btn', '.add-piece-to-mach-btn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '#openGanttCatalogBtn', '#saveGanttBtn'],
+        gantt_asistente: ['#inoferGanttChatUndo'],
+        gantt_auto: ['#toggleAutoGanttPanelBtn', '#runAutoGanttMonthBtn', '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#clearAutoGanttPasteBtn'],
+        gantt_setup: ['.inofer-setup-cfg', '.inofer-piston-cfg'],
+        cat_piezas: ['#catSubmitBtn', '#catalogForm input', '#catalogForm select', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inline-piston-input', '.inline-lote-input', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#importCatalogCsvInput', '#loadFullExcelCatalogBtn'],
+        precios_editar: ['.inline-precio-input', '#cat_precio', '#inoferPreciosImportarBtn', '#inoferPreciosFile']
+      };
+      // Elementos que directamente se ocultan
+      const OCULTAR = {
+        ord_turnos: ['.order-subtab-btn[data-order-subtab="rapida"]'],
+        ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn'],
+        ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
+        gantt_auto: ['#toggleAutoGanttPanelBtn'],
+        precios_ver: ['#inoferPanelPrecios', '#inoferGanttFactBadge', '.inline-precio-input', '#cat_precio']
+      };
+      function denegado(el) {
+        if (!el || !el.closest) return null;
+        if (el.closest('#inoferUsersModal, #inoferLoginOverlay, #inoferUserMenu')) return null;
+        for (const k of Object.keys(CONTROLES)) {
+          if (inoferPuede(k)) continue;
+          for (const sel of CONTROLES[k]) { try { if (el.closest(sel) || el.matches(sel)) return k; } catch (e) { } }
+        }
+        // precios ocultos: tampoco se editan
+        if (!inoferPuede('precios_ver') && el.closest('.inline-precio-input, #cat_precio')) return 'precios_ver';
+        return null;
+      }
+      const NOMBRE = {}; Object.keys(DETALLE).forEach(a => DETALLE[a].forEach(d => { NOMBRE[d.k] = d.t.toLowerCase(); }));
+      let ultimoAviso = 0;
+      ['click', 'input', 'change', 'submit', 'keydown'].forEach(tipo => {
+        document.addEventListener(tipo, ev => {
+          const k = denegado(ev.target);
+          if (!k) return;
+          if (tipo === 'keydown' && ev.key === 'Tab') return;
+          ev.preventDefault(); ev.stopImmediatePropagation();
+          if (Date.now() - ultimoAviso > 1500) { ultimoAviso = Date.now(); showToast('Tu usuario no tiene permiso para: ' + (NOMBRE[k] || k)); }
+        }, true);
+      });
+      function aplicarOcultos() {
+        Object.keys(OCULTAR).forEach(k => {
+          const no = !inoferPuede(k);
+          OCULTAR[k].forEach(sel => document.querySelectorAll(sel).forEach(el => {
+            const target = (sel === '.inline-precio-input' || sel === '#cat_precio') ? (el.parentElement || el) : el;
+            if (no) { target.classList.add('hidden'); target.dataset.inoferPermOculto = '1'; }
+            else if (target.dataset.inoferPermOculto) { target.classList.remove('hidden'); delete target.dataset.inoferPermOculto; }
+          }));
+        });
+      }
+      let pend = false;
+      const obs = new MutationObserver(() => { if (pend) return; pend = true; requestAnimationFrame(() => { pend = false; try { aplicarOcultos(); } catch (e) { } }); });
+      function arrancarObs() { try { obs.observe(document.body, { childList: true, subtree: true }); } catch (e) { } }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); try { aplicarOcultos(); } catch (e) { } return r; };
+      }
+
+      // ---------- editor en "Usuarios y permisos" ----------
+      function renderSubPermisos() {
+        const modal = $('inoferUsersModal'); if (!modal) return;
+        const rol = ($('inoferUfRol') || {}).value;
+        Object.keys(DETALLE).forEach(area => {
+          const grupo = modal.querySelector(`[data-perm-group="${area}"]`);
+          if (!grupo) return;
+          const fila = grupo.parentElement;
+          let box = fila.querySelector('.inofer-sub-perms');
+          if (!box) { box = document.createElement('div'); box.className = 'inofer-sub-perms sm:col-span-2 mt-1.5 grid gap-1 border-t border-slate-800 pt-1.5'; fila.appendChild(box); }
+          const nivel = (inoferFormPerms || {})[area] || 'none';
+          const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+          const items = DETALLE[area].filter(d => (d.nivel || 'edit') === 'view' ? nivel !== 'none' : nivel === 'edit');
+          if (rol === 'admin' || !items.length) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+          box.classList.remove('hidden');
+          box.innerHTML = `<div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Qué puede hacer</div>` + items.map(d => `
+            <label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" class="inofer-sub-perm accent-emerald-500" data-k="${d.k}" ${det[d.k] !== false ? 'checked' : ''}> ${esc(d.t)}</label>`).join('');
+        });
+      }
+      document.addEventListener('change', e => {
+        const el = e.target;
+        if (!el.classList || !el.classList.contains('inofer-sub-perm')) return;
+        if (!inoferFormPerms.detalle) inoferFormPerms.detalle = {};
+        inoferFormPerms.detalle[el.dataset.k] = el.checked;
+      });
+      if (typeof window.inoferRefreshPermUi === 'function') {
+        const rp = window.inoferRefreshPermUi;
+        window.inoferRefreshPermUi = function () { const r = rp.apply(this, arguments); try { renderSubPermisos(); } catch (e) { console.error(e); } return r; };
+      }
+      // atajo "solo carga de producción"
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('#inoferPresetCarga');
+        if (!b) return;
+        inoferFormPerms = { partes: 'view', ordenes: 'edit', catalogo: 'none', gantt: 'view', ia: 'none', indicadores: 'view',
+          detalle: { ord_turnos: true, ord_editar_turnos: false, ord_crear: false, ord_editar: false, ord_borrar: false, precios_ver: false } };
+        inoferRefreshPermUi();
+      });
+      function sumarPreset() {
+        const ref = document.querySelector('#inoferUsersModal [data-preset="operario"]');
+        if (!ref || $('inoferPresetCarga')) return;
+        const b = document.createElement('button');
+        b.type = 'button'; b.id = 'inoferPresetCarga';
+        b.className = 'rounded border border-emerald-500/50 px-2 py-1 text-emerald-300 hover:bg-emerald-500/10';
+        b.textContent = 'Solo cargar producción';
+        ref.parentElement.insertBefore(b, ref);
+      }
+      if (typeof window.inoferOpenUsersModal === 'function') {
+        const om = window.inoferOpenUsersModal;
+        window.inoferOpenUsersModal = async function () { const r = om.apply(this, arguments); try { sumarPreset(); renderSubPermisos(); } catch (e) { } return r; };
+      }
+
+      // ---------- Tablero y velocímetros desde las órdenes de producción ----------
+      // Código de parada INOFER (1 a 28) -> categoría del tablero
+      const COD_CAT = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
+        16: 'parada_maquina', 2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
+        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+      window.INOFER_CODIGO_CATEGORIA = COD_CAT;
+      const horas = (a, b) => (typeof calcHoursDiff === 'function' ? calcHoursDiff(a, b) : 0);
+      function registrosDeOrdenes() {
+        const out = [];
+        (typeof productionOrders !== 'undefined' ? productionOrders : []).forEach(o => {
+          (o.logs || []).forEach(l => {
+            const r = { id: 'op-' + o.id + '-' + l.id, fromOrder: true, ordId: o.id, logId: l.id, date: l.date, machine: o.machine, shift: l.turno || 'Turno', available: Math.round(horas(l.startTime, l.endTime) * 100) / 100,
+              part: o.part, ordNumber: o.ordNumber, okPcs: Number(l.okPcs) || 0, scrapPcs: Number(l.scrapPcs) || 0, operator: l.operator, cargadoPor: l.cargadoPor || '', modificadoPor: l.modificadoPor || '' };
+            (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { r[c.key] = 0; });
+            const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
+            ps.forEach(p => {
+              const n = parseInt(String(p.codigo || ''), 10);
+              const cat = COD_CAT[n] || 'otros';
+              r[cat] = Math.round(((r[cat] || 0) + (Number(p.min) || 0) / 60) * 100) / 100;
+            });
+            out.push(r);
+          });
+        });
+        return out;
+      }
+      window.inoferRegistrosDeOrdenes = registrosDeOrdenes;
+      if (typeof window.getFilteredRecords === 'function') {
+        const gf = window.getFilteredRecords;
+        window.getFilteredRecords = function () {
+          const base = gf.apply(this, arguments);
+          const machine = ($('filterMachine') || {}).value || 'ALL', shift = ($('filterShift') || {}).value || 'ALL';
+          const from = ($('filterDateFrom') || {}).value, to = ($('filterDateTo') || {}).value;
+          const deriv = registrosDeOrdenes().filter(r => {
+            if (machine !== 'ALL' && r.machine !== machine) return false;
+            if (shift !== 'ALL' && r.shift !== shift) return false;
+            if (from && r.date < from) return false;
+            if (to && r.date > to) return false;
+            return true;
+          });
+          return deriv.concat(base).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        };
+      }
+      // en el historial, las filas que vienen de una OP se corrigen desde la OP
+      if (typeof window.renderRecordsTable === 'function') {
+        const rt = window.renderRecordsTable;
+        window.renderRecordsTable = function () {
+          const r = rt.apply(this, arguments);
+          try {
+            document.querySelectorAll('#recordsTableBody .edit-record-btn').forEach(b => {
+              const id = b.getAttribute('data-edit-id') || '';
+              if (!id.startsWith('op-')) return;
+              const reg = registrosDeOrdenes().find(x => x.id === id);
+              const td = b.parentElement;
+              const cont = td && td.closest('td');
+              if (!reg || !cont) return;
+              cont.innerHTML = `<span class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">OP ${esc(reg.ordNumber)} · ${esc(reg.part)}</span>` +
+                (inoferPuede('ord_editar_turnos') && inoferCan('ordenes', 'edit') ? `<button type="button" onclick="inoferEditarTurno('${esc(reg.ordId)}','${esc(reg.logId)}')" class="rounded bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 text-[11px] font-semibold text-cyan-300">✏️ Editar</button>` : '');
+            });
+          } catch (e) { }
+          return r;
+        };
+      }
+      // los cambios en las órdenes actualizan el tablero
+      if (typeof window.saveProductionOrders === 'function') {
+        const sp = window.saveProductionOrders;
+        window.saveProductionOrders = function () {
+          const r = sp.apply(this, arguments);
+          try { const f = getFilteredRecords(); const agg = computeAggregates(f); renderMainSpeedometer(agg); renderCategorySpeedometers(agg); renderCharts(agg); renderBreakdownTable(agg); renderRecordsTable(f); } catch (e) { }
+          return r;
+        };
+      }
+      // no hay carga de horas aparte: todo sale de las órdenes
+      function sinCargaAparte() {
+        ['openNewEntryModalBtn', 'simSaveToRecordsBtn'].forEach(id => { const el = $(id); if (el) { el.classList.add('hidden'); el.dataset.inoferPermOculto = '1'; } });
+        const v = $('viewDashboard');
+        if (v && !$('inoferTableroAviso')) {
+          const d = document.createElement('div');
+          d.id = 'inoferTableroAviso';
+          d.className = 'rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200';
+          d.innerHTML = '📋 El tablero y los velocímetros se calculan solos con los turnos cargados en las <b>Órdenes de Producción</b> (horas del turno y paradas por código). No hace falta cargar horas aparte.';
+          v.insertBefore(d, v.firstChild);
+        }
+      }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap2 = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap2.apply(this, arguments); try { sinCargaAparte(); } catch (e) { } return r; };
+      }
+      function iniciar() { arrancarObs(); try { sinCargaAparte(); aplicarOcultos(); refreshAll(); } catch (e) { } }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
     })();
   </script>
