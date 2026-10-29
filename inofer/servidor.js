@@ -644,6 +644,218 @@ function accionPapelera(u, body) {
   return null;
 }
 
+// ===================== MENSAJERÍA: chats privados, grupos y solicitudes al administrador =====================
+// Hojas: BD_Chats, BD_Mensajes, BD_Solicitudes. Cada usuario solo recibe lo suyo.
+const ACCIONES_MSG = ['msgEstado', 'msgLeer', 'msgEnviar', 'msgCrearChat', 'msgBorrarChat', 'msgBorrarMensaje', 'msgEditarGrupo',
+  'solListar', 'solCrear', 'solActualizar', 'solBorrar', 'solVisto'];
+
+function hojaMsg_(nombre, cab) {
+  const ss = getSs();
+  let sh = ss.getSheetByName(nombre);
+  if (!sh) { sh = ss.insertSheet(nombre); sh.appendRow(cab); }
+  return sh;
+}
+function hojaChats_() { return hojaMsg_('BD_Chats', ['id', 'tipo', 'nombre', 'miembros', 'creado_por', 'creado_at', 'ultimo_at', 'leidos']); }
+function hojaMensajes_() { return hojaMsg_('BD_Mensajes', ['id', 'chat_id', 'autor', 'nombre', 'texto', 'fecha']); }
+function hojaSolicitudes_() { return hojaMsg_('BD_Solicitudes', ['id', 'autor', 'nombre', 'tipo', 'titulo', 'detalle', 'estado', 'respuesta', 'respondido_por', 'fecha', 'actualizado', 'visto_admin', 'visto_autor']); }
+function jsonSeguro_(v, def) { try { const x = JSON.parse(String(v || '')); return x == null ? def : x; } catch (e) { return def; } }
+function idNuevo_(p) { return p + '-' + new Date().getTime() + '-' + Math.floor(Math.random() * 1e6); }
+
+function leerChats_() {
+  const rows = hojaChats_().getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r[0]) continue;
+    out.push({ fila: i + 1, id: String(r[0]), tipo: String(r[1]), nombre: String(r[2] || ''), miembros: jsonSeguro_(r[3], []), creadoPor: String(r[4] || ''),
+      creadoAt: String(r[5] || ''), ultimoAt: String(r[6] || ''), leidos: jsonSeguro_(r[7], {}) });
+  }
+  return out;
+}
+function escribirChat_(c) {
+  const fila = [c.id, c.tipo, c.nombre, JSON.stringify(c.miembros), c.creadoPor, c.creadoAt, c.ultimoAt, JSON.stringify(c.leidos || {})];
+  const sh = hojaChats_();
+  if (c.fila) sh.getRange(c.fila, 1, 1, 8).setValues([fila]); else sh.appendRow(fila);
+}
+function leerMensajes_(chatId) {
+  const rows = hojaMensajes_().getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r[0] || (chatId && String(r[1]) !== chatId)) continue;
+    out.push({ fila: i + 1, id: String(r[0]), chatId: String(r[1]), autor: String(r[2]), nombre: String(r[3] || ''), texto: String(r[4] || ''), fecha: String(r[5] || '') });
+  }
+  return out;
+}
+function borrarFilas_(sh, filas) { filas.sort(function (a, b) { return b - a; }).forEach(function (f) { sh.deleteRow(f); }); }
+function directorio_() {
+  return leerUsuarios().filter(function (x) { return x.activo; }).map(function (x) { return { usuario: x.usuario, nombre: x.nombre, rol: x.rol }; });
+}
+function chatPublico_(c, u, msgs) {
+  const mios = msgs.filter(function (m) { return m.chatId === c.id; });
+  const ult = mios.length ? mios[mios.length - 1] : null;
+  const leido = (c.leidos || {})[u.usuario] || '';
+  return { id: c.id, tipo: c.tipo, nombre: c.nombre, miembros: c.miembros, creadoPor: c.creadoPor, ultimoAt: c.ultimoAt,
+    ultimo: ult ? { texto: ult.texto.slice(0, 120), autor: ult.autor, nombre: ult.nombre, fecha: ult.fecha } : null,
+    noLeidos: mios.filter(function (m) { return m.autor !== u.usuario && m.fecha > leido; }).length };
+}
+function leerSolicitudes_() {
+  const rows = hojaSolicitudes_().getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r[0]) continue;
+    out.push({ fila: i + 1, id: String(r[0]), autor: String(r[1]), nombre: String(r[2] || ''), tipo: String(r[3] || ''), titulo: String(r[4] || ''), detalle: String(r[5] || ''),
+      estado: String(r[6] || 'pendiente'), respuesta: String(r[7] || ''), respondidoPor: String(r[8] || ''), fecha: String(r[9] || ''), actualizado: String(r[10] || ''),
+      vistoAdmin: String(r[11]) === 'si', vistoAutor: String(r[12]) !== 'no' });
+  }
+  return out;
+}
+function escribirSolicitud_(s) {
+  const fila = [s.id, s.autor, s.nombre, s.tipo, s.titulo, s.detalle, s.estado, s.respuesta, s.respondidoPor, s.fecha, s.actualizado, s.vistoAdmin ? 'si' : 'no', s.vistoAutor ? 'si' : 'no'];
+  const sh = hojaSolicitudes_();
+  if (s.fila) sh.getRange(s.fila, 1, 1, 13).setValues([fila]); else sh.appendRow(fila);
+}
+function solPublica_(s) { const c = Object.assign({}, s); delete c.fila; return c; }
+function solicitudesDe_(u) {
+  const todas = leerSolicitudes_();
+  return (u.rol === 'admin' ? todas : todas.filter(function (s) { return s.autor === u.usuario; })).map(solPublica_).reverse();
+}
+
+function accionMensajeria(u, body) {
+  if (ACCIONES_MSG.indexOf(body.action) === -1) return null;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const ahora = new Date().toISOString();
+    const yo = u.usuario;
+    const nombreYo = u.nombre || u.usuario;
+    const texto = function (v, max) { return String(v == null ? '' : v).trim().slice(0, max || 2000); };
+
+    if (body.action === 'msgEstado') {
+      const chats = leerChats_().filter(function (c) { return c.miembros.indexOf(yo) !== -1; });
+      const msgs = leerMensajes_();
+      const sols = leerSolicitudes_();
+      const solAviso = u.rol === 'admin'
+        ? sols.filter(function (s) { return !s.vistoAdmin; }).length
+        : sols.filter(function (s) { return s.autor === yo && !s.vistoAutor; }).length;
+      return { status: 'ok', chats: chats.map(function (c) { return chatPublico_(c, u, msgs); }).sort(function (a, b) { return String(b.ultimoAt).localeCompare(String(a.ultimoAt)); }),
+        directorio: directorio_(), solicitudesAviso: solAviso, solPendientes: u.rol === 'admin' ? sols.filter(function (s) { return s.estado === 'pendiente'; }).length : 0 };
+    }
+
+    if (body.action === 'msgCrearChat') {
+      const dir = directorio_().map(function (x) { return x.usuario; });
+      let miembros = (Array.isArray(body.miembros) ? body.miembros : []).map(function (x) { return String(x).toLowerCase(); }).filter(function (x) { return dir.indexOf(x) !== -1 && x !== yo; });
+      miembros = miembros.filter(function (x, i) { return miembros.indexOf(x) === i; });
+      if (!miembros.length) return { status: 'error', error: 'Elegí al menos una persona.' };
+      const tipo = body.tipo === 'grupo' ? 'grupo' : 'privado';
+      if (tipo === 'privado') {
+        miembros = [miembros[0]];
+        const ya = leerChats_().filter(function (c) { return c.tipo === 'privado' && c.miembros.length === 2 && c.miembros.indexOf(yo) !== -1 && c.miembros.indexOf(miembros[0]) !== -1; })[0];
+        if (ya) return { status: 'ok', chatId: ya.id };
+      }
+      const nombre = tipo === 'grupo' ? (texto(body.nombre, 60) || 'Grupo') : '';
+      const c = { id: idNuevo_('chat'), tipo: tipo, nombre: nombre, miembros: [yo].concat(miembros), creadoPor: yo, creadoAt: ahora, ultimoAt: ahora, leidos: {} };
+      c.leidos[yo] = ahora;
+      escribirChat_(c);
+      return { status: 'ok', chatId: c.id };
+    }
+
+    const chatDe = function (id) { return leerChats_().filter(function (c) { return c.id === String(id || ''); })[0]; };
+
+    if (body.action === 'msgLeer' || body.action === 'msgEnviar') {
+      const c = chatDe(body.chatId);
+      if (!c || c.miembros.indexOf(yo) === -1) return { status: 'error', error: 'Chat inexistente.' };
+      if (body.action === 'msgEnviar') {
+        const t = texto(body.texto, 2000);
+        if (!t) return { status: 'error', error: 'Mensaje vacío.' };
+        hojaMensajes_().appendRow([idNuevo_('msg'), c.id, yo, nombreYo, t, ahora]);
+        c.ultimoAt = ahora;
+      }
+      c.leidos = c.leidos || {}; c.leidos[yo] = ahora;
+      escribirChat_(c);
+      const msgs = leerMensajes_(c.id).map(function (m) { const x = Object.assign({}, m); delete x.fila; return x; });
+      return { status: 'ok', chat: chatPublico_(c, u, []), mensajes: msgs.slice(-300) };
+    }
+
+    if (body.action === 'msgBorrarMensaje') {
+      const m = leerMensajes_().filter(function (x) { return x.id === String(body.id || ''); })[0];
+      if (!m) return { status: 'ok' };
+      const c = chatDe(m.chatId);
+      if (m.autor !== yo && u.rol !== 'admin') return { status: 'error', error: 'Solo podés borrar tus mensajes.' };
+      if (!c || c.miembros.indexOf(yo) === -1) return { status: 'error', error: 'Chat inexistente.' };
+      hojaMensajes_().deleteRow(m.fila);
+      return { status: 'ok' };
+    }
+
+    if (body.action === 'msgBorrarChat') {
+      const c = chatDe(body.chatId);
+      if (!c || c.miembros.indexOf(yo) === -1) return { status: 'ok' };
+      const borraTodo = c.tipo === 'privado' || c.creadoPor === yo || u.rol === 'admin';
+      if (!borraTodo || body.salir === true) {
+        c.miembros = c.miembros.filter(function (x) { return x !== yo; });
+        if (c.miembros.length) { escribirChat_(c); return { status: 'ok', salio: true }; }
+      }
+      borrarFilas_(hojaMensajes_(), leerMensajes_(c.id).map(function (m) { return m.fila; }));
+      hojaChats_().deleteRow(c.fila);
+      return { status: 'ok', borrado: true };
+    }
+
+    if (body.action === 'msgEditarGrupo') {
+      const c = chatDe(body.chatId);
+      if (!c || c.tipo !== 'grupo') return { status: 'error', error: 'Grupo inexistente.' };
+      if (c.creadoPor !== yo && u.rol !== 'admin') return { status: 'error', error: 'Solo quien creó el grupo lo puede modificar.' };
+      const dir = directorio_().map(function (x) { return x.usuario; });
+      if (body.nombre != null) c.nombre = texto(body.nombre, 60) || c.nombre;
+      if (Array.isArray(body.miembros)) {
+        let ms = body.miembros.map(function (x) { return String(x).toLowerCase(); }).filter(function (x) { return dir.indexOf(x) !== -1; });
+        if (ms.indexOf(c.creadoPor) === -1) ms.unshift(c.creadoPor);
+        c.miembros = ms.filter(function (x, i) { return ms.indexOf(x) === i; });
+      }
+      escribirChat_(c);
+      return { status: 'ok' };
+    }
+
+    // ---------- solicitudes al administrador ----------
+    if (body.action === 'solListar') return { status: 'ok', solicitudes: solicitudesDe_(u) };
+    if (body.action === 'solCrear') {
+      const t = texto(body.titulo, 120);
+      if (!t) return { status: 'error', error: 'Poné un título.' };
+      escribirSolicitud_({ id: idNuevo_('sol'), autor: yo, nombre: nombreYo, tipo: texto(body.tipo, 60) || 'Otro', titulo: t, detalle: texto(body.detalle, 3000),
+        estado: 'pendiente', respuesta: '', respondidoPor: '', fecha: ahora, actualizado: ahora, vistoAdmin: u.rol === 'admin', vistoAutor: true });
+      return { status: 'ok', solicitudes: solicitudesDe_(u) };
+    }
+    const solDe = function (id) { return leerSolicitudes_().filter(function (s) { return s.id === String(id || ''); })[0]; };
+    if (body.action === 'solActualizar') {
+      if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador responde solicitudes.' };
+      const s = solDe(body.id);
+      if (!s) return { status: 'error', error: 'Solicitud inexistente.' };
+      if (['pendiente', 'en curso', 'resuelta', 'rechazada'].indexOf(body.estado) !== -1) s.estado = body.estado;
+      if (body.respuesta != null) s.respuesta = texto(body.respuesta, 3000);
+      s.respondidoPor = nombreYo; s.actualizado = ahora; s.vistoAdmin = true; s.vistoAutor = s.autor === yo;
+      escribirSolicitud_(s);
+      return { status: 'ok', solicitudes: solicitudesDe_(u) };
+    }
+    if (body.action === 'solVisto') {
+      leerSolicitudes_().forEach(function (s) {
+        if (u.rol === 'admin' && !s.vistoAdmin) { s.vistoAdmin = true; escribirSolicitud_(s); }
+        else if (s.autor === yo && !s.vistoAutor) { s.vistoAutor = true; escribirSolicitud_(s); }
+      });
+      return { status: 'ok' };
+    }
+    if (body.action === 'solBorrar') {
+      const s = solDe(body.id);
+      if (!s) return { status: 'ok', solicitudes: solicitudesDe_(u) };
+      if (s.autor !== yo && u.rol !== 'admin') return { status: 'error', error: 'Solo podés borrar tus solicitudes.' };
+      hojaSolicitudes_().deleteRow(s.fila);
+      return { status: 'ok', solicitudes: solicitudesDe_(u) };
+    }
+    return null;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -651,6 +863,9 @@ function doPost(e) {
 
   const u = usuarioDeToken(body.token);
   if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
+
+  const msg = accionMensajeria(u, body);
+  if (msg) return respuesta(msg);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     return respuesta(accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' });
