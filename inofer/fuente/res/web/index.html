@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.43" />
+  <meta name="inofer-version" content="2026.10.29.44" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -13816,23 +13816,49 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
 
       // ---------- catálogo de permisos detallados ----------
       const DETALLE = {
+        partes: [
+          { k: 'partes_cargar', t: 'Cargar partes de horas a mano' },
+          { k: 'partes_editar', t: 'Corregir partes ya cargados' },
+          { k: 'partes_borrar', t: 'Borrar partes' },
+          { k: 'partes_csv', t: 'Importar y exportar partes (CSV)' },
+          { k: 'partes_cierre', t: 'Hacer el cierre semanal' },
+          { k: 'partes_simulador', t: 'Usar la calculadora directa', nivel: 'view' }
+        ],
         ordenes: [
           { k: 'ord_turnos', t: 'Cargar la producción de los turnos (Carga rápida)' },
           { k: 'ord_editar_turnos', t: 'Corregir o borrar turnos ya cargados' },
           { k: 'ord_crear', t: 'Crear órdenes nuevas' },
           { k: 'ord_editar', t: 'Modificar los datos de la orden (frente y dorso)' },
-          { k: 'ord_borrar', t: 'Borrar órdenes' }
+          { k: 'ord_borrar', t: 'Borrar órdenes' },
+          { k: 'ord_imprimir', t: 'Imprimir y exportar órdenes', nivel: 'view' },
+          { k: 'ord_informe', t: 'Ver el informe general de órdenes', nivel: 'view' }
         ],
         gantt: [
           { k: 'gantt_manual', t: 'Modificar el Gantt a mano (cantidades, piezas, semanas)' },
           { k: 'gantt_asistente', t: 'Pedirle cambios al asistente del Gantt' },
           { k: 'gantt_auto', t: 'Generar el Gantt automático desde la planilla' },
-          { k: 'gantt_setup', t: 'Cambiar set-up, pistones y lotes por máquina' }
+          { k: 'gantt_setup', t: 'Cambiar set-up, pistones y lotes por máquina' },
+          { k: 'gantt_imprimir', t: 'Imprimir y exportar el Gantt', nivel: 'view' }
         ],
         catalogo: [
           { k: 'cat_piezas', t: 'Modificar piezas y moldes' },
           { k: 'precios_ver', t: 'Ver precios y facturación', nivel: 'view' },
-          { k: 'precios_editar', t: 'Modificar precios' }
+          { k: 'precios_editar', t: 'Modificar precios' },
+          { k: 'cat_importar', t: 'Importar la base desde Excel/CSV' },
+          { k: 'cat_exportar', t: 'Exportar la base de datos', nivel: 'view' }
+        ],
+        ia: [
+          { k: 'ia_consultar', t: 'Hacerle consultas a la IA INOFER', nivel: 'view' },
+          { k: 'ia_ensenar', t: 'Enseñarle reglas a la IA' }
+        ],
+        indicadores: [
+          { k: 'kpi_cargar', t: 'Cargar y corregir datos de los indicadores' },
+          { k: 'kpi_metas', t: 'Cambiar las metas' },
+          { k: 'kpi_imprimir', t: 'Imprimir informes de indicadores', nivel: 'view' }
+        ],
+        general: [
+          { k: 'sol_enviar', t: 'Mandar solicitudes al administrador', nivel: 'any' },
+          { k: 'pres_ver', t: 'Ver la presentación en pantalla', nivel: 'any' }
         ]
       };
       const AREA_DE = {};
@@ -13842,7 +13868,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         if (inoferSession.rol === 'admin') return true;
         const def = AREA_DE[k];
         if (!def) return true;
-        if (!inoferCan(def.area, def.nivel)) return false;
+        if (def.nivel !== 'any' && !inoferCan(def.area, def.nivel)) return false;
         if (k === 'precios_editar' && !inoferPuede('precios_ver')) return false;
         const det = (inoferSession.permisos || {}).detalle || {};
         return det[k] !== false;
@@ -13874,7 +13900,25 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         gantt_auto: ['#toggleAutoGanttPanelBtn', '#runAutoGanttMonthBtn', '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#clearAutoGanttPasteBtn'],
         gantt_setup: ['.inofer-setup-cfg', '.inofer-piston-cfg'],
         cat_piezas: ['#catSubmitBtn', '#catalogForm input', '#catalogForm select', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inline-piston-input', '.inline-lote-input', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#importCatalogCsvInput', '#loadFullExcelCatalogBtn'],
-        precios_editar: ['.inline-precio-input', '#cat_precio', '#inoferPreciosImportarBtn', '#inoferPreciosFile']
+        precios_editar: ['.inline-precio-input', '#cat_precio', '#inoferPreciosImportarBtn', '#inoferPreciosFile'],
+        partes_cargar: ['#openNewEntryModalBtn', '#simSaveToRecordsBtn'],
+        partes_editar: ['.edit-record-btn'],
+        partes_borrar: ['.delete-record-btn'],
+        partes_csv: ['#importCsvBtn', '#importCsvInput', '#exportCsvBtn'],
+        partes_cierre: ['#saveWeeklyCloseBtn', '#weeklyLabelInput'],
+        partes_simulador: ['#tabSimulatorBtn'],
+        ord_imprimir: ['#printOrderBtn', '#triggerBrowserPrintBtn', '#exportOrdersSummaryCsvBtn'],
+        ord_informe: ['.order-subtab-btn[data-order-subtab="globalReport"]'],
+        gantt_imprimir: ['#openGanttPrintModalBtn', '#exportGanttCsvBtn', '#executeGanttPrintBtn'],
+        cat_importar: ['#importCatalogCsvBtn', '#importCatalogCsvInput', '#loadFullExcelCatalogBtn', '#inoferCargarMBBtn'],
+        cat_exportar: ['#exportCatalogCsvBtn'],
+        ia_consultar: ['#aiChatForm textarea', '#aiChatForm input', '#aiChatForm button', '.ai-quick-btn'],
+        ia_ensenar: ['#inoferTeachInput', '#inoferTeachBtn'],
+        kpi_cargar: ['#kpiMes', '#kpiValor', '#kpiNota', '#kpiForm button[type="submit"]', '.kpi-del', '.kpi-edit-row'],
+        kpi_metas: ['#kpiMeta'],
+        kpi_imprimir: ['#kpiPrintBtn', '#kpiPrintAllBtn'],
+        sol_enviar: ['[data-acc="nuevaSol"]', '#solForm button', '#solForm input', '#solForm textarea'],
+        pres_ver: ['#presBtn']
       };
       // Elementos que directamente se ocultan
       const OCULTAR = {
@@ -13883,7 +13927,19 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
         ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
         gantt_auto: ['#toggleAutoGanttPanelBtn'],
-        precios_ver: ['#inoferPanelPrecios', '#inoferGanttFactBadge', '.inline-precio-input', '#cat_precio']
+        precios_ver: ['#inoferPanelPrecios', '#inoferGanttFactBadge', '.inline-precio-input', '#cat_precio'],
+        partes_cargar: ['#openNewEntryModalBtn', '#simSaveToRecordsBtn'],
+        partes_editar: ['.edit-record-btn'],
+        partes_borrar: ['.delete-record-btn'],
+        partes_csv: ['#importCsvBtn', '#exportCsvBtn'],
+        partes_simulador: ['#tabSimulatorBtn'],
+        ord_imprimir: ['#printOrderBtn', '#exportOrdersSummaryCsvBtn'],
+        ord_informe: ['.order-subtab-btn[data-order-subtab="globalReport"]'],
+        gantt_imprimir: ['#openGanttPrintModalBtn', '#exportGanttCsvBtn'],
+        cat_importar: ['#importCatalogCsvBtn', '#loadFullExcelCatalogBtn'],
+        cat_exportar: ['#exportCatalogCsvBtn'],
+        kpi_imprimir: ['#kpiPrintBtn', '#kpiPrintAllBtn'],
+        pres_ver: ['#presBtn']
       };
       function denegado(el) {
         if (!el || !el.closest) return null;
@@ -13940,10 +13996,26 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           const items = DETALLE[area].filter(d => (d.nivel || 'edit') === 'view' ? nivel !== 'none' : nivel === 'edit');
           if (rol === 'admin' || !items.length) { box.innerHTML = ''; box.classList.add('hidden'); return; }
           box.classList.remove('hidden');
-          box.innerHTML = `<div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Qué puede hacer</div>` + items.map(d => `
+          box.innerHTML = `<div class="flex items-center justify-between"><span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Qué puede hacer</span><span class="text-[10px]"><button type="button" class="inofer-sub-todo text-emerald-300 hover:underline" data-area="${area}" data-v="1">todo</button> · <button type="button" class="inofer-sub-todo text-slate-400 hover:underline" data-area="${area}" data-v="0">nada</button></span></div>` + items.map(d => `
             <label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" class="inofer-sub-perm accent-emerald-500" data-k="${d.k}" ${det[d.k] !== false ? 'checked' : ''}> ${esc(d.t)}</label>`).join('');
         });
+        // permisos que no dependen de una pestaña
+        const cont = $('inoferUfPermsBox');
+        if (cont) {
+          let g = $('inoferSubGeneral');
+          if (!g) { g = document.createElement('div'); g.id = 'inoferSubGeneral'; g.className = 'rounded-lg border border-slate-800 bg-slate-950/70 p-2.5'; cont.appendChild(g); }
+          const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+          g.classList.toggle('hidden', rol === 'admin');
+          g.innerHTML = `<div class="text-xs font-bold text-white">Otros permisos</div><div class="mt-1 grid gap-1">` + DETALLE.general.map(d => `
+            <label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" class="inofer-sub-perm accent-emerald-500" data-k="${d.k}" ${det[d.k] !== false ? 'checked' : ''}> ${esc(d.t)}</label>`).join('') + '</div>';
+        }
       }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-sub-todo'); if (!b) return;
+        if (!inoferFormPerms.detalle) inoferFormPerms.detalle = {};
+        (DETALLE[b.dataset.area] || []).forEach(d => { inoferFormPerms.detalle[d.k] = b.dataset.v === '1'; });
+        renderSubPermisos();
+      });
       document.addEventListener('change', e => {
         const el = e.target;
         if (!el.classList || !el.classList.contains('inofer-sub-perm')) return;
