@@ -90,3 +90,5 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Gantt automático: sube la cantidad al lote mínimo, carga CMO+ALIS de la máquina por cada pieza/máquina (si no entra el set-up ese día, lo carga y arranca al día siguiente), solo reparte a otra máquina si el resto ≥ lote mínimo y > horas de set-up.
 - Asistente: pieza nueva → carga set-up; avisa si queda bajo el lote mínimo. Plan por facturación: pieza nueva solo si entra el lote mínimo completo.
 - Campo `loteMin` en catálogo (form `#cat_lote_min`, tabla `.inline-lote-input`, importador detecta columna "lote").
+- Lote mínimo: PRIORIDAD planilla de demanda (`inoferLotePlanilla`: menor valor > 0 de M1..M12 de la pieza en #autoGanttPasteArea) > catalogo.loteMin > default de la máquina. En la tabla del catálogo se muestra "📦 N planilla" cuando viene de ahí.
+- Asistente conciso: por defecto responde "✓ Listo." + avisos ⚠️ y errores; el detalle se guarda en `ultimoDetalle` y se muestra con "qué hiciste"/"detalle" o si el pedido incluye "detalle/explicá/por máquina". Facturación corta = total; "con detalle" = desglose.
