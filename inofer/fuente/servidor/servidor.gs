@@ -858,7 +858,30 @@ function accionMensajeria(u, body) {
 
 // ===================== IA (Gemini) a través del servidor: la clave queda guardada en la nube =====================
 const ACCIONES_IA = ['iaInfo', 'iaConfig', 'iaGenerar'];
-const IA_MODELOS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+const IA_MODELOS_BASE = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash'];
+// Descubre qué modelos "flash" tiene habilitados la clave (Google los va cambiando); se guarda 1 día
+function iaModelos_(clave) {
+  const props = PropertiesService.getScriptProperties();
+  try {
+    const c = JSON.parse(props.getProperty('IA_MODELOS_CACHE') || 'null');
+    if (c && c.t > Date.now() - 24 * 3600 * 1000 && c.k === String(clave).slice(-6) && c.m && c.m.length) return c.m;
+  } catch (e) {}
+  let lista = [];
+  try {
+    const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { muteHttpExceptions: true, headers: { 'x-goog-api-key': clave } });
+    if (r.getResponseCode() === 200) {
+      const d = JSON.parse(r.getContentText());
+      lista = (d.models || []).filter(function (m) {
+        return (m.supportedGenerationMethods || []).indexOf('generateContent') !== -1 && /gemini-[\d.]+-flash$|gemini-flash-latest$/.test(m.name || '');
+      }).map(function (m) { return String(m.name).replace(/^models\//, ''); });
+      const ver = function (n) { const x = n.match(/gemini-([\d.]+)-flash/); return x ? parseFloat(x[1]) : 0; };
+      lista.sort(function (a, b) { return ((b === 'gemini-flash-latest') - (a === 'gemini-flash-latest')) || (ver(b) - ver(a)); });
+    }
+  } catch (e) {}
+  const m = lista.slice(0, 3).concat(IA_MODELOS_BASE).filter(function (x, i, arr) { return arr.indexOf(x) === i; });
+  if (lista.length) props.setProperty('IA_MODELOS_CACHE', JSON.stringify({ t: Date.now(), k: String(clave).slice(-6), m: m }));
+  return m;
+}
 function iaClave_() { const p = PropertiesService.getScriptProperties(); return p.getProperty('IA_KEY') || p.getProperty('GEMINI_KEY') || ''; }
 function iaProveedor_(clave) { return /^sk-ant-/.test(String(clave || '')) ? 'claude' : 'gemini'; }
 // Claude (Anthropic): convierte el pedido con formato Gemini al de la API de Claude
@@ -902,7 +925,8 @@ function iaLlamarClaude_(clave, cuerpo) {
 }
 function iaLlamar_(clave, cuerpo) {
   if (iaProveedor_(clave) === 'claude') return iaLlamarClaude_(clave, cuerpo);
-  let ultimo = 'sin respuesta';
+  let ultimo = 'sin respuesta', primero = '';
+  const IA_MODELOS = iaModelos_(clave);
   for (let i = 0; i < IA_MODELOS.length; i++) {
     // las claves nuevas (AQ.…) y las viejas (AIza…) van en el encabezado x-goog-api-key
     let r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + IA_MODELOS[i] + ':generateContent', {
@@ -929,9 +953,10 @@ function iaLlamar_(clave, cuerpo) {
     if (code === 401) return { ok: false, error: 'Google rechazó la clave (' + msg.slice(0, 120) + ')' };
     if (code === 429) return { ok: false, error: 'se alcanzó el límite gratuito de Gemini, probá en un rato' };
     if (code === 403) return { ok: false, error: 'la clave de Gemini no tiene permiso' };
-    ultimo = msg;
+    ultimo = IA_MODELOS[i] + ': ' + msg;
+    if (!primero && code !== 404 && !/no longer available|not found|not supported/i.test(msg)) primero = ultimo;
   }
-  return { ok: false, error: ultimo };
+  return { ok: false, error: primero || ultimo };
 }
 function accionIA(u, body) {
   if (ACCIONES_IA.indexOf(body.action) === -1) return null;
