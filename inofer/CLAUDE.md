@@ -38,7 +38,8 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 
 ## Pistones
 - Pieza: `pistonMm` (diámetro de pistón). Módulo `pistones` (área gantt): disponibles y montado por máquina + horasCambio.
-- Auto-armado: solo máquinas con ese pistón, prefiere la que lo tiene montado, suma CPIS (cambio de pistón) al cambiar.
+- Auto-armado: inoferOrdenarPorPiston agrupa piezas del mismo pistón dentro de cada nivel de urgencia (ahorro de SET-UP);
+  prefiere la máquina que lo tiene montado y suma CPIS al cambiar. Solo 200V/200N/180 cambian pistón (H50 y Z30: único).
 - Gantt: panel "⚙️ Pistones por máquina", avisos de cambios y de pistón faltante; carga manual bloqueada si la máquina no lo tiene.
 
 ## Cómo aplicar un pedido del usuario

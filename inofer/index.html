@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.05" />
+  <meta name="inofer-version" content="2026.10.29.06" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -7601,7 +7601,9 @@ ${lines}${trendNote}`;
 
     function scheduleOneMonthIntoGanttWeeks(mIdx, startWeekNum, baseIsoDate, monthLabel) {
       const allAnalyzed = analyzeDemandListWithDatabase(undefined, mIdx);
-      const demandList = allAnalyzed.filter(x => x.qty > 0);
+      let demandList = allAnalyzed.filter(x => x.qty > 0);
+      // Ahorro de SET-UP: dentro de cada nivel de urgencia, las piezas del mismo pistón van seguidas
+      if (typeof inoferOrdenarPorPiston === 'function') demandList = inoferOrdenarPorPiston(demandList);
 
       const dailyHoursLimit = Number(document.getElementById('autoGanttDailyHours')?.value) || 16;
       const workDaysCount = Number(document.getElementById('autoGanttWorkDays')?.value) || 6;
@@ -7700,7 +7702,8 @@ ${lines}${trendNote}`;
           const ok = compatibleMachs.filter(m => inoferMaquinaAdmitePiston(m, pisPieza));
           if (ok.length) machsOk = ok;
         }
-        const yaMontado = m => (pisPieza && pistonActual[m] === pisPieza) ? 0 : 1;
+        const pistonVariable = m => (typeof inoferTienePistonVariable === 'function' ? inoferTienePistonVariable(m) : true);
+        const yaMontado = m => (!pisPieza || !pistonVariable(m) || pistonActual[m] === pisPieza || !pistonActual[m]) ? 0 : 1;
         let chosenMach = machsOk.slice().sort((a, b) => yaMontado(a) - yaMontado(b))[0];
         if (balanceMode === 'balance' && machsOk.length > 1) {
           chosenMach = machsOk.slice().sort((a, b) => (yaMontado(a) - yaMontado(b)) || ((totalMachHours[a] || 0) - (totalMachHours[b] || 0)))[0];
@@ -7781,7 +7784,7 @@ ${lines}${trendNote}`;
               if (availHrs <= 0.25) continue;
               const pmKey = pmPieza ? (pmPieza + '|' + wIdx + '|' + dIdx) : '';
               if (pmKey && pmOcupado[pmKey] && pmOcupado[pmKey] !== mId) continue; // ese día el portamolde está en otra máquina
-              if (pisPieza && pistonActual[mId] && pistonActual[mId] !== pisPieza) {
+              if (pisPieza && pistonVariable(mId) && pistonActual[mId] && pistonActual[mId] !== pisPieza) {
                 const hc = Number(pisCfg.horasCambio) || 2; // cambio de pistón antes de inyectar
                 if (availHrs <= hc + 0.25) continue;
                 const auxW = weekObj.machines[mId].aux;
@@ -7789,7 +7792,7 @@ ${lines}${trendNote}`;
                 auxW['CPIS'][dIdx] = Number(((Number(auxW['CPIS'][dIdx]) || 0) + hc).toFixed(2));
                 usedHours[mId][wIdx][dIdx] += hc; totalMachHours[mId] += hc; availHrs -= hc;
                 pistonActual[mId] = pisPieza; pistonChangesCount++;
-              } else if (pisPieza && !pistonActual[mId]) {
+              } else if (pisPieza && pistonVariable(mId) && !pistonActual[mId]) {
                 pistonActual[mId] = pisPieza;
               }
 
@@ -11031,10 +11034,28 @@ ${lines}${trendNote}`;
     try { const g = JSON.parse(localStorage.getItem(INOFER_PISTONES_KEY) || 'null'); if (g && typeof g === 'object') inoferPistones = Object.assign({ maquinas: {}, horasCambio: 2 }, g); } catch (e) { }
 
     function inoferPistonesCfg() { return inoferPistones; }
+    // Solo estas máquinas cambian de pistón; la H50 y la Z30 tienen un pistón único
+    const INOFER_MAQUINAS_CON_PISTON = ['200V', '200N', '180'];
+    function inoferTienePistonVariable(m) { return INOFER_MAQUINAS_CON_PISTON.includes(String(m)); }
+    /** Orden de armado: urgentes primero y, dentro de cada nivel, las piezas del mismo pistón seguidas. */
+    function inoferOrdenarPorPiston(list) {
+      const nivel = x => x.urgencyLevel === 'critical' ? 0 : (x.urgencyLevel === 'medium' ? 1 : 2);
+      const bandas = [[], [], []];
+      (list || []).forEach(x => bandas[nivel(x)].push(x));
+      const out = []; let ultimo = 0;
+      bandas.forEach(banda => {
+        const grupos = new Map();
+        banda.forEach(x => { const mm = inoferPistonDe(x.part) || 0; if (!grupos.has(mm)) grupos.set(mm, []); grupos.get(mm).push(x); });
+        let claves = [...grupos.keys()];
+        if (ultimo && grupos.has(ultimo)) claves = [ultimo, ...claves.filter(k => k !== ultimo)]; // seguir con el pistón que quedó montado
+        claves.forEach(k => { out.push(...grupos.get(k)); if (k) ultimo = k; });
+      });
+      return out;
+    }
     function inoferPistonDe(part) { const c = typeof inoferCatDe === 'function' ? inoferCatDe(part) : null; return c ? (Number(c.pistonMm) || 0) : 0; }
     function inoferDisponibles(m) { return ((inoferPistones.maquinas[m] || {}).disponibles || []).map(Number).filter(x => x > 0); }
     function inoferMaquinaAdmitePiston(m, mm) {
-      if (!mm) return true;
+      if (!mm || !inoferTienePistonVariable(m)) return true;
       const d = inoferDisponibles(m);
       return !d.length || d.includes(Number(mm)); // sin lista cargada = no se restringe
     }
@@ -11071,7 +11092,7 @@ ${lines}${trendNote}`;
         gv.insertBefore(box, gv.firstChild);
       }
       const abierto = box.open;
-      const filas = GANTT_MACHINES_CONFIG.map(mc => {
+      const filas = GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).map(mc => {
         const cfg = inoferPistones.maquinas[mc.id] || {};
         const disp = inoferDisponibles(mc.id);
         const opciones = disp.length ? disp : (cfg.montado ? [Number(cfg.montado)] : []);
@@ -11085,9 +11106,9 @@ ${lines}${trendNote}`;
       }).join('');
       const conPiston = (partsCatalog || []).filter(x => Number(x.pistonMm) > 0).length;
       box.innerHTML = `
-        <summary class="cursor-pointer select-none font-extrabold text-sky-300">⚙️ Pistones por máquina <span class="ml-1 font-normal text-slate-400">— montado hoy: ${GANTT_MACHINES_CONFIG.map(mc => `${mc.short || mc.id} ${(inoferPistones.maquinas[mc.id] || {}).montado ? (inoferPistones.maquinas[mc.id].montado + ' mm') : '—'}`).join(' · ')}</span></summary>
+        <summary class="cursor-pointer select-none font-extrabold text-sky-300">⚙️ Pistones por máquina <span class="ml-1 font-normal text-slate-400">— montado hoy: ${GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).map(mc => `${mc.short || mc.id} ${(inoferPistones.maquinas[mc.id] || {}).montado ? (inoferPistones.maquinas[mc.id].montado + ' mm') : '—'}`).join(' · ')}</span></summary>
         <div class="mt-3 space-y-2">
-          <p class="text-[11px] text-slate-400">Cargá qué diámetros de pistón tiene cada máquina y cuál está montado hoy. El armado automático del Gantt pone cada pieza en una máquina con su pistón, prefiere la que ya lo tiene montado y suma el tiempo de cambio (fila <b>CPIS</b>). El diámetro de cada pieza se carga en la Base de Datos de Piezas (${conPiston} pieza${conPiston === 1 ? '' : 's'} con pistón cargado).</p>
+          <p class="text-[11px] text-slate-400">Para ahorrar SET-UP, el armado automático pone seguidas las piezas con el mismo diámetro de pistón (respetando primero las urgentes), prefiere la máquina que ya lo tiene montado y suma el tiempo de cambio (fila <b>CPIS</b>) solo cuando no se puede evitar. Solo la 200V, la 200N y la 180 cambian de pistón; la H50 y la Z30 tienen pistón único. El diámetro de cada pieza se carga en la Base de Datos de Piezas (${conPiston} pieza${conPiston === 1 ? '' : 's'} con pistón cargado).</p>
           <div class="overflow-x-auto"><table class="w-full text-left">
             <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3">Pistones que tiene (mm)</th><th class="py-1">Montado hoy</th></tr></thead>
             <tbody>${filas}</tbody></table></div>
@@ -11122,7 +11143,7 @@ ${lines}${trendNote}`;
     function inoferAnalisisPistones(week) {
       const cambios = [], sinPiston = [];
       if (!week || !week.machines) return { cambios, sinPiston };
-      GANTT_MACHINES_CONFIG.forEach(mc => {
+      GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).forEach(mc => {
         const items = ((week.machines[mc.id] || {}).items || [])
           .map(it => ({ it, mm: inoferPistonDe(it.part), dia: (it.dailyQty || []).findIndex(q => Number(q) > 0) }))
           .filter(x => x.dia >= 0 && x.mm > 0)
