@@ -26,6 +26,12 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Interfaz: `INOFER_EDIT_CONTROLS` en index.html lista los controles que modifican datos por área. Si se agrega un botón/campo
   que modifica datos, sumarlo ahí.
 
+## Papelera y portamolde
+- Papelera (solo admin, solapa 🗑️): el servidor registra en BD_Papelera lo que desaparece al guardar (partes, órdenes,
+  piezas, semanas/ítems del Gantt, cierres) comparando el estado anterior con el nuevo; acciones listPapelera/restaurarPapelera/vaciarPapelera.
+- Catálogo: campo `portamolde` (molde base compartido). Piezas con el mismo portamolde no pueden estar en máquinas distintas el
+  mismo día: aviso en Gantt (inoferConflictosGantt) y en órdenes en proceso.
+
 ## Cómo aplicar un pedido del usuario
 1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).
 2. Si se tocó Java: subir `VERSION` en `Main.java` (ej. 2.3 → 2.4). Si solo cambia la web, no hace falta.

@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.01" />
+  <meta name="inofer-version" content="2026.10.29.02" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1580,6 +1580,12 @@
               <div>
                 <label class="block text-[11px] font-bold text-purple-300 mb-1">🔗 Comparte Molde con (Pieza Simultánea)</label>
                 <input type="text" id="cat_shared_mold" placeholder="Ej: 15401/PB (sale al mismo tiempo)" class="w-full rounded-lg border border-purple-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-purple-300 placeholder-slate-500 focus:border-purple-400 focus:outline-none" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-[11px] font-bold text-orange-300 mb-1">🧩 Portamolde / Molde base compartido (versiones del mismo molde)</label>
+                <input type="text" id="cat_portamolde" list="inoferPortamoldeList" placeholder="Ej: PM-34111 → las piezas con el mismo portamolde NO pueden estar en máquina a la vez" class="w-full rounded-lg border border-orange-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-orange-300 placeholder:text-slate-500 placeholder:font-normal" />
+                <datalist id="inoferPortamoldeList"></datalist>
+                <p id="cat_portamolde_info" class="mt-1 text-[10px] text-orange-200/80">Dejalo vacío si el molde es único. Escribí el mismo código en todas las piezas que salen del mismo portamolde (ej: 34111-PB y 34548-PB).</p>
               </div>
               <div class="flex items-end">
                 <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
@@ -5375,6 +5381,7 @@ ${lines}${trendNote}`;
             (it.part || '').toLowerCase().includes(q) ||
             (it.desc || '').toLowerCase().includes(q) ||
             (it.mold || '').toLowerCase().includes(q) ||
+            (it.portamolde || '').toLowerCase().includes(q) ||
             (it.material || '').toLowerCase().includes(q) ||
             (it.machines || []).join(' ').toLowerCase().includes(q)
           )
@@ -5411,6 +5418,11 @@ ${lines}${trendNote}`;
               <input type="text" data-inline-shared="${item.id}" value="${item.sharedMoldWith || ''}" placeholder="Ninguna (individual)" class="inline-shared-input w-28 rounded border ${item.sharedMoldWith ? 'border-purple-500/60 bg-purple-950/40 text-purple-200 font-bold' : 'border-slate-800 bg-slate-950 text-slate-300'} px-1.5 py-0.5 text-[11px] focus:border-purple-400 focus:outline-none" title="Escribí el código de la pieza con la que comparte molde o dejalo vacío y presioná Enter" />
               ${item.sharedMoldWith ? `<button type="button" data-unlink-shared="${item.id}" class="unlink-shared-btn rounded bg-rose-500/20 border border-rose-500/40 px-1.5 py-0.5 text-[10px] font-bold text-rose-300 hover:bg-rose-500/30" title="Quitar vínculo de molde compartido">✕</button>` : ''}
             </div>
+            <div class="mt-1 flex items-center gap-1">
+              <span class="text-[10px] text-orange-300 font-semibold">🧩 Portamolde:</span>
+              <input type="text" data-inline-portamolde="${item.id}" value="${item.portamolde || ''}" list="inoferPortamoldeList" placeholder="Único" class="inline-portamolde-input w-24 rounded border ${item.portamolde ? 'border-orange-500/60 bg-orange-950/40 text-orange-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-[11px] font-bold focus:border-orange-400 focus:outline-none" title="Piezas con el mismo portamolde no pueden estar en máquina a la vez" />
+            </div>
+            ${typeof inoferPortamoldeHermanas === 'function' && item.portamolde ? (() => { const h = inoferPortamoldeHermanas(item); return h.length ? `<div class="mt-0.5 text-[10px] text-orange-200/80">Mismo portamolde que: <b>${h.map(x => x.part).join(', ')}</b></div>` : ''; })() : ''}
           </td>
           <td class="py-2 px-2.5 text-center font-semibold text-white">${item.cavities}</td>
           <td class="py-2 px-2.5 text-right font-extrabold text-emerald-400">${item.unitsPerHour} u/h</td>
@@ -5539,6 +5551,8 @@ ${lines}${trendNote}`;
           document.getElementById('cat_machining_dev').value = item.machiningDev || '';
           const shInp = document.getElementById('cat_shared_mold');
           if (shInp) shInp.value = item.sharedMoldWith || '';
+          const pmInp = document.getElementById('cat_portamolde');
+          if (pmInp) { pmInp.value = item.portamolde || ''; pmInp.dispatchEvent(new Event('input')); }
           const formEl = document.getElementById('catalogForm');
           if (formEl && typeof formEl.scrollIntoView === 'function') {
             formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -8757,6 +8771,8 @@ ${lines}${trendNote}`;
         document.getElementById('cat_machining_dev').value = '';
         const shInp = document.getElementById('cat_shared_mold');
         if (shInp) shInp.value = '';
+        const pmInp = document.getElementById('cat_portamolde');
+        if (pmInp) { pmInp.value = ''; pmInp.dispatchEvent(new Event('input')); }
       };
 
       document.getElementById('catalogResetFormBtn').addEventListener('click', resetCatalogForm);
@@ -8780,6 +8796,7 @@ ${lines}${trendNote}`;
           desc: existingItem?.desc || ('Pieza ' + partVal),
           mold: moldVal,
           sharedMoldWith: sharedVal,
+          portamolde: (document.getElementById('cat_portamolde')?.value || '').trim().toUpperCase(),
           cavities: Number(document.getElementById('cat_cavities').value) || 1,
           unitsPerHour: Number(document.getElementById('cat_units_hr').value) || 180,
           machines: checkedMachs,
@@ -10188,7 +10205,7 @@ ${lines}${trendNote}`;
         '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea'],
       catalogo: ['#importCatalogCsvInput', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#restoreDemoCatalogBtn', '#catalogResetFormBtn', '#catSubmitBtn', '#loadFullExcelCatalogBtn',
         '#orderSubViewCatalog form input', '#orderSubViewCatalog form select', '#orderSubViewCatalog form textarea', '#selectAllCatalogCheckbox', 'input[data-cat-id]',
-        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input'],
+        '.toggle-cat-mach-btn', '.unlink-shared-btn', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input'],
       gantt: ['#toggleAutoGanttPanelBtn', '#openGanttCatalogBtn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '#saveGanttBtn',
         '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#runAutoGanttMonthBtn', '#autoGanttPasteArea', '#clearAutoGanttPasteBtn',
         '.gantt-aux-input', '.gantt-item-qty-input', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '.del-gantt-item-btn', '.add-piece-to-mach-btn'],
@@ -10387,6 +10404,346 @@ ${lines}${trendNote}`;
         return _inoferOrigApplyModules.apply(this, arguments);
       };
     }
+  </script>
+
+  <script>
+    // =====================================================================
+    // PAPELERA (solo administrador): ver lo que se eliminó y restaurarlo
+    // =====================================================================
+    let inoferPapelera = [];
+    let inoferPapeleraFiltro = { tipo: 'todos', estado: 'eliminado', texto: '' };
+
+    function inoferBuildPapeleraUi() {
+      if (document.getElementById('viewPapelera')) return;
+      const aiBtn = document.getElementById('tabAiBtn');
+      if (aiBtn) {
+        const b = document.createElement('button');
+        b.id = 'tabPapeleraBtn'; b.type = 'button';
+        b.className = 'hidden rounded-md px-3 py-1.5 text-xs font-semibold transition text-rose-300 hover:text-white';
+        b.innerHTML = '🗑️ Papelera';
+        b.addEventListener('click', () => switchTab('papelera'));
+        aiBtn.parentNode.insertBefore(b, aiBtn.nextSibling);
+      }
+      const ref = document.getElementById('viewAi');
+      if (!ref) return;
+      const v = document.createElement('div');
+      v.id = 'viewPapelera';
+      v.className = 'hidden space-y-4';
+      v.innerHTML = `
+        <div class="rounded-2xl border border-rose-500/30 bg-slate-900/80 p-4 shadow-xl">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-extrabold text-white">🗑️ Papelera — elementos eliminados</h2>
+              <p class="text-xs text-slate-400">Todo lo que alguien borra queda acá con quién y cuándo lo borró. Solo el administrador lo ve y lo puede restaurar.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button id="papeleraRefreshBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">↻ Actualizar</button>
+              <button id="papeleraPurgeBtn" type="button" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20">Limpiar restaurados</button>
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <select id="papeleraTipo" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white">
+              <option value="todos">Todos los tipos</option>
+              <option value="parte">Partes de horas</option>
+              <option value="orden">Órdenes de producción</option>
+              <option value="pieza">Piezas / moldes</option>
+              <option value="semana_gantt">Semanas del Gantt</option>
+              <option value="item_gantt">Piezas programadas en el Gantt</option>
+              <option value="cierre_semanal">Cierres semanales</option>
+            </select>
+            <select id="papeleraEstado" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white">
+              <option value="eliminado">Sin restaurar</option>
+              <option value="restaurado">Ya restaurados</option>
+              <option value="todos">Todos</option>
+            </select>
+            <input id="papeleraTexto" type="text" placeholder="Buscar (pieza, OP, usuario, máquina…)" class="min-w-[200px] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            <span id="papeleraCount" class="rounded-lg bg-slate-800 px-2.5 py-1 font-bold text-slate-300">—</span>
+          </div>
+        </div>
+        <div id="papeleraLista" class="space-y-2"></div>`;
+      ref.parentNode.insertBefore(v, ref.nextSibling);
+      v.querySelector('#papeleraRefreshBtn').addEventListener('click', () => inoferCargarPapelera());
+      v.querySelector('#papeleraPurgeBtn').addEventListener('click', inoferLimpiarRestaurados);
+      v.querySelector('#papeleraTipo').addEventListener('change', e => { inoferPapeleraFiltro.tipo = e.target.value; inoferRenderPapelera(); });
+      v.querySelector('#papeleraEstado').addEventListener('change', e => { inoferPapeleraFiltro.estado = e.target.value; inoferRenderPapelera(); });
+      v.querySelector('#papeleraTexto').addEventListener('input', e => { inoferPapeleraFiltro.texto = e.target.value.toLowerCase(); inoferRenderPapelera(); });
+    }
+
+    function inoferFmtFecha(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso || '';
+      return d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function inoferRenderPapelera() {
+      const box = document.getElementById('papeleraLista');
+      if (!box) return;
+      if (inoferAuthMode !== 'nube') {
+        box.innerHTML = '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200">La papelera funciona con la nube de la planta conectada.</div>';
+        return;
+      }
+      const f = inoferPapeleraFiltro;
+      const lista = inoferPapelera.filter(x =>
+        (f.tipo === 'todos' || x.tipo === f.tipo) &&
+        (f.estado === 'todos' || x.estado === f.estado) &&
+        (!f.texto || (x.descripcion + ' ' + x.usuario + ' ' + x.tipoNombre).toLowerCase().includes(f.texto)));
+      document.getElementById('papeleraCount').textContent = `${lista.length} elemento${lista.length === 1 ? '' : 's'}`;
+      if (!lista.length) {
+        box.innerHTML = '<div class="rounded-xl border border-slate-800 bg-slate-900/70 p-6 text-center text-xs text-slate-400">No hay elementos eliminados con este filtro. 👌</div>';
+        return;
+      }
+      const color = { parte: 'text-cyan-300', orden: 'text-amber-300', pieza: 'text-emerald-300', semana_gantt: 'text-violet-300', item_gantt: 'text-violet-300', cierre_semanal: 'text-sky-300' };
+      box.innerHTML = lista.slice(0, 300).map(x => {
+        let detalle = '';
+        try { detalle = JSON.stringify(JSON.parse(x.datos), null, 2); } catch (e) { detalle = x.datos; }
+        const rest = x.estado === 'restaurado';
+        return `
+          <div class="rounded-xl border ${rest ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-slate-800 bg-slate-900/70'} p-3">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="text-[11px] font-bold uppercase tracking-wider ${color[x.tipo] || 'text-slate-300'}">${inoferEsc(x.tipoNombre)}</div>
+                <div class="text-sm font-semibold text-white break-words">${inoferEsc(x.descripcion)}</div>
+                <div class="mt-0.5 text-[11px] text-slate-400">Eliminado el ${inoferEsc(inoferFmtFecha(x.fecha))} por <b class="text-slate-200">@${inoferEsc(x.usuario)}</b>
+                  ${rest ? ` · <span class="text-emerald-300">Restaurado por @${inoferEsc(x.restauradoPor)} el ${inoferEsc(inoferFmtFecha(x.restauradoFecha))}</span>` : ''}</div>
+              </div>
+              <div class="flex shrink-0 gap-1.5">
+                <button type="button" data-pap-ver="${inoferEsc(x.id)}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">Ver detalle</button>
+                ${rest ? '' : `<button type="button" data-pap-rest="${inoferEsc(x.id)}" class="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-emerald-400">↩ Restaurar</button>`}
+              </div>
+            </div>
+            <pre id="papDet_${inoferEsc(x.id)}" class="hidden mt-2 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 text-[10px] text-slate-300">${inoferEsc(detalle)}</pre>
+          </div>`;
+      }).join('') + (lista.length > 300 ? '<p class="text-center text-[11px] text-slate-500">Se muestran los 300 más recientes. Usá el buscador para encontrar otros.</p>' : '');
+      box.querySelectorAll('[data-pap-ver]').forEach(b => b.addEventListener('click', () => {
+        const el = document.getElementById('papDet_' + b.dataset.papVer); if (el) el.classList.toggle('hidden');
+      }));
+      box.querySelectorAll('[data-pap-rest]').forEach(b => b.addEventListener('click', () => inoferRestaurar(b.dataset.papRest, b)));
+    }
+
+    async function inoferCargarPapelera(silencioso) {
+      if (!inoferIsAdmin() || inoferAuthMode !== 'nube') { inoferRenderPapelera(); return; }
+      const box = document.getElementById('papeleraLista');
+      if (box && !silencioso) box.innerHTML = '<p class="p-4 text-center text-xs text-slate-400">Cargando papelera…</p>';
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'listPapelera', token: inoferAuthToken() }));
+        if (!d || d.status !== 'ok') throw new Error((d && d.error) || 'No se pudo leer la papelera');
+        inoferPapelera = d.papelera || [];
+        const n = inoferPapelera.filter(x => x.estado !== 'restaurado').length;
+        const btn = document.getElementById('tabPapeleraBtn');
+        if (btn) btn.innerHTML = '🗑️ Papelera' + (n ? ` <span class="ml-1 rounded-full bg-rose-500/30 px-1.5 text-[10px] text-rose-200">${n}</span>` : '');
+      } catch (e) {
+        if (box) box.innerHTML = `<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200">${inoferEsc(e.message)}. Probá de nuevo con ↻ Actualizar.</div>`;
+        return;
+      }
+      inoferRenderPapelera();
+    }
+
+    async function inoferRestaurar(id, btn) {
+      const x = inoferPapelera.find(p => p.id === id);
+      if (!x || !confirm(`¿Restaurar este elemento?\n\n${x.tipoNombre}: ${x.descripcion}`)) return;
+      if (btn) { btn.disabled = true; btn.textContent = 'Restaurando…'; }
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'restaurarPapelera', token: inoferAuthToken(), id }));
+        if (!d || d.status !== 'ok') { showToast((d && d.error) || 'No se pudo restaurar'); if (btn) { btn.disabled = false; btn.textContent = '↩ Restaurar'; } return; }
+        // aplicar en este equipo lo restaurado
+        if (Array.isArray(d.records)) { try { applyRemoteRecords(d.records); } catch (e) { } }
+        if (d.modules) { try { applyCloudModules(d.modules); } catch (e) { } }
+        inoferPapelera = d.papelera || inoferPapelera;
+        showToast('Restaurado ✓ Ya está de vuelta en su lugar para todos');
+        inoferCargarPapelera(true);
+      } catch (e) {
+        showToast('Sin conexión con la nube');
+        if (btn) { btn.disabled = false; btn.textContent = '↩ Restaurar'; }
+      }
+    }
+
+    async function inoferLimpiarRestaurados() {
+      if (!confirm('¿Borrar definitivamente de la papelera los elementos que ya fueron restaurados?')) return;
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'vaciarPapelera', token: inoferAuthToken() }));
+        if (d && d.status === 'ok') { inoferPapelera = d.papelera || []; inoferRenderPapelera(); showToast('Papelera limpia'); }
+      } catch (e) { showToast('Sin conexión con la nube'); }
+    }
+
+    // Integración con las solapas y los permisos
+    const _inoferSwitchTabOrig = window.switchTab;
+    window.switchTab = function (tab) {
+      const pv = document.getElementById('viewPapelera'), pb = document.getElementById('tabPapeleraBtn');
+      if (tab === 'papelera') {
+        if (!inoferIsAdmin()) return;
+        _inoferSwitchTabOrig('dashboard');
+        ['viewDashboard', 'viewSimulator', 'viewRecords', 'viewOrders', 'viewGantt', 'viewAi'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('hidden'); });
+        const db = document.getElementById('tabDashboardBtn'); if (db) db.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-slate-300 hover:text-white' + (db.classList.contains('hidden') ? ' hidden' : '');
+        if (pv) pv.classList.remove('hidden');
+        if (pb) pb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition bg-rose-500 text-slate-950 shadow';
+        inoferCargarPapelera();
+        return;
+      }
+      if (pv) pv.classList.add('hidden');
+      if (pb) pb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-rose-300 hover:text-white' + (inoferIsAdmin() ? '' : ' hidden');
+      return _inoferSwitchTabOrig.apply(this, arguments);
+    };
+    const _inoferApplyPermsOrig = window.inoferApplyPermissions;
+    window.inoferApplyPermissions = function () {
+      const r = _inoferApplyPermsOrig.apply(this, arguments);
+      const pb = document.getElementById('tabPapeleraBtn'), pv = document.getElementById('viewPapelera');
+      if (pb) pb.classList.toggle('hidden', !inoferIsAdmin());
+      if (pv && !inoferIsAdmin() && !pv.classList.contains('hidden')) { pv.classList.add('hidden'); try { switchTab('dashboard'); } catch (e) { } }
+      if (inoferIsAdmin() && inoferAuthMode === 'nube') inoferCargarPapelera(true);
+      return r;
+    };
+    window.addEventListener('DOMContentLoaded', () => { inoferBuildPapeleraUi(); try { inoferApplyPermissions(); } catch (e) { } });
+  </script>
+
+  <script>
+    // =====================================================================
+    // PORTAMOLDE COMPARTIDO: piezas que son versiones del mismo molde base
+    // (ej. 34111-PB y 34548-PB) no pueden estar en máquina al mismo tiempo.
+    // =====================================================================
+    function inoferPmNorm(v) { return String(v || '').trim().toUpperCase(); }
+    function inoferCatDe(part) {
+      const p = String(part || '').trim().toLowerCase();
+      return (partsCatalog || []).find(x => String(x.part || '').toLowerCase() === p) || null;
+    }
+    function inoferPortamoldeDe(part) { const c = inoferCatDe(part); return c ? inoferPmNorm(c.portamolde) : ''; }
+    function inoferPortamoldeHermanas(item) {
+      const pm = inoferPmNorm(item && item.portamolde);
+      if (!pm) return [];
+      return (partsCatalog || []).filter(x => x !== item && x.id !== item.id && inoferPmNorm(x.portamolde) === pm);
+    }
+    function inoferActualizarListaPortamoldes() {
+      const dl = document.getElementById('inoferPortamoldeList');
+      if (!dl) return;
+      const grupos = {};
+      (partsCatalog || []).forEach(x => { const pm = inoferPmNorm(x.portamolde); if (pm) (grupos[pm] = grupos[pm] || []).push(x.part); });
+      dl.innerHTML = Object.keys(grupos).sort().map(pm => `<option value="${inoferEsc(pm)}">${inoferEsc(grupos[pm].join(', '))}</option>`).join('');
+    }
+
+    /** Conflictos del Gantt: el mismo portamolde programado el mismo día en máquinas distintas. */
+    function inoferConflictosGantt(week) {
+      const out = [];
+      if (!week || !week.machines) return out;
+      const porDia = {}; // pm -> día -> [{mach, part}]
+      GANTT_MACHINES_CONFIG.forEach(mc => {
+        ((week.machines[mc.id] || {}).items || []).forEach(it => {
+          const pm = inoferPortamoldeDe(it.part);
+          if (!pm) return;
+          (it.dailyQty || []).forEach((q, d) => {
+            if (!(Number(q) > 0)) return;
+            const k = pm + '|' + d;
+            (porDia[k] = porDia[k] || []).push({ mach: mc.short || mc.id, part: it.part });
+          });
+        });
+      });
+      const dias = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      let fechas = null;
+      try { fechas = getWeekDaysDates(week.startDate || '2026-09-14'); } catch (e) { }
+      Object.keys(porDia).forEach(k => {
+        const lista = porDia[k];
+        const maqs = [...new Set(lista.map(x => x.mach))];
+        if (maqs.length < 2) return;
+        const [pm, d] = k.split('|');
+        const f = fechas && fechas[Number(d)] ? (fechas[Number(d)].label || fechas[Number(d)].iso || '') : '';
+        out.push({ pm, dia: (dias[Number(d)] || ('día ' + d)) + (f && !String(f).startsWith(dias[Number(d)]) ? ' ' + f : ''), lista });
+      });
+      return out;
+    }
+
+    /** Conflictos en órdenes "En Proceso": mismo portamolde en máquinas distintas a la vez. */
+    function inoferConflictosOrdenes() {
+      const grupos = {};
+      (productionOrders || []).filter(o => /proceso/i.test(o.status || '')).forEach(o => {
+        const pm = inoferPortamoldeDe(o.part);
+        if (pm) (grupos[pm] = grupos[pm] || []).push(o);
+      });
+      return Object.keys(grupos).filter(pm => new Set(grupos[pm].map(o => o.machine)).size > 1 || grupos[pm].length > 1)
+        .map(pm => ({ pm, ordenes: grupos[pm] }));
+    }
+
+    function inoferAvisoBox(id, contenedorId, html) {
+      const cont = document.getElementById(contenedorId);
+      if (!cont) return;
+      let box = document.getElementById(id);
+      if (!html) { if (box) box.remove(); return; }
+      if (!box) {
+        box = document.createElement('div'); box.id = id;
+        box.className = 'rounded-2xl border border-orange-500/50 bg-orange-500/10 p-3.5 text-xs text-orange-100 shadow';
+        cont.insertBefore(box, cont.firstChild);
+      }
+      box.innerHTML = html;
+    }
+
+    function inoferRevisarPortamoldes() {
+      try {
+        const cg = inoferConflictosGantt(getActiveGanttWeek());
+        inoferAvisoBox('inoferPmAvisoGantt', 'viewGantt', cg.length ? `
+          <div class="mb-1 text-sm font-extrabold text-orange-300">⚠️ Portamolde en uso en dos máquinas a la vez</div>
+          <p class="mb-1.5 text-orange-200/80">Estas piezas salen del mismo molde base y no pueden estar en máquina al mismo tiempo. Mové una de ellas a otro día o a la misma máquina (como cambio de versión).</p>
+          <ul class="list-disc space-y-0.5 pl-5">${cg.map(c => `<li><b>${inoferEsc(c.dia)}</b> · Portamolde <b>${inoferEsc(c.pm)}</b>: ${c.lista.map(x => `${inoferEsc(x.part)} en <b>${inoferEsc(x.mach)}</b>`).join(' y ')}</li>`).join('')}</ul>` : '');
+      } catch (e) { }
+      try {
+        const co = inoferConflictosOrdenes();
+        inoferAvisoBox('inoferPmAvisoOrdenes', 'viewOrders', co.length ? `
+          <div class="mb-1 text-sm font-extrabold text-orange-300">⚠️ Órdenes en proceso con el mismo portamolde</div>
+          <p class="mb-1.5 text-orange-200/80">Estas órdenes usan piezas del mismo molde base: no se pueden producir al mismo tiempo.</p>
+          <ul class="list-disc space-y-0.5 pl-5">${co.map(c => `<li>Portamolde <b>${inoferEsc(c.pm)}</b>: ${c.ordenes.map(o => `OP ${inoferEsc(o.ordNumber)} (${inoferEsc(o.part)} · ${inoferEsc(o.machine)})`).join(' y ')}</li>`).join('')}</ul>` : '');
+      } catch (e) { }
+    }
+
+    function inoferInfoPortamoldeForm() {
+      const inp = document.getElementById('cat_portamolde'), info = document.getElementById('cat_portamolde_info');
+      if (!inp || !info) return;
+      const pm = inoferPmNorm(inp.value);
+      const parte = (document.getElementById('cat_part')?.value || '').trim().toLowerCase();
+      if (!pm) { info.innerHTML = 'Dejalo vacío si el molde es único. Escribí el mismo código en todas las piezas que salen del mismo portamolde (ej: 34111-PB y 34548-PB).'; return; }
+      const otras = (partsCatalog || []).filter(x => inoferPmNorm(x.portamolde) === pm && String(x.part || '').toLowerCase() !== parte).map(x => x.part);
+      info.innerHTML = otras.length
+        ? `Comparte portamolde con: <b class="text-orange-200">${inoferEsc(otras.join(', '))}</b> → no se podrán programar en máquina al mismo tiempo.`
+        : 'Es la primera pieza con este portamolde. Poné el mismo código en las otras versiones.';
+    }
+
+    // Enganches con las pantallas existentes
+    ['renderGanttView', 'renderPartsCatalogView', 'renderProductionOrdersView'].forEach(fn => {
+      const orig = window[fn];
+      if (typeof orig !== 'function') return;
+      window[fn] = function () {
+        const r = orig.apply(this, arguments);
+        try { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); } catch (e) { }
+        return r;
+      };
+    });
+    const _inoferSaveCatOrig = window.savePartsCatalog;
+    if (typeof _inoferSaveCatOrig === 'function') {
+      window.savePartsCatalog = function () { const r = _inoferSaveCatOrig.apply(this, arguments); try { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); } catch (e) { } return r; };
+    }
+    const _inoferSaveGanttOrig = window.saveGanttWeeks;
+    if (typeof _inoferSaveGanttOrig === 'function') {
+      window.saveGanttWeeks = function () {
+        const r = _inoferSaveGanttOrig.apply(this, arguments);
+        try {
+          inoferRevisarPortamoldes();
+          const c = inoferConflictosGantt(getActiveGanttWeek());
+          if (c.length) showToast(`⚠️ Ojo: ${c[0].lista.map(x => x.part).join(' y ')} comparten portamolde (${c[0].pm}) y quedaron el mismo día en máquinas distintas`);
+        } catch (e) { }
+        return r;
+      };
+    }
+
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains('inline-portamolde-input')) return;
+      const item = (partsCatalog || []).find(x => String(x.id) === String(el.dataset.inlinePortamolde));
+      if (!item) return;
+      item.portamolde = inoferPmNorm(el.value);
+      savePartsCatalog();
+      try { renderPartsCatalogView(); } catch (e) { }
+      const h = inoferPortamoldeHermanas(item);
+      showToast(item.portamolde ? `Portamolde ${item.portamolde} guardado${h.length ? ' · comparte con ' + h.map(x => x.part).join(', ') : ''}` : 'Pieza marcada como molde único');
+    });
+    document.addEventListener('input', ev => {
+      if (ev.target && (ev.target.id === 'cat_portamolde' || ev.target.id === 'cat_part')) inoferInfoPortamoldeForm();
+    });
+    window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { inoferActualizarListaPortamoldes(); inoferRevisarPortamoldes(); }, 300); });
   </script>
 
   <script>

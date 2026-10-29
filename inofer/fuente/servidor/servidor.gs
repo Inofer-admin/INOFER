@@ -443,6 +443,170 @@ function doGet(e) {
   return HtmlService.createHtmlOutput('<h3>INOFER - servidor de datos funcionando.</h3>');
 }
 
+// =====================================================================
+// PAPELERA: todo lo que se elimina queda registrado (quién, cuándo, qué) y el
+// administrador lo puede restaurar. Hoja BD_Papelera.
+// =====================================================================
+const PAPELERA_SHEET_NAME = 'BD_Papelera';
+const PAPELERA_TIPOS = { parte: 'Parte de horas', orden: 'Orden de producción', pieza: 'Pieza / molde', semana_gantt: 'Semana del Gantt', item_gantt: 'Pieza programada en el Gantt', cierre_semanal: 'Cierre semanal' };
+
+function getPapeleraSheet() {
+  const ss = getSs();
+  let sh = ss.getSheetByName(PAPELERA_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(PAPELERA_SHEET_NAME);
+    sh.appendRow(['id', 'fecha', 'usuario', 'tipo', 'descripcion', 'datos', 'contexto', 'estado', 'restaurado_por', 'restaurado_fecha']);
+    sh.getRange('A:J').setNumberFormat('@');
+  }
+  return sh;
+}
+
+function describirEliminado(tipo, d, ctx) {
+  d = d || {}; ctx = ctx || {};
+  if (tipo === 'parte') return (d.date || '') + ' · ' + (d.machine || '') + ' · Turno ' + (d.shift || '') + ' (' + (Number(d.available) || 0) + ' h disp.)';
+  if (tipo === 'orden') return 'OP ' + (d.ordNumber || d.id || '') + ' · Pieza ' + (d.part || '') + ' · ' + (d.machine || '') + (d.status ? ' · ' + d.status : '');
+  if (tipo === 'pieza') return 'Pieza ' + (d.part || '') + ' · Molde ' + (d.mold || '-') + (d.portamolde ? ' · Portamolde ' + d.portamolde : '');
+  if (tipo === 'semana_gantt') return 'Semana ' + (d.code || ctx.semana || '') + (d.name ? ' · ' + d.name : '');
+  if (tipo === 'item_gantt') return 'Pieza ' + (d.part || '') + ' · Máquina ' + (ctx.maquina || '') + ' · Semana ' + (ctx.semana || '') + ' (' + (Number(d.totalQty) || 0) + ' u.)';
+  if (tipo === 'cierre_semanal') return 'Cierre ' + (d.label || d.weekLabel || d.date || '');
+  return tipo;
+}
+
+function registrarEliminados(u, tipo, lista, ctx) {
+  if (!lista || !lista.length) return;
+  const sh = getPapeleraSheet();
+  const ahora = new Date().toISOString();
+  const filas = lista.map(function (d) {
+    let json = JSON.stringify(d);
+    if (json.length > 45000) json = json.substring(0, 45000);
+    return [Utilities.getUuid(), ahora, u.usuario, tipo, describirEliminado(tipo, d, ctx).substring(0, 300), json, JSON.stringify(ctx || {}), 'eliminado', '', ''];
+  });
+  const inicio = sh.getLastRow() + 1;
+  sh.getRange(inicio, 1, filas.length, 10).setNumberFormat('@').setValues(filas);
+}
+
+function idsDe(lista) {
+  const m = {};
+  (lista || []).forEach(function (x) { if (x && x.id != null) m[String(x.id)] = x; });
+  return m;
+}
+
+/** Compara el estado anterior con el nuevo y registra lo que desapareció. */
+function registrarDiferencias(u, clave, anterior, nuevo) {
+  if (clave === 'orders' || clave === 'catalog') {
+    const tipo = clave === 'orders' ? 'orden' : 'pieza';
+    const nuevos = idsDe(nuevo);
+    const borrados = (anterior || []).filter(function (x) { return x && x.id != null && !nuevos[String(x.id)]; });
+    registrarEliminados(u, tipo, borrados, {});
+  } else if (clave === 'weekly') {
+    const nuevosTxt = {};
+    (nuevo || []).forEach(function (x) { nuevosTxt[JSON.stringify(x)] = true; });
+    const borrados = (anterior || []).filter(function (x) { return !nuevosTxt[JSON.stringify(x)]; });
+    registrarEliminados(u, 'cierre_semanal', borrados, {});
+  } else if (clave === 'gantt') {
+    const ant = anterior || {}, nue = nuevo || {};
+    Object.keys(ant).forEach(function (code) {
+      const semAnt = ant[code];
+      if (!nue[code]) { registrarEliminados(u, 'semana_gantt', [Object.assign({ code: code }, semAnt)], { semana: code }); return; }
+      const mAnt = (semAnt && semAnt.machines) || {}, mNue = (nue[code] && nue[code].machines) || {};
+      Object.keys(mAnt).forEach(function (mach) {
+        const restantes = {};
+        ((mNue[mach] && mNue[mach].items) || []).forEach(function (it) { const k = JSON.stringify(it); restantes[k] = (restantes[k] || 0) + 1; });
+        const borrados = [];
+        ((mAnt[mach] && mAnt[mach].items) || []).forEach(function (it) {
+          const k = JSON.stringify(it);
+          if (restantes[k]) restantes[k]--;
+          else borrados.push(it);
+        });
+        // Un ítem "editado" (cambió la cantidad) no es un borrado: solo se registra si su pieza ya no está en esa máquina
+        const piezasQuedan = {};
+        ((mNue[mach] && mNue[mach].items) || []).forEach(function (it) { piezasQuedan[String(it.part || '').toLowerCase()] = true; });
+        registrarEliminados(u, 'item_gantt', borrados.filter(function (it) { return !piezasQuedan[String(it.part || '').toLowerCase()]; }), { semana: code, maquina: mach });
+      });
+    });
+  }
+}
+
+function leerPapelera() {
+  const sh = getPapeleraSheet();
+  const rows = sh.getDataRange().getValues();
+  const out = [];
+  for (let i = rows.length - 1; i >= 1 && out.length < 1000; i--) {
+    const r = rows[i];
+    if (!r[0]) continue;
+    out.push({ fila: i + 1, id: String(r[0]), fecha: String(r[1]), usuario: String(r[2]), tipo: String(r[3]), tipoNombre: PAPELERA_TIPOS[String(r[3])] || String(r[3]),
+      descripcion: String(r[4]), datos: String(r[5]), contexto: String(r[6] || '{}'), estado: String(r[7] || 'eliminado'), restauradoPor: String(r[8] || ''), restauradoFecha: String(r[9] || '') });
+  }
+  return out;
+}
+
+function restaurarDePapelera(u, id) {
+  const item = leerPapelera().filter(function (x) { return x.id === String(id); })[0];
+  if (!item) return { status: 'error', error: 'No se encontró ese elemento en la papelera.' };
+  if (item.estado === 'restaurado') return { status: 'error', error: 'Ese elemento ya fue restaurado.' };
+  let d, ctx;
+  try { d = JSON.parse(item.datos); ctx = JSON.parse(item.contexto || '{}'); } catch (e) { return { status: 'error', error: 'Los datos guardados están dañados.' }; }
+  const mods = obtenerEstadoModulos();
+  if (item.tipo === 'parte') {
+    if (obtenerRegistros().some(function (r) { return String(r.id) === String(d.id); })) return { status: 'error', error: 'Ese parte ya existe (no hace falta restaurarlo).' };
+    guardarRegistro(d);
+  } else if (item.tipo === 'orden' || item.tipo === 'pieza') {
+    const clave = item.tipo === 'orden' ? 'orders' : 'catalog';
+    const lista = Array.isArray(mods[clave]) ? mods[clave] : [];
+    if (lista.some(function (x) { return String(x.id) === String(d.id); })) return { status: 'error', error: 'Ya existe un elemento con ese mismo código.' };
+    lista.unshift(d);
+    guardarModuloEstado(clave, lista);
+  } else if (item.tipo === 'semana_gantt') {
+    const g = mods.gantt || {};
+    const code = d.code || ctx.semana;
+    if (g[code]) return { status: 'error', error: 'La semana ' + code + ' ya existe en el Gantt.' };
+    g[code] = d;
+    guardarModuloEstado('gantt', g);
+  } else if (item.tipo === 'item_gantt') {
+    const g = mods.gantt || {};
+    const sem = g[ctx.semana];
+    if (!sem) return { status: 'error', error: 'La semana ' + ctx.semana + ' ya no existe: restaurá primero la semana.' };
+    sem.machines = sem.machines || {};
+    const m = sem.machines[ctx.maquina] = sem.machines[ctx.maquina] || { aux: {}, items: [] };
+    m.items = m.items || [];
+    m.items.push(d);
+    guardarModuloEstado('gantt', g);
+  } else if (item.tipo === 'cierre_semanal') {
+    const w = Array.isArray(mods.weekly) ? mods.weekly : [];
+    w.unshift(d);
+    guardarModuloEstado('weekly', w);
+  } else {
+    return { status: 'error', error: 'Tipo desconocido.' };
+  }
+  getPapeleraSheet().getRange(item.fila, 8, 1, 3).setValues([['restaurado', u.usuario, new Date().toISOString()]]);
+  return null; // ok
+}
+
+function accionPapelera(u, body) {
+  if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede ver la papelera.' };
+  if (body.action === 'listPapelera') {
+    return { status: 'ok', papelera: leerPapelera().map(function (x) { const c = Object.assign({}, x); delete c.fila; return c; }) };
+  }
+  if (body.action === 'restaurarPapelera') {
+    const err = restaurarDePapelera(u, body.id);
+    if (err) return err;
+    const out = paqueteDatos(u);
+    out.papelera = leerPapelera().map(function (x) { const c = Object.assign({}, x); delete c.fila; return c; });
+    out.restaurado = true;
+    return out;
+  }
+  if (body.action === 'vaciarPapelera') {
+    // borra definitivamente: solo los restaurados, o todo si body.todo === true
+    const sh = getPapeleraSheet();
+    const rows = sh.getDataRange().getValues();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (body.todo === true || String(rows[i][7]) === 'restaurado' || (body.ids && body.ids.indexOf(String(rows[i][0])) !== -1)) sh.deleteRow(i + 1);
+    }
+    return { status: 'ok', papelera: leerPapelera().map(function (x) { const c = Object.assign({}, x); delete c.fila; return c; }) };
+  }
+  return null;
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -451,19 +615,32 @@ function doPost(e) {
   const u = usuarioDeToken(body.token);
   if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
 
+  if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
+    return respuesta(accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' });
+  }
+
   let records = null;
   const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
   if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
     if (!puede(u, 'partes', 'edit')) return sinPermiso('partes');
     if (body.action === 'add') records = guardarRegistro(body.entry);
     else if (body.action === 'edit') records = editarRegistro(body.entry);
-    else if (body.action === 'delete') records = eliminarRegistro(body.id);
-    else records = reemplazarRegistros(body.records);
+    else if (body.action === 'delete') {
+      try { registrarEliminados(u, 'parte', obtenerRegistros().filter(function (r) { return String(r.id) === String(body.id); }), {}); } catch (e) {}
+      records = eliminarRegistro(body.id);
+    } else {
+      try {
+        const nuevos = idsDe(body.records);
+        registrarEliminados(u, 'parte', obtenerRegistros().filter(function (r) { return !nuevos[String(r.id)]; }), {});
+      } catch (e) {}
+      records = reemplazarRegistros(body.records);
+    }
   } else if (body.action === 'saveModule') {
     const area = MODULO_AREA[body.moduleKey];
     if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
     const ok = area === 'admin' ? u.rol === 'admin' : puede(u, area, 'edit');
     if (!ok) return sinPermiso(area);
+    try { registrarDiferencias(u, body.moduleKey, obtenerEstadoModulos()[body.moduleKey], body.moduleData); } catch (e) {}
     guardarModuloEstado(body.moduleKey, body.moduleData);
   }
   return respuesta(paqueteDatos(u, records));
