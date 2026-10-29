@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.12" />
+  <meta name="inofer-version" content="2026.10.29.13" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -670,6 +670,7 @@
                 <th class="py-2.5 px-2 text-right">F. Mat.</th>
                 <th class="py-2.5 px-2 text-right">F. Oper.</th>
                 <th class="py-2.5 px-2 text-right">Otros</th>
+                <th class="py-2.5 px-2">Cargado por</th>
                 <th class="py-2.5 px-2 text-center">Acción</th>
               </tr>
             </thead>
@@ -3401,7 +3402,7 @@ function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmi
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="15" class="py-8 text-center text-slate-400">
+            <td colspan="16" class="py-8 text-center text-slate-400">
               No hay registros cargados para los filtros seleccionados. Usá el botón "Cargar Horas" para agregar un parte.
             </td>
           </tr>
@@ -3432,6 +3433,7 @@ function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmi
             <td class="py-2.5 px-2 text-right">${Number(r.falta_material || 0).toFixed(2)}</td>
             <td class="py-2.5 px-2 text-right">${Number(r.falta_operario || 0).toFixed(2)}</td>
             <td class="py-2.5 px-2 text-right">${Number(r.otros || 0).toFixed(2)}</td>
+            <td class="py-2.5 px-2 text-[11px] leading-tight">${r.cargadoPor ? `<span class="font-semibold text-slate-200">${String(r.cargadoPor).replace(/[<>&]/g, '')}</span>` : '<span class="text-slate-600">—</span>'}${r.modificadoPor ? `<span class="block text-[10px] text-amber-300/80">modificó: ${String(r.modificadoPor).replace(/[<>&]/g, '')}</span>` : ''}</td>
             <td class="py-2.5 px-2 text-center whitespace-nowrap">
               <div class="inline-flex items-center gap-1.5">
                 <button type="button" data-edit-id="${r.id}" class="edit-record-btn rounded bg-cyan-500/15 border border-cyan-500/30 px-2.5 py-1 text-[11px] font-semibold text-cyan-300 hover:bg-cyan-500/25">
@@ -5881,7 +5883,7 @@ ${lines}${trendNote}`;
           return `
             <tr class="hover:bg-slate-800/40">
               <td class="py-2 px-2.5 text-slate-300">${lg.date}</td>
-              <td class="py-2 px-2.5 font-semibold text-white">${lg.operator}</td>
+              <td class="py-2 px-2.5 font-semibold text-white">${lg.operator}${lg.cargadoPor ? `<span class="block text-[10px] font-normal text-slate-400">cargó: ${String(lg.cargadoPor).replace(/[<>&]/g, '')}</span>` : ''}</td>
               <td class="py-2 px-2.5">${lg.startTime}</td>
               <td class="py-2 px-2.5">${lg.endTime}</td>
               <td class="py-2 px-2.5 text-right font-bold text-emerald-400">${lg.okPcs}</td>
@@ -8711,7 +8713,9 @@ ${lines}${trendNote}`;
           lowStartPcs: Number(document.getElementById('logLowStart').value) || 0,
           scrapPcs: Number(document.getElementById('logScrap').value) || 0,
           stopCode: document.getElementById('logStopCode').value || '',
-          obs: document.getElementById('logObs').value || ''
+          obs: document.getElementById('logObs').value || '',
+          cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '',
+          cargadoAt: new Date().toISOString()
         });
         document.getElementById('logObs').value = '';
         saveProductionOrders();
@@ -9597,6 +9601,7 @@ ${lines}${trendNote}`;
       INOFER_AREAS.forEach(a => { const v = rol === 'admin' ? 'edit' : (p && p[a.key]); out[a.key] = (v === 'edit' || v === 'view') ? v : 'none'; });
       return out;
     }
+    function inoferUsuarioEtiqueta() { return inoferSession ? `${inoferSession.nombre} (@${inoferSession.usuario})` : ''; }
     function inoferAuthToken() { return inoferSession && inoferSession.token ? inoferSession.token : ''; }
     function inoferTokenParam() { return inoferAuthToken() ? '&token=' + encodeURIComponent(inoferAuthToken()) : ''; }
     function inoferIsAdmin() { return !!(inoferSession && inoferSession.rol === 'admin'); }
@@ -10384,6 +10389,16 @@ ${lines}${trendNote}`;
       if (typeof origPush === 'function') {
         window.pushCloudAction = function (action, payload) {
           if (!inoferCan('partes', 'edit')) { showToast('🔒 No tenés permiso para modificar partes de horas'); return; }
+          try {
+            const quien = inoferUsuarioEtiqueta();
+            if (action === 'add' && payload && payload.entry && !payload.entry.cargadoPor) { payload.entry.cargadoPor = quien; payload.entry.cargadoAt = new Date().toISOString(); }
+            if (action === 'edit' && payload && payload.entry) {
+              payload.entry.modificadoPor = quien;
+              const loc = (records || []).find(r => String(r.id) === String(payload.entry.id));
+              if (loc) { loc.modificadoPor = quien; if (!payload.entry.cargadoPor && loc.cargadoPor) payload.entry.cargadoPor = loc.cargadoPor; }
+            }
+            saveState();
+          } catch (e) { }
           return origPush.apply(this, arguments);
         };
       }
@@ -10502,7 +10517,8 @@ ${lines}${trendNote}`;
             </div>
             <div class="flex flex-wrap gap-2">
               <button id="papeleraRefreshBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">↻ Actualizar</button>
-              <button id="papeleraPurgeBtn" type="button" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20">Limpiar restaurados</button>
+              <button id="papeleraPurgeBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">Limpiar restaurados</button>
+              <button id="papeleraVaciarBtn" type="button" class="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-rose-500">🗑️ Vaciar papelera</button>
             </div>
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
@@ -10528,6 +10544,7 @@ ${lines}${trendNote}`;
       ref.parentNode.insertBefore(v, ref.nextSibling);
       v.querySelector('#papeleraRefreshBtn').addEventListener('click', () => inoferCargarPapelera());
       v.querySelector('#papeleraPurgeBtn').addEventListener('click', inoferLimpiarRestaurados);
+      v.querySelector('#papeleraVaciarBtn').addEventListener('click', inoferVaciarPapelera);
       v.querySelector('#papeleraTipo').addEventListener('change', e => { inoferPapeleraFiltro.tipo = e.target.value; inoferRenderPapelera(); });
       v.querySelector('#papeleraEstado').addEventListener('change', e => { inoferPapeleraFiltro.estado = e.target.value; inoferRenderPapelera(); });
       v.querySelector('#papeleraTexto').addEventListener('input', e => { inoferPapeleraFiltro.texto = e.target.value.toLowerCase(); inoferRenderPapelera(); });
@@ -10573,6 +10590,7 @@ ${lines}${trendNote}`;
               <div class="flex shrink-0 gap-1.5">
                 <button type="button" data-pap-ver="${inoferEsc(x.id)}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">Ver detalle</button>
                 ${rest ? '' : `<button type="button" data-pap-rest="${inoferEsc(x.id)}" class="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-emerald-400">↩ Restaurar</button>`}
+                <button type="button" data-pap-borrar="${inoferEsc(x.id)}" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-300 hover:bg-rose-500/20" title="Borrar definitivamente de la papelera">✕ Borrar</button>
               </div>
             </div>
             <pre id="papDet_${inoferEsc(x.id)}" class="hidden mt-2 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 text-[10px] text-slate-300">${inoferEsc(detalle)}</pre>
@@ -10582,6 +10600,7 @@ ${lines}${trendNote}`;
         const el = document.getElementById('papDet_' + b.dataset.papVer); if (el) el.classList.toggle('hidden');
       }));
       box.querySelectorAll('[data-pap-rest]').forEach(b => b.addEventListener('click', () => inoferRestaurar(b.dataset.papRest, b)));
+      box.querySelectorAll('[data-pap-borrar]').forEach(b => b.addEventListener('click', () => inoferBorrarDePapelera([b.dataset.papBorrar])));
     }
 
     async function inoferCargarPapelera(silencioso) {
@@ -10619,6 +10638,26 @@ ${lines}${trendNote}`;
         showToast('Sin conexión con la nube');
         if (btn) { btn.disabled = false; btn.textContent = '↩ Restaurar'; }
       }
+    }
+
+    async function inoferPapeleraVaciarCall(body, okMsg) {
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost(Object.assign({ action: 'vaciarPapelera', token: inoferAuthToken() }, body)));
+        if (d && d.status === 'ok') { inoferPapelera = d.papelera || []; inoferRenderPapelera(); inoferCargarPapelera(true); showToast(okMsg); }
+        else showToast((d && d.error) || 'No se pudo borrar');
+      } catch (e) { showToast('Sin conexión con la nube'); }
+    }
+    function inoferBorrarDePapelera(ids) {
+      const x = inoferPapelera.find(p => p.id === ids[0]);
+      if (!confirm(`¿Borrar definitivamente de la papelera?\n\n${x ? x.tipoNombre + ': ' + x.descripcion : ''}\n\nDespués ya no se va a poder restaurar.`)) return;
+      inoferPapeleraVaciarCall({ ids, soloIds: true }, 'Eliminado de la papelera');
+    }
+    function inoferVaciarPapelera() {
+      const n = inoferPapelera.length;
+      if (!n) { showToast('La papelera ya está vacía'); return; }
+      if (!confirm(`¿Vaciar TODA la papelera? Se borran definitivamente ${n} elemento${n === 1 ? '' : 's'} y no se van a poder restaurar.`)) return;
+      if (!confirm('Confirmá de nuevo: ¿vaciar la papelera completa?')) return;
+      inoferPapeleraVaciarCall({ todo: true }, 'Papelera vacía');
     }
 
     async function inoferLimpiarRestaurados() {
@@ -11471,11 +11510,11 @@ ${lines}${trendNote}`;
             <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl">
               <div class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Valores cargados (${o.datos.length})</div>
               <div class="max-h-72 overflow-auto"><table class="w-full text-left text-xs">
-                <thead><tr class="text-[10px] uppercase text-slate-500"><th class="py-1">Mes</th><th class="py-1 text-right">Valor</th><th class="py-1 pl-2">Nota</th><th></th></tr></thead>
+                <thead><tr class="text-[10px] uppercase text-slate-500"><th class="py-1">Mes</th><th class="py-1 text-right">Valor</th><th class="py-1 pl-2">Nota / cargó</th><th></th></tr></thead>
                 <tbody>${o.datos.slice().reverse().map(x => `<tr class="border-t border-slate-800">
                   <td class="py-1.5 font-semibold text-white">${inoferMesTxt(x.mes)}</td>
                   <td class="py-1.5 text-right font-extrabold ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'text-emerald-300' : 'text-rose-300'}">${inoferPct(x.valor)}</td>
-                  <td class="py-1.5 pl-2 text-slate-400">${inoferEsc(x.nota || '')}</td>
+                  <td class="py-1.5 pl-2 text-slate-400">${inoferEsc(x.nota || '')}${x.cargadoPor ? `<span class="block text-[10px] text-slate-500">${inoferEsc(x.cargadoPor)}${x.cargadoAt ? ' · ' + inoferEsc(new Date(x.cargadoAt).toLocaleDateString('es-AR')) : ''}</span>` : (x.nota ? '' : '<span class="text-[10px] text-slate-600">planilla histórica</span>')}</td>
                   <td class="py-1.5 text-right whitespace-nowrap"><button type="button" data-kpi-editar="${x.mes}" class="kpi-edit rounded px-1.5 text-sky-300 hover:bg-slate-800" title="Editar">✏️</button><button type="button" data-kpi-borrar="${x.mes}" class="kpi-edit rounded px-1.5 text-rose-300 hover:bg-slate-800" title="Borrar">🗑️</button></td></tr>`).join('') || '<tr><td colspan="4" class="py-3 text-center text-slate-500">Sin datos</td></tr>'}</tbody></table></div>
             </div>
             <details class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl text-xs">
@@ -11499,8 +11538,9 @@ ${lines}${trendNote}`;
         if (!/^\d{4}-\d{2}$/.test(mes) || !isFinite(valor) || document.getElementById('kpiValor').value === '') { showToast('Completá el mes y el valor'); return; }
         const datos = inoferKpiData(k).datos;
         const ex = datos.find(x => x.mes === mes);
-        if (ex) { ex.valor = valor; ex.nota = document.getElementById('kpiNota').value || ''; }
-        else datos.push({ mes, valor, nota: document.getElementById('kpiNota').value || '' });
+        const quien = inoferUsuarioEtiqueta(), cuando = new Date().toISOString();
+        if (ex) { ex.valor = valor; ex.nota = document.getElementById('kpiNota').value || ''; ex.cargadoPor = quien; ex.cargadoAt = cuando; }
+        else datos.push({ mes, valor, nota: document.getElementById('kpiNota').value || '', cargadoPor: quien, cargadoAt: cuando });
         inoferGuardarKpis(); inoferRenderKpi();
         showToast(`${def.corto} ${inoferMesTxt(mes)}: ${inoferPct(valor)} guardado`);
       });
@@ -11553,7 +11593,8 @@ ${lines}${trendNote}`;
         const valor = inoferKpiParseValor(valT);
         if (!mes || valor === null) return;
         const ex = datos.find(x => x.mes === mes);
-        if (ex) ex.valor = valor; else datos.push({ mes, valor, nota: '' });
+        const quien = inoferUsuarioEtiqueta(), cuando = new Date().toISOString();
+        if (ex) { ex.valor = valor; ex.cargadoPor = quien; ex.cargadoAt = cuando; } else datos.push({ mes, valor, nota: '', cargadoPor: quien, cargadoAt: cuando });
         n++;
       });
       if (n) { inoferGuardarKpis(); inoferRenderKpi(); }
@@ -11596,7 +11637,7 @@ ${lines}${trendNote}`;
           try { ch.resize(1100, 520); ch.update('none'); img = cv.toDataURL('image/png'); } catch (e) { }
           try { ch.destroy(); } catch (e) { } wrap.remove();
         }
-        const filas = datos.map(x => `<tr><td>${inoferMesTxt(x.mes)}</td><td class="n ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'ok' : 'mal'}">${inoferPct(x.valor)}</td><td>${inoferEsc(x.nota || '')}</td></tr>`).join('');
+        const filas = datos.map(x => `<tr><td>${inoferMesTxt(x.mes)}</td><td class="n ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'ok' : 'mal'}">${inoferPct(x.valor)}</td><td>${inoferEsc(x.nota || '')}</td><td>${inoferEsc(x.cargadoPor || '')}</td></tr>`).join('');
         return `<section>
           <h2>${def.titulo}</h2>
           ${st ? `<div class="kpis">
@@ -11607,7 +11648,7 @@ ${lines}${trendNote}`;
             <div><span>Meses en meta</span><b>${st.enMeta} de ${st.total}</b></div>
             <div><span>Tendencia</span><b>${st.tendencia}</b></div></div>` : '<p>Sin datos cargados.</p>'}
           ${img ? `<img src="${img}" alt="">` : ''}
-          ${filas ? `<table><thead><tr><th>Mes</th><th>Valor</th><th>Nota</th></tr></thead><tbody>${filas}</tbody></table>` : ''}
+          ${filas ? `<table><thead><tr><th>Mes</th><th>Valor</th><th>Nota</th><th>Cargó</th></tr></thead><tbody>${filas}</tbody></table>` : ''}
         </section>`;
       }).join('');
       const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>INOFER — Informe de indicadores</title><style>

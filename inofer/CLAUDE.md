@@ -47,6 +47,11 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Módulo `kpis`: { clave: { meta, datos:[{mes:'AAAA-MM', valor, nota}] } }. Gráfico estilo planilla (fondo #5b9bd5, línea negra),
   informe imprimible (iframe), PNG, importar pegando o desde Excel/CSV. Recuento arranca con los datos del gráfico de la planta.
 
+## Quién cargó
+- Partes: la nube guarda cargado_por / modificado_por / cargado_at (columnas O-Q de BD_Tiempo_Real, USUARIO_ACTUAL en servidor).
+- Indicadores y filas de órdenes guardan `cargadoPor`/`cargadoAt` desde el cliente (inoferUsuarioEtiqueta).
+- Papelera: el admin puede borrar elementos sueltos o vaciarla toda (vaciarPapelera con ids/soloIds o todo).
+
 ## Cómo aplicar un pedido del usuario
 1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).
 2. Si se tocó Java: subir `VERSION` en `Main.java` (ej. 2.3 → 2.4). Si solo cambia la web, no hace falta.

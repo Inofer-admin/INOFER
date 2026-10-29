@@ -16,11 +16,16 @@ function getDbSheet() {
       'id', 'date', 'machine', 'shift', 'available',
       'parada_maquina', 'setup_molde', 'puesta_punto',
       'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at'
+      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at'
     ]);
+  }
+  if (String(sheet.getRange(1, 15).getValue ? sheet.getRange(1, 15).getValue() : 'cargado_por') !== 'cargado_por') {
+    sheet.getRange(1, 15, 1, 3).setValues([['cargado_por', 'modificado_por', 'cargado_at']]);
   }
   return sheet;
 }
+// Usuario que hace el pedido actual (lo completa doPost)
+let USUARIO_ACTUAL = '';
 
 function getStateSheet() {
   const ss = getSs();
@@ -98,7 +103,11 @@ function obtenerRegistros() {
       mant_correctivo: Number(r[9]) || 0,
       falta_material: Number(r[10]) || 0,
       falta_operario: Number(r[11]) || 0,
-      otros: Number(r[12]) || 0
+      otros: Number(r[12]) || 0,
+      actualizado: r[13] instanceof Date ? r[13].toISOString() : String(r[13] || ''),
+      cargadoPor: String(r[14] || ''),
+      modificadoPor: String(r[15] || ''),
+      cargadoAt: String(r[16] || '')
     });
   }
   return list;
@@ -116,6 +125,7 @@ function guardarRegistro(entry) {
   lock.waitLock(10000);
   try {
     const sheet = getDbSheet();
+    const ahora = new Date().toISOString();
     sheet.appendRow([
       entry.id || ('rec-' + new Date().getTime()),
       entry.date, entry.machine, entry.shift,
@@ -123,7 +133,7 @@ function guardarRegistro(entry) {
       Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
       Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
       Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-      Number(entry.otros) || 0, new Date().toISOString()
+      Number(entry.otros) || 0, ahora, USUARIO_ACTUAL || entry.cargadoPor || '', '', ahora
     ]);
     return obtenerRegistros();
   } finally {
@@ -140,26 +150,28 @@ function editarRegistro(entry) {
     const rows = sheet.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(entry.id)) {
-        sheet.getRange(i + 1, 1, 1, 14).setValues([[
+        sheet.getRange(i + 1, 1, 1, 17).setValues([[
           entry.id, entry.date, entry.machine, entry.shift,
           Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
           Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
           Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
           Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-          Number(entry.otros) || 0, new Date().toISOString()
+          Number(entry.otros) || 0, new Date().toISOString(),
+          String(rows[i][14] || entry.cargadoPor || ''), USUARIO_ACTUAL || entry.modificadoPor || '', String(rows[i][16] || '')
         ]]);
         found = true;
         break;
       }
     }
     if (!found) {
+      const ahora = new Date().toISOString();
       sheet.appendRow([
         entry.id, entry.date, entry.machine, entry.shift,
         Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
         Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-        Number(entry.otros) || 0, new Date().toISOString()
+        Number(entry.otros) || 0, ahora, entry.cargadoPor || USUARIO_ACTUAL || '', USUARIO_ACTUAL || '', ahora
       ]);
     }
     return obtenerRegistros();
@@ -196,7 +208,7 @@ function reemplazarRegistros(entries) {
       'id', 'date', 'machine', 'shift', 'available',
       'parada_maquina', 'setup_molde', 'puesta_punto',
       'mant_preventivo', 'mant_correctivo', 'falta_material',
-      'falta_operario', 'otros', 'updated_at'
+      'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at'
     ]);
     (entries || []).slice().reverse().forEach(entry => {
       sheet.appendRow([
@@ -206,7 +218,8 @@ function reemplazarRegistros(entries) {
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
         Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0,
         Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
-        Number(entry.otros) || 0, new Date().toISOString()
+        Number(entry.otros) || 0, entry.actualizado || new Date().toISOString(),
+        entry.cargadoPor || USUARIO_ACTUAL || '', entry.modificadoPor || '', entry.cargadoAt || ''
       ]);
     });
     return obtenerRegistros();
@@ -598,9 +611,14 @@ function accionPapelera(u, body) {
   if (body.action === 'vaciarPapelera') {
     // borra definitivamente: solo los restaurados, o todo si body.todo === true
     const sh = getPapeleraSheet();
+    if (body.todo === true) {
+      if (sh.getLastRow() > 1) sh.deleteRows(2, sh.getLastRow() - 1);
+      return { status: 'ok', papelera: [] };
+    }
     const rows = sh.getDataRange().getValues();
     for (let i = rows.length - 1; i >= 1; i--) {
-      if (body.todo === true || String(rows[i][7]) === 'restaurado' || (body.ids && body.ids.indexOf(String(rows[i][0])) !== -1)) sh.deleteRow(i + 1);
+      const porId = body.ids && body.ids.indexOf(String(rows[i][0])) !== -1;
+      if (body.todo === true || porId || (!body.soloIds && String(rows[i][7]) === 'restaurado')) sh.deleteRow(i + 1);
     }
     return { status: 'ok', papelera: leerPapelera().map(function (x) { const c = Object.assign({}, x); delete c.fila; return c; }) };
   }
@@ -619,6 +637,7 @@ function doPost(e) {
     return respuesta(accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' });
   }
 
+  USUARIO_ACTUAL = u.nombre ? (u.nombre + ' (@' + u.usuario + ')') : u.usuario;
   let records = null;
   const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
   if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
