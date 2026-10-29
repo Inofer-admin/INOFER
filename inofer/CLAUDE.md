@@ -83,3 +83,10 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Campo `precio` (unitario sin IVA, $) + `precioAt` en cada pieza del catálogo (viaja en el módulo de nube `catalog`; NUNCA poner precios en el repo, es público). Editable en el formulario (`#cat_precio`), en la tabla (`.inline-precio-input`) e importando Excel/CSV (`#inoferPreciosFile`, detecta columnas código/precio, formato 1.234,56).
 - `inoferFacturacion(week)` suma dailyQty × precio (incluye piezas compañeras). Badge `#inoferGanttFactBadge` en el asistente.
 - Asistente: "cuánto factura" → op facturacion; "necesito facturar X / aumentá en X / subí un N%" → op meta → `inoferPlanMeta(week, objetivo, {dias, maquinas, sinLimite})`: greedy por $/h (precio×u/h, bonus si ya está en la máquina, prioriza menor alcance), capacidad = horas del esquema de turnos activo, tope por pieza = pedidos de este mes+próximo del listado de demanda menos lo programado (sin listado: hasta duplicar lo programado), respeta -R, pistón y portamolde, reserva 0,87 h CMO al sumar pieza nueva. Días por defecto lun–vie (sábado/domingo si se nombran).
+
+## Set-up por máquina y lotes mínimos (bloque "Tiempos de set-up por máquina y lotes mínimos")
+- Módulo nube `setup` (servidor setup:'gantt'), local `tablero_inyectoras_setup_v1`: {maquinas:{id:{cmo, alis, loteMin}}}. Defaults: 200V/200N/180 CMO 5 h + puesta a punto (ALIS) 1 h; H50/Z30 CMO 3 h, ALIS 0. Panel `#inoferPanelSetup` en el Gantt.
+- `inoferSetupDe(m)`, `inoferLoteMinDe(part, m)` (pieza.loteMin o el default de la máquina), `inoferAgregarSetup(week,m,d)`, `inoferStdAux(m,code)` (columna Std del Gantt).
+- Gantt automático: sube la cantidad al lote mínimo, carga CMO+ALIS de la máquina por cada pieza/máquina (si no entra el set-up ese día, lo carga y arranca al día siguiente), solo reparte a otra máquina si el resto ≥ lote mínimo y > horas de set-up.
+- Asistente: pieza nueva → carga set-up; avisa si queda bajo el lote mínimo. Plan por facturación: pieza nueva solo si entra el lote mínimo completo.
+- Campo `loteMin` en catálogo (form `#cat_lote_min`, tabla `.inline-lote-input`, importador detecta columna "lote").

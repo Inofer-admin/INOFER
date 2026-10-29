@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.18" />
+  <meta name="inofer-version" content="2026.10.29.19" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1595,6 +1595,10 @@
               <div>
                 <label class="block text-[11px] font-bold text-lime-300 mb-1">💲 Precio unitario sin IVA ($)</label>
                 <input type="number" id="cat_precio" min="0" step="0.01" placeholder="Ej: 1250.50" class="w-full rounded-lg border border-lime-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-lime-300" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-violet-300 mb-1">📦 Lote mínimo de inyección (u)</label>
+                <input type="number" id="cat_lote_min" min="0" step="1" placeholder="Ej: 500" class="w-full rounded-lg border border-violet-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-violet-300" />
               </div>
               <div class="flex items-end">
                 <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
@@ -5439,7 +5443,8 @@ ${lines}${trendNote}`;
           </td>
           <td class="py-2 px-2.5 text-center font-semibold text-white">${item.cavities}</td>
           <td class="py-2 px-2.5 text-right font-extrabold text-emerald-400">${item.unitsPerHour} u/h
-            <div class="mt-1 flex items-center justify-end gap-1"><span class="text-[10px] font-semibold text-lime-300">💲</span><input type="number" min="0" step="0.01" data-inline-precio="${item.id}" value="${Number(item.precio) > 0 ? item.precio : ''}" placeholder="sin precio" class="inline-precio-input w-24 rounded border ${Number(item.precio) > 0 ? 'border-lime-500/60 bg-lime-950/30 text-lime-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-right text-[11px] font-bold focus:border-lime-400 focus:outline-none" title="Precio unitario sin IVA" /></div></td>
+            <div class="mt-1 flex items-center justify-end gap-1"><span class="text-[10px] font-semibold text-lime-300">💲</span><input type="number" min="0" step="0.01" data-inline-precio="${item.id}" value="${Number(item.precio) > 0 ? item.precio : ''}" placeholder="sin precio" class="inline-precio-input w-24 rounded border ${Number(item.precio) > 0 ? 'border-lime-500/60 bg-lime-950/30 text-lime-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-right text-[11px] font-bold focus:border-lime-400 focus:outline-none" title="Precio unitario sin IVA" /></div>
+            <div class="mt-1 flex items-center justify-end gap-1"><span class="text-[10px] font-semibold text-violet-300" title="Lote mínimo de inyección">📦</span><input type="number" min="0" step="1" data-inline-lote="${item.id}" value="${Number(item.loteMin) > 0 ? item.loteMin : ''}" placeholder="lote mín." class="inline-lote-input w-24 rounded border ${Number(item.loteMin) > 0 ? 'border-violet-500/60 bg-violet-950/30 text-violet-200' : 'border-slate-700 bg-slate-900 text-slate-400'} px-1.5 py-0.5 text-right text-[11px] font-bold focus:border-violet-400 focus:outline-none" title="Lote mínimo de inyección (unidades)" /></div></td>
           <td class="py-2 px-2.5">
             <div class="flex flex-wrap items-center gap-1">${machButtonsHtml}</div>
           </td>
@@ -5575,6 +5580,8 @@ ${lines}${trendNote}`;
           }
           const prInp = document.getElementById('cat_precio');
           if (prInp) prInp.value = Number(item.precio) > 0 ? item.precio : '';
+          const lmInp = document.getElementById('cat_lote_min');
+          if (lmInp) lmInp.value = Number(item.loteMin) > 0 ? item.loteMin : '';
           const formEl = document.getElementById('catalogForm');
           if (formEl && typeof formEl.scrollIntoView === 'function') {
             formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -6614,7 +6621,7 @@ ${lines}${trendNote}`;
               <td class="py-1 px-2 font-medium ${isExcelTheme ? 'text-slate-700' : 'text-slate-300'} border ${cellBorder}">${auxTask.name}</td>
               <td class="py-1 px-2 text-right font-bold ${isExcelTheme ? 'text-slate-900' : 'text-white'} border ${cellBorder}">${rowSumH.toFixed(2)} h</td>
               <td class="py-1 px-2 text-center text-slate-400 border ${cellBorder}">-</td>
-              <td class="py-1 px-2 text-right text-slate-500 border ${cellBorder}">${auxTask.stdHours}</td>
+              <td class="py-1 px-2 text-right text-slate-500 border ${cellBorder}">${typeof inoferStdAux === 'function' ? inoferStdAux(mach.id, auxTask.code) : auxTask.stdHours}</td>
               ${dayInputsHtml}
               <td class="border ${cellBorder}" colspan="3"></td>
             </tr>
@@ -7694,6 +7701,9 @@ ${lines}${trendNote}`;
           sharedMoldsScheduledCount++;
         }
         req.qty = effectiveQty;
+        // Lote mínimo de inyección: nunca se programa una tirada menor
+        const loteMinPieza = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(cleanPart, (catEntry && catEntry.machines && catEntry.machines[0]) || '') : 0;
+        if (loteMinPieza && req.qty < loteMinPieza) req.qty = loteMinPieza;
 
         const stdRate = catEntry ? (Number(catEntry.unitsPerHour) || 120) : 120;
         const urgencyTag = req.urgencyLevel === 'critical'
@@ -7774,6 +7784,7 @@ ${lines}${trendNote}`;
 
         let remainingQty = req.qty;
         let setupAddedForThisOrder = false;
+        let maqAnterior = null;
 
         const candidateMachines = pmPieza
           ? [chosenMach] // con portamolde compartido no se reparte en otras máquinas
@@ -7784,6 +7795,14 @@ ${lines}${trendNote}`;
 
         for (const mId of candidateMachines) {
           if (remainingQty <= 0) break;
+          if (maqAnterior !== null && maqAnterior !== mId) {
+            // pasar el resto a otra máquina implica otro set-up: solo si el resto llega al lote mínimo
+            const lmM = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(cleanPart, mId) : 0;
+            const sM = typeof inoferSetupDe === 'function' ? inoferSetupDe(mId).total : 1.5;
+            if ((lmM && remainingQty < lmM) || remainingQty / stdRate < sM) break;
+            setupAddedForThisOrder = false;
+          }
+          maqAnterior = mId;
           for (let wIdx = 0; wIdx < 4; wIdx++) {
             if (remainingQty <= 0) break;
             const wCode = monthWeekCodes[wIdx];
@@ -7810,15 +7829,24 @@ ${lines}${trendNote}`;
               }
 
               if (includeSetup && !setupAddedForThisOrder) {
-                const setupH = 1.5;
-                if (availHrs > setupH) {
-                  weekObj.machines[mId].aux['CMO'][dIdx] = Number((weekObj.machines[mId].aux['CMO'][dIdx] + 0.5).toFixed(2));
-                  weekObj.machines[mId].aux['ALIS'][dIdx] = Number((weekObj.machines[mId].aux['ALIS'][dIdx] + 1.0).toFixed(2));
+                const su = typeof inoferSetupDe === 'function' ? inoferSetupDe(mId) : { cmo: 0.5, alis: 1, total: 1.5 };
+                const setupH = su.total;
+                if (setupH > 0) {
+                  if (availHrs <= setupH + 0.25) {
+                    // no entra el set-up completo ese día: se hace el cambio y se arranca al día siguiente
+                    weekObj.machines[mId].aux['CMO'][dIdx] = Number((weekObj.machines[mId].aux['CMO'][dIdx] + su.cmo).toFixed(2));
+                    if (su.alis) weekObj.machines[mId].aux['ALIS'][dIdx] = Number((weekObj.machines[mId].aux['ALIS'][dIdx] + su.alis).toFixed(2));
+                    usedHours[mId][wIdx][dIdx] += setupH; totalMachHours[mId] += setupH;
+                    setupAddedForThisOrder = true;
+                    continue;
+                  }
+                  weekObj.machines[mId].aux['CMO'][dIdx] = Number((weekObj.machines[mId].aux['CMO'][dIdx] + su.cmo).toFixed(2));
+                  if (su.alis) weekObj.machines[mId].aux['ALIS'][dIdx] = Number((weekObj.machines[mId].aux['ALIS'][dIdx] + su.alis).toFixed(2));
                   usedHours[mId][wIdx][dIdx] += setupH;
                   totalMachHours[mId] += setupH;
                   availHrs -= setupH;
-                  setupAddedForThisOrder = true;
                 }
+                setupAddedForThisOrder = true;
               }
 
               const hrsNeeded = remainingQty / stdRate;
@@ -8847,6 +8875,8 @@ ${lines}${trendNote}`;
         if (pisInp) pisInp.value = '';
         const prInp = document.getElementById('cat_precio');
         if (prInp) prInp.value = '';
+        const lmInp = document.getElementById('cat_lote_min');
+        if (lmInp) lmInp.value = '';
       };
 
       document.getElementById('catalogResetFormBtn').addEventListener('click', resetCatalogForm);
@@ -8873,6 +8903,7 @@ ${lines}${trendNote}`;
           portamolde: (document.getElementById('cat_portamolde')?.value || '').trim().toUpperCase(),
           pistonMm: Number(document.getElementById('cat_piston')?.value) || 0,
           precio: Math.max(0, Number(document.getElementById('cat_precio')?.value) || 0),
+          loteMin: Math.max(0, Math.round(Number(document.getElementById('cat_lote_min')?.value) || 0)),
           precioAt: (Number(document.getElementById('cat_precio')?.value) || 0) !== (Number(existingItem?.precio) || 0) ? new Date().toISOString() : (existingItem?.precioAt || ''),
           cavities: Number(document.getElementById('cat_cavities').value) || 1,
           unitsPerHour: Number(document.getElementById('cat_units_hr').value) || 180,
@@ -11981,7 +12012,8 @@ ${lines}${trendNote}`;
               const it = nuevoItem(op.part, m);
               asegurarMaquina(week, m).items.push(it);
               x = { m, it, nuevo: true };
-              avisos.push(`Agregué la ${op.part} a la ${m}.`);
+              const hsu = typeof inoferAgregarSetup === 'function' ? inoferAgregarSetup(week, m, op.day) : 0;
+              avisos.push(`Agregué la ${op.part} a la ${m}${hsu ? ` (con ${hsu} h de cambio de molde y puesta a punto el ${DIA_NOMBRE[op.day]})` : ''}.`);
             } else x = unico(lst, op.part);
             const antes = Number(x.it.dailyQty[op.day]) || 0;
             const nuevo = Math.max(0, Math.round(op.op === 'add' ? antes + op.qty : op.qty));
@@ -11991,6 +12023,9 @@ ${lines}${trendNote}`;
             sincronizarCompañeras(week, x.m, x.it);
             const h = horasDia(week, x.m, op.day);
             if (h > 24) avisos.push(`⚠️ La ${x.m} el ${DIA_NOMBRE[op.day]} queda con ${h.toFixed(1)} h cargadas (más de 24 h).`);
+            const lmC = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(x.it.part, x.m) : 0;
+            const totC = (x.it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0);
+            if (lmC && totC > 0 && totC < lmC) avisos.push(`⚠️ La ${x.it.part} queda con ${totC.toLocaleString('es-AR')} u en la semana, por debajo del lote mínimo de ${lmC.toLocaleString('es-AR')} u.`);
             return `${x.it.part} · ${x.m} · ${DIA_NOMBRE[op.day]}: ${antes} → ${nuevo} piezas`;
           }
           case 'move_day': {
@@ -13002,7 +13037,7 @@ Pedido: ${frase}`;
         const maqs = (opts.maquinas && opts.maquinas.length) ? opts.maquinas : MAQS();
         const dem = demandaPorPieza();
         const hayDemanda = Object.keys(dem).length > 0;
-        const SETUP = 0.87; // cambio de molde + alistamiento (h)
+        const setupM = m => (typeof inoferSetupDe === 'function' ? inoferSetupDe(m) : { cmo: 0.87, alis: 0, total: 0.87 });
         // cuánto se puede sumar de cada pieza en la semana
         const yaPlan = {};
         Object.keys(week.machines).forEach(m => ((week.machines[m] || {}).items || []).forEach(it => { if (!it.isSharedCompanion) yaPlan[clave(it.part)] = (yaPlan[clave(it.part)] || 0) + (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); }));
@@ -13047,28 +13082,43 @@ Pedido: ${frase}`;
           if (!md.items) md.items = [];
           let it = md.items.find(x => !x.isSharedCompanion && clave(x.part) === kk);
           let agregado = 0, setupPend = !it;
+          const SETUP = setupM(k.m).total;
+          const loteM = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(k.c.part, k.m) : 0;
+          if (!it && loteM) {
+            // pieza nueva: tiene que entrar al menos el lote mínimo en las horas libres de la semana
+            const libreSem = dias.reduce((a, d) => a + Math.max(0, cap - horasUsadas(week, k.m, d)), 0) - SETUP;
+            if (libreSem * k.rate < loteM) continue;
+            if (resto < loteM) resto = loteM;
+          }
+          const snapshot = it ? null : JSON.stringify(md);
           const porDia = [];
           const ordenDias = dias.slice().sort((a, b) => (horasUsadas(week, k.m, a) - horasUsadas(week, k.m, b)) || (a - b));
           for (const d of ordenDias) {
-            if (falta <= 0 || resto <= 0) break;
+            const faltaLote = snapshot && loteM && agregado < loteM;
+            if ((falta <= 0 && !faltaLote) || resto <= 0) break;
             let libre = cap - horasUsadas(week, k.m, d) - (setupPend ? SETUP : 0);
             if (libre < 0.5) continue;
             if (typeof inoferChoqueManual === 'function' && inoferChoqueManual(week, k.c.part, k.m, [d])) continue;
-            const q = Math.min(Math.floor(libre * k.rate), resto, Math.ceil(falta / k.p));
+            const q = Math.min(Math.floor(libre * k.rate), resto, Math.max(Math.ceil(falta / k.p), loteM ? loteM - agregado : 0));
             if (q <= 0) continue;
             if (!it) {
               const mat = String(k.c.material || '').toLowerCase().includes('zam') ? 'zamac' : 'alsi';
               it = { id: 'gi-meta-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), part: k.c.part, desc: k.c.desc || ('Pieza ' + k.c.part), totalQty: 0, mat, stdRate: k.rate,
                 weightKg: Number(k.c.weightWithSprueKg) || 0, recuperoKg: (Number(k.c.weightWithSprueKg) || 0) * 0.3, dailyQty: [0, 0, 0, 0, 0, 0, 0], orderId: '', sharedWithPart: '', isSharedCompanion: false };
               md.items.push(it);
-              if (!md.aux) md.aux = {};
-              if (!md.aux.CMO) md.aux.CMO = [0, 0, 0, 0, 0, 0, 0];
-              md.aux.CMO[d] = Math.round(((Number(md.aux.CMO[d]) || 0) + SETUP) * 100) / 100;
+              if (typeof inoferAgregarSetup === 'function') inoferAgregarSetup(week, k.m, d);
+              else { if (!md.aux) md.aux = {}; if (!md.aux.CMO) md.aux.CMO = [0, 0, 0, 0, 0, 0, 0]; md.aux.CMO[d] = Math.round(((Number(md.aux.CMO[d]) || 0) + SETUP) * 100) / 100; }
               setupPend = false;
             }
             it.dailyQty[d] = (Number(it.dailyQty[d]) || 0) + q;
             agregado += q; resto -= q; falta -= q * k.p;
             porDia.push(`${DIA[d].slice(0, 3)} ${q}`);
+          }
+          if (snapshot && loteM && agregado > 0 && agregado < loteM) {
+            // no llegó al lote mínimo: se descarta esta pieza y se devuelve la máquina como estaba
+            falta += agregado * k.p;
+            week.machines[k.m] = JSON.parse(snapshot);
+            continue;
           }
           if (agregado) {
             tope[kk] = resto; usadaEn[kk] = k.m;
@@ -13087,7 +13137,7 @@ Pedido: ${frase}`;
       function textoPlan(r) {
         if (r.yaCumple) return `✓ El programa ya factura ${plata(r.antes)}, que alcanza el objetivo de ${plata(r.objetivo)}.`;
         let h = `🎯 Objetivo ${plata(r.objetivo)} · antes ${plata(r.antes)} → ahora <b>${plata(r.despues)}</b>`;
-        if (r.cambios.length) h += '<br>' + r.cambios.map(c => `✓ ${esc(c.part)} en la ${c.m}: +${c.qty.toLocaleString('es-AR')} u (${c.detalle}) = ${plata(c.monto)}${c.nueva ? ' · nueva (+0,87 h cambio de molde)' : ''}`).join('<br>');
+        if (r.cambios.length) h += '<br>' + r.cambios.map(c => `✓ ${esc(c.part)} en la ${c.m}: +${c.qty.toLocaleString('es-AR')} u (${c.detalle}) = ${plata(c.monto)}${c.nueva ? ` · nueva (+${typeof inoferSetupDe === 'function' ? inoferSetupDe(c.m).total : 0.87} h de cambio de molde y puesta a punto)` : ''}`).join('<br>');
         if (r.faltante > 0) h += `<br>⚠️ Faltan ${plata(r.faltante)} para el objetivo: no queda capacidad (${r.capHoras} h por día según los turnos) o demanda de piezas con precio. Podés pedirme que incluya el sábado, otra máquina, o "sin límite de demanda".`;
         else h += '<br>✓ Objetivo alcanzado.';
         r.avisos.forEach(a => { h += '<br>ℹ️ ' + esc(a); });
@@ -13107,26 +13157,31 @@ Pedido: ${frase}`;
       }
       function importarFilas(rows) {
         // buscar la fila de encabezados
-        let hi = -1, ci = -1, pi = -1;
+        let hi = -1, ci = -1, pi = -1, li = -1;
         for (let i = 0; i < Math.min(rows.length, 30); i++) {
           const r = rows[i].map(x => norm(x));
           const c = r.findIndex(x => /^(pieza|codigo|cod|articulo|art|item|producto|n° pieza|nro pieza|numero de pieza|part)/.test(x) || /cod(igo)?\.? ?(de )?(pieza|art)/.test(x));
           const p = r.findIndex(x => /precio|price|importe|valor|unitario/.test(x));
-          if (c >= 0 && p >= 0) { hi = i; ci = c; pi = p; break; }
+          const l = r.findIndex(x => /lote/.test(x));
+          if (c >= 0 && (p >= 0 || l >= 0)) { hi = i; ci = c; pi = p; li = l; break; }
         }
         if (hi < 0) { // sin encabezado: primera columna de texto y primera numérica
           hi = -1; ci = 0; pi = rows[0] ? rows[0].findIndex((x, j) => j > 0 && leerNumeroPrecio(x) > 0) : 1; if (pi < 0) pi = 1;
         }
-        const res = { ok: 0, cambiados: 0, noEncontradas: [], vacias: 0 };
+        const res = { ok: 0, cambiados: 0, noEncontradas: [], vacias: 0, lotes: 0 };
         rows.slice(hi + 1).forEach(r => {
           const code = String(r[ci] == null ? '' : r[ci]).trim();
           if (!code) return;
-          const v = Math.round(leerNumeroPrecio(r[pi]) * 100) / 100;
-          if (!(v > 0)) { res.vacias++; return; }
+          const v = pi >= 0 ? Math.round(leerNumeroPrecio(r[pi]) * 100) / 100 : 0;
+          const lv = li >= 0 ? Math.round(leerNumeroPrecio(r[li])) : 0;
+          if (!(v > 0) && !(lv > 0)) { res.vacias++; return; }
           const it = catDe(code);
           if (!it) { res.noEncontradas.push(code); return; }
           res.ok++;
-          if ((Number(it.precio) || 0) !== v) { it.precio = v; it.precioAt = new Date().toISOString(); res.cambiados++; }
+          let cambio = false;
+          if (v > 0 && (Number(it.precio) || 0) !== v) { it.precio = v; it.precioAt = new Date().toISOString(); cambio = true; }
+          if (lv > 0 && (Number(it.loteMin) || 0) !== lv) { it.loteMin = lv; res.lotes++; cambio = true; }
+          if (cambio) res.cambiados++;
         });
         if (res.cambiados) savePartsCatalog();
         try { if (typeof renderCatalogTable === 'function') renderCatalogTable(); } catch (e) { }
@@ -13140,7 +13195,7 @@ Pedido: ${frase}`;
         const rd = new FileReader();
         const fin = rows => {
           const r = importarFilas(rows);
-          const msg = `Precios: ${r.ok} piezas encontradas, ${r.cambiados} actualizadas${r.noEncontradas.length ? `, ${r.noEncontradas.length} códigos que no están en la base` : ''}.`;
+          const msg = `Precios: ${r.ok} piezas encontradas, ${r.cambiados} actualizadas${r.lotes ? ` (${r.lotes} con lote mínimo)` : ''}${r.noEncontradas.length ? `, ${r.noEncontradas.length} códigos que no están en la base` : ''}.`;
           showToast(msg);
           const box = $('inoferPreciosResultado');
           if (box) box.innerHTML = esc(msg) + (r.noEncontradas.length ? `<details class="mt-1"><summary class="cursor-pointer text-amber-300">Ver códigos no encontrados</summary><div class="mt-1 max-h-32 overflow-auto text-slate-400">${r.noEncontradas.map(esc).join(', ')}</div></details>` : '');
@@ -13181,7 +13236,7 @@ Pedido: ${frase}`;
             <label id="inoferPreciosImportarBtn" class="cursor-pointer rounded-lg border border-lime-500/40 bg-lime-500/10 px-2.5 py-1 text-[11px] font-bold text-lime-200 hover:bg-lime-500/20">📥 Importar lista de precios (Excel)
               <input type="file" id="inoferPreciosFile" accept=".xlsx,.xls,.csv,.txt" class="hidden"></label>
           </div>
-          <p class="mt-1 text-[11px] text-slate-400">El Excel necesita una columna con el código de pieza y otra con el precio. Cada precio también se puede cambiar a mano en la tabla (💲) o al editar la pieza.</p>
+          <p class="mt-1 text-[11px] text-slate-400">El Excel necesita una columna con el código de pieza y otra con el precio (y si querés, otra con el lote mínimo). Cada precio también se puede cambiar a mano en la tabla (💲) o al editar la pieza.</p>
           <div id="inoferPreciosResultado" class="mt-1 text-[11px] text-slate-300"></div>`;
         form.parentElement.insertBefore(d, form);
         $('inoferPreciosFile').addEventListener('change', e => { importarArchivo(e.target.files[0]); e.target.value = ''; });
@@ -13212,6 +13267,156 @@ Pedido: ${frase}`;
         window.savePartsCatalog = function () { const r = sc.apply(this, arguments); try { actualizarBadge(); renderPanelPrecios(); } catch (e) { } return r; };
       }
       function iniciar() { try { montarPanel(); } catch (e) { console.error(e); } setTimeout(() => { try { actualizarBadge(); } catch (e) { } }, 300); }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>
+  <script>
+    // ===== Tiempos de set-up por máquina y lotes mínimos de inyección =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const clave = s => norm(s).replace(/[\s\-\/_.]/g, '');
+      const KEY = 'tablero_inyectoras_setup_v1';
+      const DEF = { maquinas: {
+        '200V': { cmo: 5, alis: 1, loteMin: 0 }, '200N': { cmo: 5, alis: 1, loteMin: 0 }, '180': { cmo: 5, alis: 1, loteMin: 0 },
+        'H50': { cmo: 3, alis: 0, loteMin: 0 }, 'Z30': { cmo: 3, alis: 0, loteMin: 0 }
+      } };
+      let cfg;
+      try { cfg = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { cfg = null; }
+      if (!cfg || !cfg.maquinas) cfg = JSON.parse(JSON.stringify(DEF));
+      Object.keys(DEF.maquinas).forEach(m => { cfg.maquinas[m] = Object.assign({}, DEF.maquinas[m], cfg.maquinas[m] || {}); });
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : Object.keys(DEF.maquinas));
+
+      function guardar(subir) {
+        try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { }
+        if (subir) { try { pushCloudModuleState('setup', cfg); } catch (e) { } }
+      }
+      function setupDe(m) {
+        const c = cfg.maquinas[m] || { cmo: 3, alis: 0 };
+        const cmo = Math.max(0, Number(c.cmo) || 0), alis = Math.max(0, Number(c.alis) || 0);
+        return { cmo, alis, total: cmo + alis };
+      }
+      function catDe(part) {
+        const pc = typeof partsCatalog !== 'undefined' ? partsCatalog : [];
+        return pc.find(x => norm(x.part) === norm(part)) || pc.find(x => clave(x.part) === clave(part)) || null;
+      }
+      function loteMinDe(part, m) {
+        const c = catDe(part);
+        const p = c ? Number(c.loteMin) || 0 : 0;
+        if (p > 0) return p;
+        return m ? Math.max(0, Number((cfg.maquinas[m] || {}).loteMin) || 0) : 0;
+      }
+      window.inoferSetupCfg = () => cfg;
+      window.inoferSetupDe = setupDe;
+      window.inoferLoteMinDe = loteMinDe;
+      window.inoferStdAux = (m, code) => {
+        const s = setupDe(m);
+        if (code === 'CMO') return s.cmo;
+        if (code === 'ALIS') return s.alis;
+        const t = (typeof GANTT_AUX_TASKS !== 'undefined' ? GANTT_AUX_TASKS : []).find(a => a.code === code);
+        return t ? t.stdHours : 0;
+      };
+      // Agrega el set-up (cambio de molde + puesta a punto) de una pieza nueva en una máquina/día
+      window.inoferAgregarSetup = (week, m, d) => {
+        const s = setupDe(m);
+        const md = week.machines[m]; if (!md) return 0;
+        if (!md.aux) md.aux = {};
+        ['CMO', 'ALIS'].forEach(k => { if (!md.aux[k]) md.aux[k] = [0, 0, 0, 0, 0, 0, 0]; });
+        md.aux.CMO[d] = Math.round(((Number(md.aux.CMO[d]) || 0) + s.cmo) * 100) / 100;
+        if (s.alis) md.aux.ALIS[d] = Math.round(((Number(md.aux.ALIS[d]) || 0) + s.alis) * 100) / 100;
+        return s.total;
+      };
+
+      // ---------- recibir de la nube ----------
+      if (typeof window.applyCloudModules === 'function') {
+        const am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const out = am.apply(this, arguments);
+          try {
+            if (mods && mods.setup && mods.setup.maquinas && JSON.stringify(mods.setup) !== JSON.stringify(cfg)) {
+              cfg = mods.setup; Object.keys(DEF.maquinas).forEach(m => { cfg.maquinas[m] = Object.assign({}, DEF.maquinas[m], cfg.maquinas[m] || {}); });
+              guardar(false);
+              const a = document.activeElement;
+              if (!(a && a.closest && a.closest('#inoferPanelSetup'))) render();
+            }
+          } catch (e) { }
+          return out;
+        };
+      }
+
+      // ---------- panel en el Plan Gantt ----------
+      function render() {
+        const gv = $('viewGantt'); if (!gv) return;
+        let box = $('inoferPanelSetup');
+        if (!box) {
+          box = document.createElement('details'); box.id = 'inoferPanelSetup';
+          box.className = 'rounded-2xl border border-violet-500/30 bg-slate-900/80 p-3.5 shadow-xl text-xs';
+          const pis = $('inoferPanelPistones');
+          if (pis && pis.parentElement === gv) gv.insertBefore(box, pis.nextSibling); else gv.insertBefore(box, gv.firstChild);
+        }
+        const abierto = box.open;
+        const puede = typeof inoferCan !== 'function' || inoferCan('gantt', 'edit');
+        const inp = 'inofer-setup-cfg w-20 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-xs font-bold text-white focus:border-violet-400 focus:outline-none';
+        const conLote = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).filter(x => Number(x.loteMin) > 0).length;
+        box.innerHTML = `<summary class="cursor-pointer select-none text-sm font-extrabold text-violet-300">⏱️ Set-up por máquina y lotes mínimos <span class="ml-1 text-[11px] font-normal text-slate-400">— ${MAQS().map(m => `${m}: ${setupDe(m).total} h`).join(' · ')}</span></summary>
+          <div class="mt-3 overflow-x-auto"><table class="w-full text-left">
+            <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3 text-right">Cambio de molde (h)</th><th class="py-1 pr-3 text-right">Puesta a punto (h)</th><th class="py-1 pr-3 text-right">Total set-up</th><th class="py-1 text-right">Lote mínimo por defecto (u)</th></tr></thead>
+            <tbody>${MAQS().map(m => { const c = cfg.maquinas[m] || {}; return `<tr class="border-t border-slate-800">
+              <td class="py-1.5 pr-3 font-bold text-white">${esc(m)}</td>
+              <td class="py-1.5 pr-3 text-right"><input type="number" min="0" step="0.25" class="${inp}" data-m="${esc(m)}" data-k="cmo" value="${Number(c.cmo) || 0}" ${puede ? '' : 'disabled'}></td>
+              <td class="py-1.5 pr-3 text-right"><input type="number" min="0" step="0.25" class="${inp}" data-m="${esc(m)}" data-k="alis" value="${Number(c.alis) || 0}" ${puede ? '' : 'disabled'}></td>
+              <td class="py-1.5 pr-3 text-right font-bold text-violet-200">${setupDe(m).total} h</td>
+              <td class="py-1.5 text-right"><input type="number" min="0" step="1" class="${inp}" data-m="${esc(m)}" data-k="loteMin" value="${Number(c.loteMin) || ''}" placeholder="sin mínimo" ${puede ? '' : 'disabled'}></td>
+            </tr>`; }).join('')}</tbody></table></div>
+          <p class="mt-2 text-[11px] text-slate-400">Cada vez que una pieza entra a una máquina se cargan estas horas de cambio de molde y puesta a punto, en el Gantt automático, en el asistente y en el plan por facturación. El lote mínimo de cada pieza se carga en la Base de Datos (${conLote} piezas con lote propio); si una pieza no tiene, se usa el de la máquina. Nunca se programa una tirada menor al lote mínimo.</p>`;
+        box.open = abierto;
+      }
+      document.addEventListener('change', e => {
+        const el = e.target;
+        if (!el.classList || !el.classList.contains('inofer-setup-cfg')) return;
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) return;
+        const m = el.dataset.m, k = el.dataset.k;
+        cfg.maquinas[m] = cfg.maquinas[m] || {};
+        cfg.maquinas[m][k] = Math.max(0, Number(el.value) || 0);
+        guardar(true); render();
+        showToast(k === 'loteMin' ? `${m}: lote mínimo ${cfg.maquinas[m][k] || 'sin definir'}` : `${m}: set-up ${setupDe(m).total} h`);
+      });
+
+      // ---------- lote mínimo por pieza en la base de datos ----------
+      document.addEventListener('change', ev => {
+        const el = ev.target;
+        if (!el || !el.classList || !el.classList.contains('inline-lote-input')) return;
+        if (typeof inoferCan === 'function' && !inoferCan('catalogo', 'edit')) return;
+        const item = (partsCatalog || []).find(x => String(x.id) === String(el.dataset.inlineLote));
+        if (!item) return;
+        const v = Math.max(0, Math.round(Number(el.value) || 0));
+        if (v === (Number(item.loteMin) || 0)) return;
+        item.loteMin = v;
+        savePartsCatalog();
+        showToast(v ? `${item.part}: lote mínimo ${v.toLocaleString('es-AR')} u` : `${item.part}: sin lote mínimo`);
+      });
+
+      // ---------- aviso en la carga manual del Gantt ----------
+      document.addEventListener('submit', ev => {
+        if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+        try {
+          const part = ($('ganttModalPart') || {}).value || '', m = ($('ganttModalMachine') || {}).value || '';
+          let tot = 0; for (let i = 0; i < 7; i++) tot += Number(($('ganttDayQty_' + i) || {}).value) || 0;
+          const lm = loteMinDe(part, m);
+          if (lm && tot > 0 && tot < lm) setTimeout(() => showToast(`⚠️ ${part}: ${tot} u está por debajo del lote mínimo de ${lm.toLocaleString('es-AR')} u`), 400);
+        } catch (e) { }
+      }, true);
+
+      if (typeof INOFER_EDIT_CONTROLS !== 'undefined') {
+        INOFER_EDIT_CONTROLS.gantt.push('.inofer-setup-cfg');
+        INOFER_EDIT_CONTROLS.catalogo.push('.inline-lote-input', '#cat_lote_min');
+      }
+      if (typeof window.renderGanttView === 'function') {
+        const rg = window.renderGanttView;
+        window.renderGanttView = function () { const r = rg.apply(this, arguments); try { render(); } catch (e) { } return r; };
+      }
+      function iniciar() { try { render(); } catch (e) { console.error(e); } }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
     })();
   </script>
