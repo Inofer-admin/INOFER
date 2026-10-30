@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.30.01" />
+  <meta name="inofer-version" content="2026.10.30.02" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -17734,6 +17734,7 @@ function activarInformePorMail() {
         cargar();
       }
       window.inoferAlmacenamiento = abrirAlmacen;
+      window.inoferPlantaPerm = { verInforme: () => verInforme() && enNube(), esAdmin };
       // turnos de órdenes archivadas: se piden una vez por sesión y suman en el tablero
       let archRegs = null, archPidiendo = false, archAt = 0;
       function pedirArch() {
@@ -17790,6 +17791,176 @@ function activarInformePorMail() {
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 0)); else setTimeout(iniciar, 0);
       window.addEventListener('load', () => setTimeout(() => { try { iniciar(); } catch (e) { } }, 50));
+    })();
+  </script>
+  <script>
+    // ===== Encabezado ordenado (opción B): una barra con menús por grupo + íconos a la derecha =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const visibleBtn = id => { const b = $(id); return !!b && !b.classList.contains('hidden'); };
+      const cuenta = id => { const e = $(id); const n = e ? parseInt(e.textContent, 10) : NaN; return isNaN(n) ? '' : n; };
+      const GRUPOS = [
+        { id: 'prod', nombre: 'Producción', ico: '🏭', items: [
+          { tab: 'tabOrdersBtn', ico: '📋', t: 'Órdenes de producción', d: 'Carga rápida, lista y seguimiento', n: () => cuenta('ordersCountBadge') },
+          { tab: 'tabDashboardBtn', ico: '📊', t: 'Tablero y velocímetros', d: 'Utilización y paradas' },
+          { tab: 'tabRecordsBtn', ico: '🕒', t: 'Historial de partes', d: 'Partes de horas cargados', n: () => cuenta('recordCountBadge') },
+          { tab: 'tabSimulatorBtn', ico: '🧮', t: 'Calculadora directa', d: 'Simular un turno' },
+          { accion: () => $('openNewEntryModalBtn') && $('openNewEntryModalBtn').click(), vis: () => !!sesion() && !!$('openNewEntryModalBtn') && can('partes', 'edit') && pk('partes_cargar'), ico: '➕', t: 'Cargar horas', d: 'Parte de horas manual' }
+        ] },
+        { id: 'plan', nombre: 'Planificación', ico: '📅', items: [
+          { tab: 'tabGanttBtn', ico: '📅', t: 'Plan Gantt', d: 'Semanal / mensual y asistente' },
+          { tab: 'tabStockBtn', ico: '📦', t: 'Stock', d: 'Material y producto terminado' },
+          { tab: 'tabMantBtn', ico: '🔧', t: 'Mantenimiento', d: 'Roturas, preventivos, máquinas' }
+        ] },
+        { id: 'ana', nombre: 'Análisis', ico: '📈', items: [
+          { tab: 'tabKpiBtn', ico: '📈', t: 'Indicadores', d: 'Rebabado, scrap, recuento, inyección' },
+          { accion: () => window.inoferInformeSemanal && inoferInformeSemanal(), vis: () => !!(window.inoferPlantaPerm && inoferPlantaPerm.verInforme()), ico: '📄', t: 'Informe semanal', d: 'PDF, WhatsApp y mail' }
+        ] },
+        { id: 'ia', nombre: 'IA', ico: '✨', directo: true, items: [{ tab: 'tabAiBtn', ico: '✨', t: 'IA INOFER' }] },
+        { id: 'adm', nombre: 'Admin', ico: '⚙️', items: [
+          { tab: 'tabAudBtn', ico: '🧾', t: 'Registro de cambios', d: 'Quién cambió qué y cuándo' },
+          { accion: () => window.inoferAlmacenamiento && inoferAlmacenamiento(), vis: () => esAdmin() && !!window.inoferAlmacenamiento, ico: '💾', t: 'Almacenamiento', d: 'Espacio y archivo de órdenes' },
+          { tab: 'tabPapeleraBtn', ico: '🗑️', t: 'Papelera', d: 'Recuperar lo borrado' },
+          { accion: () => $('inoferMenuUsers') && $('inoferMenuUsers').click(), vis: () => esAdmin() && !!$('inoferMenuUsers'), ico: '🛡️', t: 'Usuarios y permisos', d: 'Altas, claves y permisos' },
+          { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }
+        ] }
+      ];
+      const VISTAS = { viewDashboard: 'tabDashboardBtn', viewSimulator: 'tabSimulatorBtn', viewRecords: 'tabRecordsBtn', viewOrders: 'tabOrdersBtn', viewGantt: 'tabGanttBtn', viewAi: 'tabAiBtn', viewKpi: 'tabKpiBtn', viewPapelera: 'tabPapeleraBtn', viewMant: 'tabMantBtn', viewStock: 'tabStockBtn', viewAud: 'tabAudBtn' };
+      // las solapas originales a veces pierden la clase "hidden" al cambiar de pestaña: se decide por permisos
+      const can = (a, n) => typeof inoferCan !== 'function' || inoferCan(a, n);
+      const pk = k => typeof inoferPuede !== 'function' || inoferPuede(k);
+      const PERM = { tabDashboardBtn: () => can('partes', 'view'), tabRecordsBtn: () => can('partes', 'view'), tabSimulatorBtn: () => can('partes', 'view') && pk('partes_simulador'),
+        tabOrdersBtn: () => can('ordenes', 'view') || can('catalogo', 'view'), tabGanttBtn: () => can('gantt', 'view'), tabAiBtn: () => can('ia', 'view'), tabKpiBtn: () => can('indicadores', 'view'), tabPapeleraBtn: () => esAdmin() };
+      const itemVisible = it => it.tab ? (!!$(it.tab) && (PERM[it.tab] ? PERM[it.tab]() : visibleBtn(it.tab))) : (it.vis ? it.vis() : true);
+      function tabActiva() { for (const v of Object.keys(VISTAS)) { const e = $(v); if (e && !e.classList.contains('hidden')) return VISTAS[v]; } return ''; }
+
+      function montar() {
+        const header = document.querySelector('body > header');
+        if (!header || $('nbBar')) return !!$('nbBar');
+        const viejo = header.firstElementChild;
+        const st = document.createElement('style');
+        st.textContent = `#nbRight .sm\\:inline{display:none!important}#nbRight #syncStatusText{display:none}#nbRight>button,#nbRight>div>button{padding:.45rem .6rem}#nbRight #inoferUserChipRole{display:none}@media(min-width:640px){#nbRight #inoferUserChipRole{display:inline}}#nbNav::-webkit-scrollbar{display:none}#nbNav{scrollbar-width:none}`;
+        document.head.appendChild(st);
+        const bar = document.createElement('div');
+        bar.id = 'nbBar';
+        bar.className = 'mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:flex-nowrap sm:px-6';
+        bar.innerHTML = `
+          <button type="button" id="nbLogo" class="flex shrink-0 items-center gap-2 rounded-xl pr-1 text-left" title="Sistema Integral de Inyección y Planificación">
+            <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20"><svg class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></span>
+            <span class="leading-tight"><span class="block text-base font-black tracking-wider text-white">INOFER</span><span id="nbVer" class="flex items-center"></span></span>
+          </button>
+          <nav id="nbNav" class="order-3 flex w-full min-w-0 items-center gap-1 overflow-x-auto sm:order-none sm:w-auto sm:flex-1"></nav>
+          <div id="nbRight" class="ml-auto flex shrink-0 items-center gap-1.5"></div>`;
+        header.insertBefore(bar, viejo);
+        viejo.classList.add('hidden');
+        viejo.id = viejo.id || 'nbViejo';
+        $('nbLogo').addEventListener('click', () => { try { switchTab(visibleBtn('tabDashboardBtn') ? 'dashboard' : 'orders'); } catch (e) { } });
+        // menú desplegable (uno solo, flotante)
+        const menu = document.createElement('div');
+        menu.id = 'nbMenu';
+        menu.className = 'hidden fixed z-[80] w-72 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-2xl backdrop-blur';
+        document.body.appendChild(menu);
+        document.addEventListener('click', e => { if (!e.target.closest('#nbMenu') && !e.target.closest('.nb-grupo')) cerrarMenu(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarMenu(); });
+        window.addEventListener('resize', cerrarMenu);
+        window.addEventListener('scroll', () => { if (!menu.classList.contains('hidden')) cerrarMenu(); }, true);
+        $('nbNav').addEventListener('click', e => {
+          const b = e.target.closest('.nb-grupo'); if (!b) return;
+          const g = GRUPOS.find(x => x.id === b.dataset.g);
+          const vis = g.items.filter(itemVisible);
+          if (g.directo || vis.length === 1) { ejecutar(vis[0]); return; }
+          if (menu.dataset.g === g.id && !menu.classList.contains('hidden')) { cerrarMenu(); return; }
+          abrirMenu(g, b);
+        });
+        menu.addEventListener('click', e => { const b = e.target.closest('.nb-item'); if (!b) return; const [gi, ii] = b.dataset.k.split('.').map(Number); ejecutar(GRUPOS[gi].items[ii]); });
+        // Historial: sus botones (cargar horas, importar/exportar CSV) van adentro de la pestaña
+        const rv = $('viewRecords');
+        if (rv && !$('nbRecTools')) {
+          const t = document.createElement('div'); t.id = 'nbRecTools'; t.className = 'flex flex-wrap items-center justify-end gap-2';
+          ['openNewEntryModalBtn', 'importCsvInput', 'importCsvBtn', 'exportCsvBtn'].forEach(id => { const e = $(id); if (e) t.appendChild(e); });
+          rv.insertBefore(t, rv.firstChild);
+        }
+        return true;
+      }
+      function ejecutar(it) {
+        cerrarMenu();
+        if (!it) return;
+        if (it.tab) { const b = $(it.tab); if (b) b.click(); }
+        else if (it.accion) it.accion();
+        setTimeout(pintar, 50);
+        try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { }
+      }
+      function abrirMenu(g, boton) {
+        const menu = $('nbMenu'); const gi = GRUPOS.indexOf(g); const act = tabActiva();
+        menu.dataset.g = g.id;
+        menu.innerHTML = g.items.map((it, ii) => {
+          if (!itemVisible(it)) return '';
+          const on = it.tab && it.tab === act; const n = it.n ? it.n() : '';
+          return `<button type="button" class="nb-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${on ? 'bg-cyan-500/15 ring-1 ring-cyan-500/40' : 'hover:bg-slate-800'}" data-k="${gi}.${ii}">
+            <span class="text-xl leading-none">${it.ico}</span><span class="min-w-0 flex-1"><span class="block text-sm font-bold ${on ? 'text-cyan-200' : 'text-white'}">${esc(it.t)}</span>${it.d ? `<span class="block truncate text-[11px] text-slate-400">${esc(it.d)}</span>` : ''}</span>
+            ${n !== '' && n != null ? `<span class="rounded-full bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-300">${n}</span>` : ''}</button>`;
+        }).join('');
+        const r = boton.getBoundingClientRect();
+        menu.classList.remove('hidden');
+        const w = Math.min(288, window.innerWidth - 16);
+        menu.style.width = w + 'px';
+        menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+        menu.style.top = (r.bottom + 6) + 'px';
+        pintar(true);
+      }
+      function cerrarMenu() { const m = $('nbMenu'); if (m && !m.classList.contains('hidden')) { m.classList.add('hidden'); m.dataset.g = ''; pintar(true); } }
+      let firma = '';
+      function pintar(forzar) {
+        const nav = $('nbNav'); if (!nav) return;
+        const act = tabActiva(); const abierto = ($('nbMenu') || {}).dataset ? $('nbMenu').dataset.g : '';
+        const vis = GRUPOS.map(g => g.items.filter(itemVisible).length);
+        const f = act + '|' + abierto + '|' + vis.join(',') + '|' + !!sesion();
+        if (f === firma && !forzar) return;
+        firma = f;
+        nav.innerHTML = GRUPOS.map((g, i) => {
+          if (!vis[i] || !sesion()) return '';
+          const on = g.items.some(it => it.tab && it.tab === act);
+          const abiertoEste = abierto === g.id;
+          const unico = g.directo || vis[i] === 1;
+          const actual = on && !unico ? g.items.find(it => it.tab === act) : null;
+          return `<button type="button" class="nb-grupo inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold transition ${on ? 'bg-cyan-500/15 text-cyan-100 ring-1 ring-cyan-500/40' : (abiertoEste ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white')}" data-g="${g.id}">
+            <span>${g.ico}</span><span>${esc(g.nombre)}</span>${actual ? `<span class="hidden text-[11px] font-normal text-cyan-300/80 lg:inline">· ${esc(actual.t)}</span>` : ''}${unico ? '' : `<span class="text-[10px] opacity-70 transition ${abiertoEste ? 'rotate-180' : ''}">▾</span>`}</button>`;
+        }).join('');
+        // filtros del tablero: solo en Tablero e Historial
+        const fs = $('filterMachine') && $('filterMachine').closest('section');
+        if (fs) fs.classList.toggle('hidden', !!sesion() && !['tabDashboardBtn', 'tabRecordsBtn'].includes(act));
+      }
+      // junta a la derecha los íconos que otras partes de la app crean en el encabezado
+      function juntar() {
+        const right = $('nbRight'); if (!right) return;
+        const ver = $('inoferVersionTag'), nbv = $('nbVer');
+        if (ver && nbv && ver.parentElement !== nbv) { nbv.appendChild(ver); ver.className = 'text-[9px] font-semibold text-slate-500'; }
+        const pill = $('inoferOfflinePill'); if (pill && nbv && pill.parentElement !== nbv) nbv.appendChild(pill);
+        const orden = [$('syncNowBtn'), $('inoferAvisosBtn'), $('inoferMsgBtn') && $('inoferMsgBtn').parentElement, $('presBtn'), $('toggleFullscreenBtn'), $('inoferUserChip') && $('inoferUserChip').parentElement].filter(Boolean);
+        const actual = [...right.children];
+        if (orden.length !== actual.length || orden.some((e, i) => actual[i] !== e)) orden.forEach(e => right.appendChild(e));
+        const sync = $('syncNowBtn'), stx = $('syncStatusText');
+        if (sync && stx && sync.title !== stx.textContent) sync.title = 'Estado: ' + stx.textContent + ' (tocá para sincronizar)';
+        // perfil de vista: pasa al menú del usuario
+        const menu = $('inoferUserMenu'), sel = $('plantRoleSelect');
+        if (menu && sel && !$('nbVistaWrap')) {
+          const w = document.createElement('div'); w.id = 'nbVistaWrap'; w.className = 'border-b border-slate-800 px-3 py-2';
+          w.innerHTML = '<div class="mb-1 text-[10px] font-bold uppercase text-slate-500">Vista</div>';
+          sel.className = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs font-bold text-cyan-300';
+          w.appendChild(sel);
+          const info = $('inoferUserMenuInfo'); if (info) info.after(w); else menu.prepend(w);
+        }
+      }
+      function tick() { try { if (montar()) { juntar(); pintar(); } } catch (e) { console.error(e); } }
+      function iniciar() {
+        tick();
+        setInterval(tick, 800);
+        if (typeof window.switchTab === 'function' && !window.switchTab.__nb) { const sw = window.switchTab; const f = function () { const r = sw.apply(this, arguments); setTimeout(() => pintar(true), 0); return r; }; Object.assign(f, sw); f.__nb = true; window.switchTab = f; }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 30)); else setTimeout(iniciar, 30);
     })();
   </script>
 </body>
