@@ -1,0 +1,213 @@
+  <script>
+    // =====================================================================
+    // PAPELERA (solo administrador): ver lo que se eliminó y restaurarlo
+    // =====================================================================
+    let inoferPapelera = [];
+    let inoferPapeleraFiltro = { tipo: 'todos', estado: 'eliminado', texto: '' };
+
+    function inoferBuildPapeleraUi() {
+      if (document.getElementById('viewPapelera')) return;
+      const aiBtn = document.getElementById('tabAiBtn');
+      if (aiBtn) {
+        const b = document.createElement('button');
+        b.id = 'tabPapeleraBtn'; b.type = 'button';
+        b.className = 'hidden rounded-md px-3 py-1.5 text-xs font-semibold transition text-rose-300 hover:text-white';
+        b.innerHTML = '🗑️ Papelera';
+        b.addEventListener('click', () => switchTab('papelera'));
+        aiBtn.parentNode.insertBefore(b, aiBtn.nextSibling);
+      }
+      const ref = document.getElementById('viewAi');
+      if (!ref) return;
+      const v = document.createElement('div');
+      v.id = 'viewPapelera';
+      v.className = 'hidden space-y-4';
+      v.innerHTML = `
+        <div class="rounded-2xl border border-rose-500/30 bg-slate-900/80 p-4 shadow-xl">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-extrabold text-white">🗑️ Papelera — elementos eliminados</h2>
+              <p class="text-xs text-slate-400">Todo lo que alguien borra queda acá con quién y cuándo lo borró. Solo el administrador lo ve y lo puede restaurar.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button id="papeleraRefreshBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">↻ Actualizar</button>
+              <button id="papeleraPurgeBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">Limpiar restaurados</button>
+              <button id="papeleraVaciarBtn" type="button" class="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-rose-500">🗑️ Vaciar papelera</button>
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <select id="papeleraTipo" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white">
+              <option value="todos">Todos los tipos</option>
+              <option value="parte">Partes de horas</option>
+              <option value="orden">Órdenes de producción</option>
+              <option value="pieza">Piezas / moldes</option>
+              <option value="semana_gantt">Semanas del Gantt</option>
+              <option value="item_gantt">Piezas programadas en el Gantt</option>
+              <option value="cierre_semanal">Cierres semanales</option>
+            </select>
+            <select id="papeleraEstado" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white">
+              <option value="eliminado">Sin restaurar</option>
+              <option value="restaurado">Ya restaurados</option>
+              <option value="todos">Todos</option>
+            </select>
+            <input id="papeleraTexto" type="text" placeholder="Buscar (pieza, OP, usuario, máquina…)" class="min-w-[200px] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            <span id="papeleraCount" class="rounded-lg bg-slate-800 px-2.5 py-1 font-bold text-slate-300">—</span>
+          </div>
+        </div>
+        <div id="papeleraLista" class="space-y-2"></div>`;
+      ref.parentNode.insertBefore(v, ref.nextSibling);
+      v.querySelector('#papeleraRefreshBtn').addEventListener('click', () => inoferCargarPapelera());
+      v.querySelector('#papeleraPurgeBtn').addEventListener('click', inoferLimpiarRestaurados);
+      v.querySelector('#papeleraVaciarBtn').addEventListener('click', inoferVaciarPapelera);
+      v.querySelector('#papeleraTipo').addEventListener('change', e => { inoferPapeleraFiltro.tipo = e.target.value; inoferRenderPapelera(); });
+      v.querySelector('#papeleraEstado').addEventListener('change', e => { inoferPapeleraFiltro.estado = e.target.value; inoferRenderPapelera(); });
+      v.querySelector('#papeleraTexto').addEventListener('input', e => { inoferPapeleraFiltro.texto = e.target.value.toLowerCase(); inoferRenderPapelera(); });
+    }
+
+    function inoferFmtFecha(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso || '';
+      return d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function inoferRenderPapelera() {
+      const box = document.getElementById('papeleraLista');
+      if (!box) return;
+      if (inoferAuthMode !== 'nube') {
+        box.innerHTML = '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-200">La papelera funciona con la nube de la planta conectada.</div>';
+        return;
+      }
+      const f = inoferPapeleraFiltro;
+      const lista = inoferPapelera.filter(x =>
+        (f.tipo === 'todos' || x.tipo === f.tipo) &&
+        (f.estado === 'todos' || x.estado === f.estado) &&
+        (!f.texto || (x.descripcion + ' ' + x.usuario + ' ' + x.tipoNombre).toLowerCase().includes(f.texto)));
+      document.getElementById('papeleraCount').textContent = `${lista.length} elemento${lista.length === 1 ? '' : 's'}`;
+      if (!lista.length) {
+        box.innerHTML = '<div class="rounded-xl border border-slate-800 bg-slate-900/70 p-6 text-center text-xs text-slate-400">No hay elementos eliminados con este filtro. 👌</div>';
+        return;
+      }
+      const color = { parte: 'text-cyan-300', orden: 'text-amber-300', pieza: 'text-emerald-300', semana_gantt: 'text-violet-300', item_gantt: 'text-violet-300', cierre_semanal: 'text-sky-300' };
+      box.innerHTML = lista.slice(0, 300).map(x => {
+        let detalle = '';
+        try { detalle = JSON.stringify(JSON.parse(x.datos), null, 2); } catch (e) { detalle = x.datos; }
+        const rest = x.estado === 'restaurado';
+        return `
+          <div class="rounded-xl border ${rest ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-slate-800 bg-slate-900/70'} p-3">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="text-[11px] font-bold uppercase tracking-wider ${color[x.tipo] || 'text-slate-300'}">${inoferEsc(x.tipoNombre)}</div>
+                <div class="text-sm font-semibold text-white break-words">${inoferEsc(x.descripcion)}</div>
+                <div class="mt-0.5 text-[11px] text-slate-400">Eliminado el ${inoferEsc(inoferFmtFecha(x.fecha))} por <b class="text-slate-200">@${inoferEsc(x.usuario)}</b>
+                  ${rest ? ` · <span class="text-emerald-300">Restaurado por @${inoferEsc(x.restauradoPor)} el ${inoferEsc(inoferFmtFecha(x.restauradoFecha))}</span>` : ''}</div>
+              </div>
+              <div class="flex shrink-0 gap-1.5">
+                <button type="button" data-pap-ver="${inoferEsc(x.id)}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">Ver detalle</button>
+                ${rest ? '' : `<button type="button" data-pap-rest="${inoferEsc(x.id)}" class="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-extrabold text-slate-950 hover:bg-emerald-400">↩ Restaurar</button>`}
+                <button type="button" data-pap-borrar="${inoferEsc(x.id)}" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-300 hover:bg-rose-500/20" title="Borrar definitivamente de la papelera">✕ Borrar</button>
+              </div>
+            </div>
+            <pre id="papDet_${inoferEsc(x.id)}" class="hidden mt-2 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2 text-[10px] text-slate-300">${inoferEsc(detalle)}</pre>
+          </div>`;
+      }).join('') + (lista.length > 300 ? '<p class="text-center text-[11px] text-slate-500">Se muestran los 300 más recientes. Usá el buscador para encontrar otros.</p>' : '');
+      box.querySelectorAll('[data-pap-ver]').forEach(b => b.addEventListener('click', () => {
+        const el = document.getElementById('papDet_' + b.dataset.papVer); if (el) el.classList.toggle('hidden');
+      }));
+      box.querySelectorAll('[data-pap-rest]').forEach(b => b.addEventListener('click', () => inoferRestaurar(b.dataset.papRest, b)));
+      box.querySelectorAll('[data-pap-borrar]').forEach(b => b.addEventListener('click', () => inoferBorrarDePapelera([b.dataset.papBorrar])));
+    }
+
+    async function inoferCargarPapelera(silencioso) {
+      if (!inoferIsAdmin() || inoferAuthMode !== 'nube') { inoferRenderPapelera(); return; }
+      const box = document.getElementById('papeleraLista');
+      if (box && !silencioso) box.innerHTML = '<p class="p-4 text-center text-xs text-slate-400">Cargando papelera…</p>';
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'listPapelera', token: inoferAuthToken() }));
+        if (!d || d.status !== 'ok') throw new Error((d && d.error) || 'No se pudo leer la papelera');
+        inoferPapelera = d.papelera || [];
+        const n = inoferPapelera.filter(x => x.estado !== 'restaurado').length;
+        const btn = document.getElementById('tabPapeleraBtn');
+        if (btn) btn.innerHTML = '🗑️ Papelera' + (n ? ` <span class="ml-1 rounded-full bg-rose-500/30 px-1.5 text-[10px] text-rose-200">${n}</span>` : '');
+      } catch (e) {
+        if (box) box.innerHTML = `<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200">${inoferEsc(e.message)}. Probá de nuevo con ↻ Actualizar.</div>`;
+        return;
+      }
+      inoferRenderPapelera();
+    }
+
+    async function inoferRestaurar(id, btn) {
+      const x = inoferPapelera.find(p => p.id === id);
+      if (!x || !confirm(`¿Restaurar este elemento?\n\n${x.tipoNombre}: ${x.descripcion}`)) return;
+      if (btn) { btn.disabled = true; btn.textContent = 'Restaurando…'; }
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'restaurarPapelera', token: inoferAuthToken(), id }));
+        if (!d || d.status !== 'ok') { showToast((d && d.error) || 'No se pudo restaurar'); if (btn) { btn.disabled = false; btn.textContent = '↩ Restaurar'; } return; }
+        // aplicar en este equipo lo restaurado
+        if (Array.isArray(d.records)) { try { applyRemoteRecords(d.records); } catch (e) { } }
+        if (d.modules) { try { applyCloudModules(d.modules); } catch (e) { } }
+        inoferPapelera = d.papelera || inoferPapelera;
+        showToast('Restaurado ✓ Ya está de vuelta en su lugar para todos');
+        inoferCargarPapelera(true);
+      } catch (e) {
+        showToast('Sin conexión con la nube');
+        if (btn) { btn.disabled = false; btn.textContent = '↩ Restaurar'; }
+      }
+    }
+
+    async function inoferPapeleraVaciarCall(body, okMsg) {
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost(Object.assign({ action: 'vaciarPapelera', token: inoferAuthToken() }, body)));
+        if (d && d.status === 'ok') { inoferPapelera = d.papelera || []; inoferRenderPapelera(); inoferCargarPapelera(true); showToast(okMsg); }
+        else showToast((d && d.error) || 'No se pudo borrar');
+      } catch (e) { showToast('Sin conexión con la nube'); }
+    }
+    function inoferBorrarDePapelera(ids) {
+      const x = inoferPapelera.find(p => p.id === ids[0]);
+      if (!confirm(`¿Borrar definitivamente de la papelera?\n\n${x ? x.tipoNombre + ': ' + x.descripcion : ''}\n\nDespués ya no se va a poder restaurar.`)) return;
+      inoferPapeleraVaciarCall({ ids, soloIds: true }, 'Eliminado de la papelera');
+    }
+    function inoferVaciarPapelera() {
+      const n = inoferPapelera.length;
+      if (!n) { showToast('La papelera ya está vacía'); return; }
+      if (!confirm(`¿Vaciar TODA la papelera? Se borran definitivamente ${n} elemento${n === 1 ? '' : 's'} y no se van a poder restaurar.`)) return;
+      if (!confirm('Confirmá de nuevo: ¿vaciar la papelera completa?')) return;
+      inoferPapeleraVaciarCall({ todo: true }, 'Papelera vacía');
+    }
+
+    async function inoferLimpiarRestaurados() {
+      if (!confirm('¿Borrar definitivamente de la papelera los elementos que ya fueron restaurados?')) return;
+      try {
+        const d = inoferHandleCloudReply(await inoferCloudPost({ action: 'vaciarPapelera', token: inoferAuthToken() }));
+        if (d && d.status === 'ok') { inoferPapelera = d.papelera || []; inoferRenderPapelera(); showToast('Papelera limpia'); }
+      } catch (e) { showToast('Sin conexión con la nube'); }
+    }
+
+    // Integración con las solapas y los permisos
+    const _inoferSwitchTabOrig = window.switchTab;
+    window.switchTab = function (tab) {
+      const pv = document.getElementById('viewPapelera'), pb = document.getElementById('tabPapeleraBtn');
+      if (tab === 'papelera') {
+        if (!inoferIsAdmin()) return;
+        _inoferSwitchTabOrig('dashboard');
+        ['viewDashboard', 'viewSimulator', 'viewRecords', 'viewOrders', 'viewGantt', 'viewAi'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('hidden'); });
+        const db = document.getElementById('tabDashboardBtn'); if (db) db.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-slate-300 hover:text-white' + (db.classList.contains('hidden') ? ' hidden' : '');
+        if (pv) pv.classList.remove('hidden');
+        if (pb) pb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition bg-rose-500 text-slate-950 shadow';
+        inoferCargarPapelera();
+        return;
+      }
+      if (pv) pv.classList.add('hidden');
+      if (pb) pb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-rose-300 hover:text-white' + (inoferIsAdmin() ? '' : ' hidden');
+      return _inoferSwitchTabOrig.apply(this, arguments);
+    };
+    const _inoferApplyPermsOrig = window.inoferApplyPermissions;
+    window.inoferApplyPermissions = function () {
+      const r = _inoferApplyPermsOrig.apply(this, arguments);
+      const pb = document.getElementById('tabPapeleraBtn'), pv = document.getElementById('viewPapelera');
+      if (pb) pb.classList.toggle('hidden', !inoferIsAdmin());
+      if (pv && !inoferIsAdmin() && !pv.classList.contains('hidden')) { pv.classList.add('hidden'); try { switchTab('dashboard'); } catch (e) { } }
+      if (inoferIsAdmin() && inoferAuthMode === 'nube') inoferCargarPapelera(true);
+      return r;
+    };
+    window.addEventListener('DOMContentLoaded', () => { inoferBuildPapeleraUi(); try { inoferApplyPermissions(); } catch (e) { } });
+  </script>
+

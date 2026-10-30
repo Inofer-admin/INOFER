@@ -7,13 +7,20 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 
 
 # Versión de las pantallas: AAAA.MM.DD.NN (si no se indica, sube el número del día)
-ACT=$(grep -o 'name="inofer-version" content="[^"]*"' $SRC/res/web/index.html | sed 's/.*content="//; s/"//')
+PAG="$SRC/web/00_pagina.html"
+ACT=$(grep -o 'name="inofer-version" content="[^"]*"' $PAG | sed 's/.*content="//; s/"//')
 if [ -z "$VWEB" ]; then
   HOY=$(TZ=America/Buenos_Aires date +%Y.%m.%d)
   if [[ "$ACT" == "$HOY".* ]]; then N=$((10#${ACT##*.} + 1)); else N=1; fi
   VWEB="$HOY.$(printf %02d $N)"
 fi
-sed -i "s/name=\"inofer-version\" content=\"[^\"]*\"/name=\"inofer-version\" content=\"$VWEB\"/" $SRC/res/web/index.html
+sed -i "s/name=\"inofer-version\" content=\"[^\"]*\"/name=\"inofer-version\" content=\"$VWEB\"/" $PAG
+
+# Armar la pantalla desde las partes de fuente/web (con estilos y gráficos incluidos) y probarla
+node "$SRC/herramientas/armar_web.js"
+if [ "$SIN_PRUEBAS" != "1" ]; then
+  node "$SRC/pruebas/suite.js" || { echo "Las pruebas fallaron: no se publica nada."; exit 1; }
+fi
 
 VJAR=$(grep -o 'VERSION = "[^"]*"' $SRC/src/ar/inofer/mes/Main.java | sed 's/VERSION = "//; s/"//')
 

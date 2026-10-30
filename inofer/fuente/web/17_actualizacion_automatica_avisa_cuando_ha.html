@@ -1,0 +1,67 @@
+  <script>
+    // ===== Actualización automática: avisa cuando hay una versión nueva publicada =====
+    (function () {
+      var meta = document.querySelector('meta[name="inofer-version"]');
+      var actual = meta ? meta.content : '0';
+      try { var vt = document.getElementById('inoferVersionTag'); if (vt) vt.textContent = 'versión ' + actual; } catch (e) { }
+      var esJava = !!window.__INOFER_JAVA;
+      var esWeb = /^https?:$/.test(location.protocol) && !esJava;
+      if (!esJava && !esWeb) return;
+      function mostrar(v) {
+        if (document.getElementById('inoferUpdateBanner')) return;
+        var d = document.createElement('div');
+        d.id = 'inoferUpdateBanner';
+        d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:99999;background:#0e7490;color:#fff;padding:10px 14px;border-radius:12px;font:600 13px Inter,Arial,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
+        d.innerHTML = '<span>✨ Hay una nueva versión de INOFER</span><button type="button" style="background:#fff;color:#0e7490;border:0;border-radius:8px;padding:6px 12px;font-weight:800;cursor:pointer">Actualizar ahora</button>';
+        d.querySelector('button').onclick = function () {
+          var go = function () { location.reload(); };
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+            navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); go(); }).catch(go);
+          } else go();
+        };
+        document.body.appendChild(d);
+      }
+      // Se actualiza sola: si hay versión nueva y nadie está escribiendo, recarga la pantalla
+      var ultimaTecla = 0;
+      ['keydown', 'input', 'pointerdown'].forEach(function (t) { document.addEventListener(t, function () { ultimaTecla = Date.now(); }, true); });
+      function ocupado() {
+        if (Date.now() - ultimaTecla < 45000) return true; // estuvo escribiendo o tocando hace poco
+        var modales = document.querySelectorAll('#entryModal.flex, #ganttAssignModal.flex, #inoferUsersModal.flex');
+        if (modales.length) return true;
+        var cr = document.getElementById('crTurnoForm');
+        if (cr && cr.offsetParent && document.getElementById('crOk') && document.getElementById('crOk').value) return true;
+        return false;
+      }
+      function aplicar() {
+        var b = document.getElementById('inoferUpdateBanner');
+        if (b) b.querySelector('span').textContent = '✨ Actualizando INOFER…';
+        var go = function () { location.reload(); };
+        if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+          navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); setTimeout(go, 600); }).catch(go);
+        } else go();
+      }
+      function cmpVer(x, y) { var a = String(x).split('.').map(Number), b = String(y).split('.').map(Number); for (var i = 0; i < Math.max(a.length, b.length); i++) { var d = (a[i] || 0) - (b[i] || 0); if (d) return d; } return 0; }
+      var pendiente = null;
+      function intentar() {
+        if (!pendiente) return;
+        if (ocupado()) { mostrar(pendiente); return; }
+        // no recargar en bucle si la versión nueva todavía no llegó (internet o caché lenta)
+        var prev = null; try { prev = JSON.parse(sessionStorage.getItem('inoferUpdTry') || 'null'); } catch (e) { }
+        if (prev && prev.v === pendiente && Date.now() - prev.t < 10 * 60 * 1000) { mostrar(pendiente); return; }
+        try { sessionStorage.setItem('inoferUpdTry', JSON.stringify({ v: pendiente, t: Date.now() })); } catch (e) { }
+        mostrar(pendiente); aplicar();
+      }
+      function revisar() {
+        var url = esJava ? '/api/actualizar?t=' + Date.now() : 'version.json?t=' + Date.now();
+        var pedir = function (u) { return fetch(u, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }); };
+        pedir(url).catch(function () { return esJava ? pedir('/api/version?t=' + Date.now()) : null; }).then(function (j) {
+          if (j && j.web && cmpVer(j.web, actual) > 0) { pendiente = j.web; intentar(); }
+        }).catch(function () {});
+      }
+      window.inoferVersionActual = actual;
+      setTimeout(revisar, 4000);
+      setInterval(revisar, 3 * 60 * 1000);
+      setInterval(intentar, 30000);
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') revisar(); });
+    })();
+  </script>

@@ -1,11 +1,10 @@
 // INOFER MES — Service Worker: permite abrir la app sin internet.
 // Los datos de la nube (Apps Script / Gemini) nunca se guardan en caché.
-const CACHE = 'inofer-v6';
+const CACHE = 'inofer-v7';
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
-const LIBS = ['https://cdn.tailwindcss.com/3.4.17',
-  'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
-  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'];
+// Los estilos y Chart.js ya vienen dentro de index.html; solo la librería de Excel se baja aparte
+const LIBS = ['https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(async c => {

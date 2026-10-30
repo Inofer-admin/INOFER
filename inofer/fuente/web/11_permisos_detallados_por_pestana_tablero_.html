@@ -1,0 +1,354 @@
+  <script>
+    // ===== Permisos detallados por pestaña + Tablero alimentado por las Órdenes de Producción =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+      // ---------- catálogo de permisos detallados ----------
+      const DETALLE = {
+        partes: [
+          { k: 'partes_cargar', t: 'Cargar partes de horas a mano (solo si lo habilitás)', opt: true },
+          { k: 'partes_editar', t: 'Corregir partes de horas cargados a mano (solo si lo habilitás)', opt: true },
+          { k: 'partes_borrar', t: 'Borrar partes de horas (solo si lo habilitás)', opt: true },
+          { k: 'partes_csv', t: 'Importar y exportar partes (CSV)' },
+          { k: 'partes_cierre', t: 'Hacer el cierre semanal' },
+          { k: 'partes_simulador', t: 'Usar la calculadora directa', nivel: 'view' }
+        ],
+        ordenes: [
+          { k: 'ord_turnos', t: 'Cargar la producción de los turnos (Carga rápida)' },
+          { k: 'ord_editar_turnos', t: 'Corregir o borrar turnos ya cargados' },
+          { k: 'ord_crear', t: 'Crear órdenes nuevas' },
+          { k: 'ord_editar', t: 'Modificar los datos de la orden (frente y dorso)' },
+          { k: 'ord_borrar', t: 'Borrar órdenes' },
+          { k: 'ord_imprimir', t: 'Imprimir y exportar órdenes', nivel: 'view' },
+          { k: 'ord_informe', t: 'Ver el informe general de órdenes', nivel: 'view' }
+        ],
+        gantt: [
+          { k: 'gantt_manual', t: 'Modificar el Gantt a mano (cantidades, piezas, semanas)' },
+          { k: 'gantt_asistente', t: 'Pedirle cambios al asistente del Gantt' },
+          { k: 'gantt_auto', t: 'Generar el Gantt automático desde la planilla' },
+          { k: 'gantt_setup', t: 'Cambiar set-up, pistones y lotes por máquina' },
+          { k: 'gantt_imprimir', t: 'Imprimir y exportar el Gantt', nivel: 'view' }
+        ],
+        catalogo: [
+          { k: 'cat_piezas', t: 'Modificar piezas y moldes' },
+          { k: 'precios_ver', t: 'Ver precios y facturación', nivel: 'view' },
+          { k: 'precios_editar', t: 'Modificar precios' },
+          { k: 'cat_importar', t: 'Importar la base desde Excel/CSV' },
+          { k: 'cat_exportar', t: 'Exportar la base de datos', nivel: 'view' }
+        ],
+        ia: [
+          { k: 'ia_consultar', t: 'Hacerle consultas a la IA INOFER', nivel: 'view' },
+          { k: 'ia_ensenar', t: 'Enseñarle reglas a la IA' }
+        ],
+        indicadores: [
+          { k: 'kpi_cargar', t: 'Cargar y corregir datos de los indicadores' },
+          { k: 'kpi_metas', t: 'Cambiar las metas' },
+          { k: 'kpi_imprimir', t: 'Imprimir informes de indicadores', nivel: 'view' }
+        ],
+        general: [
+          { k: 'sol_enviar', t: 'Mandar solicitudes al administrador', nivel: 'any' },
+          { k: 'pres_ver', t: 'Ver la presentación en pantalla', nivel: 'any' },
+          { k: 'mant_ver', t: 'Ver Mantenimiento', nivel: 'any' },
+          { k: 'mant_editar', t: 'Registrar trabajos y preventivos de mantenimiento (con permiso de editar Gantt u Órdenes)', nivel: 'any' },
+          { k: 'stock_ver', t: 'Ver Stock', nivel: 'any' },
+          { k: 'stock_editar', t: 'Cargar ingresos, despachos y conteos de stock (con permiso de editar Órdenes o Base de datos)', nivel: 'any' },
+          { k: 'informe_ver', t: 'Ver el informe semanal', nivel: 'any' },
+          { k: 'avisos_carga', t: 'Recibir avisos de turnos sin cargar (con permiso de editar Órdenes)', nivel: 'any' }
+        ]
+      };
+      const AREA_DE = {};
+      Object.keys(DETALLE).forEach(a => DETALLE[a].forEach(d => { AREA_DE[d.k] = { area: a, nivel: d.nivel || 'edit', opt: !!d.opt }; }));
+      // permisos que vienen apagados: hay que habilitarlos a mano para cada usuario
+      const detOn = (k, det) => (AREA_DE[k] && AREA_DE[k].opt) ? (det || {})[k] === true : (det || {})[k] !== false;
+      window.inoferDetOn = detOn;
+      function inoferPuede(k) {
+        if (typeof inoferSession === 'undefined' || !inoferSession) return true; // sin sesión: la app está bloqueada igual
+        if (inoferSession.rol === 'admin') return true;
+        const def = AREA_DE[k];
+        if (!def) return true;
+        if (def.nivel !== 'any' && !inoferCan(def.area, def.nivel)) return false;
+        if (k === 'precios_editar' && !inoferPuede('precios_ver')) return false;
+        const det = (inoferSession.permisos || {}).detalle || {};
+        return detOn(k, det);
+      }
+      window.inoferPuede = inoferPuede;
+
+      // conservar "detalle" al normalizar permisos
+      if (typeof window.inoferNormPerms === 'function') {
+        const np = window.inoferNormPerms;
+        window.inoferNormPerms = function (rol, p) {
+          const out = np.apply(this, arguments);
+          if (p && p.detalle && typeof p.detalle === 'object') {
+            out.detalle = {};
+            Object.keys(p.detalle).forEach(k => { if (AREA_DE[k]) out.detalle[k] = p.detalle[k] !== false; });
+          }
+          return out;
+        };
+      }
+
+      // ---------- qué controla cada permiso ----------
+      const CONTROLES = {
+        ord_turnos: ['#crTurnoForm input', '#crTurnoForm select', '#crTurnoForm button', '#quickOrderLogForm input', '#quickOrderLogForm select', '#quickOrderLogForm button'],
+        ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
+        ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn', '#crNuevaForm input', '#crNuevaForm button', '.cr-plan'],
+        ord_editar: ['#saveOrderFrontBtn', '#saveOrderBackBtn', '#orderSubViewFront input', '#orderSubViewFront select', '#orderSubViewFront textarea', '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea', '.inofer-ord-editar', '.use-cat-btn', '#catalogQuickPicker'],
+        ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        gantt_manual: ['.gantt-aux-input', '.gantt-item-qty-input', '.del-gantt-item-btn', '.add-piece-to-mach-btn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '#openGanttCatalogBtn', '#saveGanttBtn'],
+        gantt_asistente: ['#inoferGanttChatUndo'],
+        gantt_auto: ['#toggleAutoGanttPanelBtn', '#runAutoGanttMonthBtn', '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#clearAutoGanttPasteBtn'],
+        gantt_setup: ['.inofer-setup-cfg', '.inofer-piston-cfg'],
+        cat_piezas: ['#catSubmitBtn', '#catalogForm input', '#catalogForm select', '.edit-cat-btn', '.del-cat-btn', '.inline-mold-input', '.inline-shared-input', '.inline-portamolde-input', '.inline-piston-input', '.inline-lote-input', '#deleteSelectedCatalogBtn', '#clearAllCatalogBtn', '#importCatalogCsvInput', '#loadFullExcelCatalogBtn'],
+        precios_editar: ['.inline-precio-input', '#cat_precio', '#inoferPreciosImportarBtn', '#inoferPreciosFile'],
+        partes_cargar: ['#openNewEntryModalBtn', '#simSaveToRecordsBtn'],
+        partes_editar: ['.edit-record-btn'],
+        partes_borrar: ['.delete-record-btn'],
+        partes_csv: ['#importCsvBtn', '#importCsvInput', '#exportCsvBtn'],
+        partes_cierre: ['#saveWeeklyCloseBtn', '#weeklyLabelInput'],
+        partes_simulador: ['#tabSimulatorBtn'],
+        ord_imprimir: ['#printOrderBtn', '#triggerBrowserPrintBtn', '#exportOrdersSummaryCsvBtn'],
+        ord_informe: ['.order-subtab-btn[data-order-subtab="globalReport"]'],
+        gantt_imprimir: ['#openGanttPrintModalBtn', '#exportGanttCsvBtn', '#executeGanttPrintBtn'],
+        cat_importar: ['#importCatalogCsvBtn', '#importCatalogCsvInput', '#loadFullExcelCatalogBtn', '#inoferCargarMBBtn'],
+        cat_exportar: ['#exportCatalogCsvBtn'],
+        ia_consultar: ['#aiChatForm textarea', '#aiChatForm input', '#aiChatForm button', '.ai-quick-btn'],
+        ia_ensenar: ['#inoferTeachInput', '#inoferTeachBtn'],
+        kpi_cargar: ['#kpiMes', '#kpiValor', '#kpiNota', '#kpiForm button[type="submit"]', '.kpi-del', '.kpi-edit-row'],
+        kpi_metas: ['#kpiMeta'],
+        kpi_imprimir: ['#kpiPrintBtn', '#kpiPrintAllBtn'],
+        sol_enviar: ['[data-acc="nuevaSol"]', '#solForm button', '#solForm input', '#solForm textarea'],
+        pres_ver: ['#presBtn']
+      };
+      // Elementos que directamente se ocultan
+      const OCULTAR = {
+        ord_turnos: ['.order-subtab-btn[data-order-subtab="rapida"]'],
+        ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn'],
+        ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
+        gantt_auto: ['#toggleAutoGanttPanelBtn'],
+        precios_ver: ['#inoferPanelPrecios', '#inoferGanttFactBadge', '.inline-precio-input', '#cat_precio'],
+        partes_cargar: ['#openNewEntryModalBtn', '#simSaveToRecordsBtn'],
+        partes_editar: ['.edit-record-btn'],
+        partes_borrar: ['.delete-record-btn'],
+        partes_csv: ['#importCsvBtn', '#exportCsvBtn'],
+        partes_simulador: ['#tabSimulatorBtn'],
+        ord_imprimir: ['#printOrderBtn', '#exportOrdersSummaryCsvBtn'],
+        ord_informe: ['.order-subtab-btn[data-order-subtab="globalReport"]'],
+        gantt_imprimir: ['#openGanttPrintModalBtn', '#exportGanttCsvBtn'],
+        cat_importar: ['#importCatalogCsvBtn', '#loadFullExcelCatalogBtn'],
+        cat_exportar: ['#exportCatalogCsvBtn'],
+        kpi_imprimir: ['#kpiPrintBtn', '#kpiPrintAllBtn'],
+        pres_ver: ['#presBtn']
+      };
+      function denegado(el) {
+        if (!el || !el.closest) return null;
+        if (el.closest('#inoferUsersModal, #inoferLoginOverlay, #inoferUserMenu')) return null;
+        for (const k of Object.keys(CONTROLES)) {
+          if (inoferPuede(k)) continue;
+          for (const sel of CONTROLES[k]) { try { if (el.closest(sel) || el.matches(sel)) return k; } catch (e) { } }
+        }
+        // precios ocultos: tampoco se editan
+        if (!inoferPuede('precios_ver') && el.closest('.inline-precio-input, #cat_precio')) return 'precios_ver';
+        return null;
+      }
+      const NOMBRE = {}; Object.keys(DETALLE).forEach(a => DETALLE[a].forEach(d => { NOMBRE[d.k] = d.t.toLowerCase(); }));
+      let ultimoAviso = 0;
+      ['click', 'input', 'change', 'submit', 'keydown'].forEach(tipo => {
+        document.addEventListener(tipo, ev => {
+          const k = denegado(ev.target);
+          if (!k) return;
+          if (tipo === 'keydown' && ev.key === 'Tab') return;
+          ev.preventDefault(); ev.stopImmediatePropagation();
+          if (Date.now() - ultimoAviso > 1500) { ultimoAviso = Date.now(); showToast('Tu usuario no tiene permiso para: ' + (NOMBRE[k] || k)); }
+        }, true);
+      });
+      function aplicarOcultos() {
+        Object.keys(OCULTAR).forEach(k => {
+          const no = !inoferPuede(k);
+          OCULTAR[k].forEach(sel => document.querySelectorAll(sel).forEach(el => {
+            const target = (sel === '.inline-precio-input' || sel === '#cat_precio') ? (el.parentElement || el) : el;
+            if (no) { target.classList.add('hidden'); target.dataset.inoferPermOculto = '1'; }
+            else if (target.dataset.inoferPermOculto) { target.classList.remove('hidden'); delete target.dataset.inoferPermOculto; }
+          }));
+        });
+      }
+      let pend = false;
+      const obs = new MutationObserver(() => { if (pend) return; pend = true; requestAnimationFrame(() => { pend = false; try { aplicarOcultos(); } catch (e) { } }); });
+      function arrancarObs() { try { obs.observe(document.body, { childList: true, subtree: true }); } catch (e) { } }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); try { aplicarOcultos(); } catch (e) { } return r; };
+      }
+
+      // ---------- editor en "Usuarios y permisos" ----------
+      function renderSubPermisos() {
+        const modal = $('inoferUsersModal'); if (!modal) return;
+        const rol = ($('inoferUfRol') || {}).value;
+        Object.keys(DETALLE).forEach(area => {
+          const grupo = modal.querySelector(`[data-perm-group="${area}"]`);
+          if (!grupo) return;
+          const fila = grupo.parentElement;
+          let box = fila.querySelector('.inofer-sub-perms');
+          if (!box) { box = document.createElement('div'); box.className = 'inofer-sub-perms sm:col-span-2 mt-1.5 grid gap-1 border-t border-slate-800 pt-1.5'; fila.appendChild(box); }
+          const nivel = (inoferFormPerms || {})[area] || 'none';
+          const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+          const items = DETALLE[area].filter(d => (d.nivel || 'edit') === 'view' ? nivel !== 'none' : nivel === 'edit');
+          if (rol === 'admin' || !items.length) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+          box.classList.remove('hidden');
+          box.innerHTML = `<div class="flex items-center justify-between"><span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Qué puede hacer</span><span class="text-[10px]"><button type="button" class="inofer-sub-todo text-emerald-300 hover:underline" data-area="${area}" data-v="1">todo</button> · <button type="button" class="inofer-sub-todo text-slate-400 hover:underline" data-area="${area}" data-v="0">nada</button></span></div>` + items.map(d => `
+            <label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" class="inofer-sub-perm accent-emerald-500" data-k="${d.k}" ${detOn(d.k, det) ? 'checked' : ''}> ${esc(d.t)}</label>`).join('');
+        });
+        // permisos que no dependen de una pestaña
+        const cont = $('inoferUfPermsBox');
+        if (cont) {
+          let g = $('inoferSubGeneral');
+          if (!g) { g = document.createElement('div'); g.id = 'inoferSubGeneral'; g.className = 'rounded-lg border border-slate-800 bg-slate-950/70 p-2.5'; cont.appendChild(g); }
+          const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+          g.classList.toggle('hidden', rol === 'admin');
+          g.innerHTML = `<div class="text-xs font-bold text-white">Otros permisos</div><div class="mt-1 grid gap-1">` + DETALLE.general.map(d => `
+            <label class="flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" class="inofer-sub-perm accent-emerald-500" data-k="${d.k}" ${detOn(d.k, det) ? 'checked' : ''}> ${esc(d.t)}</label>`).join('') + '</div>';
+        }
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-sub-todo'); if (!b) return;
+        if (!inoferFormPerms.detalle) inoferFormPerms.detalle = {};
+        (DETALLE[b.dataset.area] || []).forEach(d => { inoferFormPerms.detalle[d.k] = b.dataset.v === '1'; });
+        renderSubPermisos();
+      });
+      document.addEventListener('change', e => {
+        const el = e.target;
+        if (!el.classList || !el.classList.contains('inofer-sub-perm')) return;
+        if (!inoferFormPerms.detalle) inoferFormPerms.detalle = {};
+        inoferFormPerms.detalle[el.dataset.k] = el.checked;
+      });
+      if (typeof window.inoferRefreshPermUi === 'function') {
+        const rp = window.inoferRefreshPermUi;
+        window.inoferRefreshPermUi = function () { const r = rp.apply(this, arguments); try { renderSubPermisos(); } catch (e) { console.error(e); } return r; };
+      }
+      // atajo "solo carga de producción"
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('#inoferPresetCarga');
+        if (!b) return;
+        inoferFormPerms = { partes: 'view', ordenes: 'edit', catalogo: 'none', gantt: 'view', ia: 'none', indicadores: 'view',
+          detalle: { ord_turnos: true, ord_editar_turnos: false, ord_crear: false, ord_editar: false, ord_borrar: false, precios_ver: false, mant_editar: false, stock_editar: false, avisos_carga: false } };
+        inoferRefreshPermUi();
+      });
+      function sumarPreset() {
+        const ref = document.querySelector('#inoferUsersModal [data-preset="operario"]');
+        if (!ref || $('inoferPresetCarga')) return;
+        const b = document.createElement('button');
+        b.type = 'button'; b.id = 'inoferPresetCarga';
+        b.className = 'rounded border border-emerald-500/50 px-2 py-1 text-emerald-300 hover:bg-emerald-500/10';
+        b.textContent = 'Solo cargar producción';
+        ref.parentElement.insertBefore(b, ref);
+      }
+      if (typeof window.inoferOpenUsersModal === 'function') {
+        const om = window.inoferOpenUsersModal;
+        window.inoferOpenUsersModal = async function () { const r = om.apply(this, arguments); try { sumarPreset(); renderSubPermisos(); } catch (e) { } return r; };
+      }
+
+      // ---------- Tablero y velocímetros desde las órdenes de producción ----------
+      // Código de parada INOFER (1 a 28) -> categoría del tablero
+      const COD_CAT = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
+        16: 'parada_maquina', 2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
+        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+      window.INOFER_CODIGO_CATEGORIA = COD_CAT;
+      const horas = (a, b) => (typeof calcHoursDiff === 'function' ? calcHoursDiff(a, b) : 0);
+      function registrosDeOrdenes() {
+        const out = [];
+        (typeof productionOrders !== 'undefined' ? productionOrders : []).forEach(o => {
+          (o.logs || []).forEach(l => {
+            const r = { id: 'op-' + o.id + '-' + l.id, fromOrder: true, ordId: o.id, logId: l.id, date: l.date, machine: o.machine, shift: l.turno || 'Turno', available: Math.round(horas(l.startTime, l.endTime) * 100) / 100,
+              part: o.part, ordNumber: o.ordNumber, okPcs: Number(l.okPcs) || 0, scrapPcs: Number(l.scrapPcs) || 0, operator: l.operator, cargadoPor: l.cargadoPor || '', modificadoPor: l.modificadoPor || '' };
+            (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { r[c.key] = 0; });
+            const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
+            ps.forEach(p => {
+              const n = parseInt(String(p.codigo || ''), 10);
+              const cat = COD_CAT[n] || 'otros';
+              r[cat] = Math.round(((r[cat] || 0) + (Number(p.min) || 0) / 60) * 100) / 100;
+            });
+            out.push(r);
+          });
+        });
+        return out;
+      }
+      window.inoferRegistrosDeOrdenes = registrosDeOrdenes;
+      if (typeof window.getFilteredRecords === 'function') {
+        const gf = window.getFilteredRecords;
+        // Datos de ejemplo que trae la app: no cuentan en el tablero
+        const DEMO_REC = new Set((typeof INITIAL_RECORDS !== 'undefined' ? INITIAL_RECORDS : []).map(r => String(r.id)));
+        const DEMO_ORD = new Set((typeof INITIAL_ORDERS !== 'undefined' ? INITIAL_ORDERS : []).map(o => String(o.id)));
+        window.inoferEsDemo = r => r && (r.fromOrder ? DEMO_ORD.has(String(r.ordId)) : DEMO_REC.has(String(r.id)));
+        window.getFilteredRecords = function () {
+          const fuente = ($('filterFuente') || {}).value || 'ALL';
+          const base = fuente === 'OP' ? [] : gf.apply(this, arguments).filter(r => !inoferEsDemo(r));
+          if (fuente === 'MANUAL') return base;
+          const machine = ($('filterMachine') || {}).value || 'ALL', shift = ($('filterShift') || {}).value || 'ALL';
+          const from = ($('filterDateFrom') || {}).value, to = ($('filterDateTo') || {}).value;
+          const deriv = registrosDeOrdenes().filter(r => {
+            if (inoferEsDemo(r)) return false;
+            if (machine !== 'ALL' && r.machine !== machine) return false;
+            if (shift !== 'ALL' && r.shift !== shift) return false;
+            if (from && r.date < from) return false;
+            if (to && r.date > to) return false;
+            return true;
+          });
+          return deriv.concat(base).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        };
+      }
+      // en el historial, las filas que vienen de una OP se corrigen desde la OP
+      if (typeof window.renderRecordsTable === 'function') {
+        const rt = window.renderRecordsTable;
+        window.renderRecordsTable = function () {
+          const r = rt.apply(this, arguments);
+          try {
+            document.querySelectorAll('#recordsTableBody .edit-record-btn').forEach(b => {
+              const id = b.getAttribute('data-edit-id') || '';
+              if (!id.startsWith('op-')) return;
+              const reg = registrosDeOrdenes().find(x => x.id === id);
+              const td = b.parentElement;
+              const cont = td && td.closest('td');
+              if (!reg || !cont) return;
+              cont.innerHTML = `<span class="mr-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">OP ${esc(reg.ordNumber)} · ${esc(reg.part)}</span>` +
+                (inoferPuede('ord_editar_turnos') && inoferCan('ordenes', 'edit') ? `<button type="button" onclick="inoferEditarTurno('${esc(reg.ordId)}','${esc(reg.logId)}')" class="rounded bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 text-[11px] font-semibold text-cyan-300">✏️ Editar</button>` : '');
+            });
+          } catch (e) { }
+          return r;
+        };
+      }
+      // los cambios en las órdenes actualizan el tablero
+      if (typeof window.saveProductionOrders === 'function') {
+        const sp = window.saveProductionOrders;
+        window.saveProductionOrders = function () {
+          const r = sp.apply(this, arguments);
+          try { const f = getFilteredRecords(); const agg = computeAggregates(f); renderMainSpeedometer(agg); renderCategorySpeedometers(agg); renderCharts(agg); renderBreakdownTable(agg); renderRecordsTable(f); } catch (e) { }
+          return r;
+        };
+      }
+      // no hay carga de horas aparte: todo sale de las órdenes
+      function sinCargaAparte() {
+        const v = $('viewDashboard');
+        if (v && !$('inoferTableroAviso')) {
+          const d = document.createElement('div');
+          d.id = 'inoferTableroAviso';
+          d.className = 'rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200';
+          d.innerHTML = '📋 El tablero y los velocímetros suman solos los turnos cargados en las <b>Órdenes de Producción</b>, más los partes de horas cargados a mano.';
+          v.insertBefore(d, v.firstChild);
+        }
+      }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap2 = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap2.apply(this, arguments); try { sinCargaAparte(); } catch (e) { } return r; };
+      }
+      // el filtro de turno también ofrece los turnos configurados (ej: "Día" en 2 turnos de 12 h)
+      function turnosEnFiltro() {
+        const sel = $('filterShift'); if (!sel) return;
+        const ya = new Set([...sel.options].map(o => o.value));
+        const nombres = new Set();
+        try { const c = inoferTurnosConfig(); (c.esquemas || []).forEach(e => (e.turnos || []).forEach(t => t.nombre && nombres.add(t.nombre))); } catch (e) { }
+        nombres.forEach(n => { if (!ya.has(n)) { const o = document.createElement('option'); o.value = n; o.textContent = 'Turno ' + n; sel.appendChild(o); } });
+      }
+      function iniciar() { arrancarObs(); try { turnosEnFiltro(); sinCargaAparte(); aplicarOcultos(); refreshAll(); } catch (e) { } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>

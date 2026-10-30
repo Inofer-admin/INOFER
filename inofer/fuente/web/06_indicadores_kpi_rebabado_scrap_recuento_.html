@@ -1,0 +1,468 @@
+  <script>
+    // =====================================================================
+    // INDICADORES (KPI): rebabado, % scrap, recuento cíclico, inyección.
+    // Módulo "kpis" (área indicadores): { <clave>: { meta, datos: [{ mes:'2025-09', valor: 99.24, nota }] } }
+    // =====================================================================
+    const INOFER_KPI_DEF = [
+      { key: 'rebabado', titulo: 'EFICIENCIA DE REBABADO', corto: 'Rebabado', icono: '✂️', mayorEsMejor: true, metaDef: 95, min: 0, max: 100 },
+      { key: 'scrap', titulo: '% SCRAP', corto: '% Scrap', icono: '♻️', mayorEsMejor: false, metaDef: 2, min: 0, max: 100 },
+      { key: 'recuento', titulo: 'EFICIENCIA DEL RECUENTO CÍCLICO', corto: 'Recuento cíclico', icono: '📦', mayorEsMejor: true, metaDef: 98, min: 0, max: 100 },
+      { key: 'inyeccion', titulo: 'EFICIENCIA DE INYECCIÓN', corto: 'Inyección', icono: '🏭', mayorEsMejor: true, metaDef: 85, min: 0, max: 100 }
+    ];
+    const INOFER_KPI_KEY = 'tablero_inyectoras_kpis_v1';
+    const INOFER_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
+    // Datos de partida del gráfico "Eficiencia de conteo" que pasó la planta (se pueden editar)
+    // Datos históricos de las planillas REBABADO.xlsx, INYECCION.xlsx y SCRAP.xlsx (jun-25 a sept-26)
+    const INOFER_KPI_INICIAL = {
+      rebabado: { datos: [["2025-06", 68.0], ["2025-07", 70.0], ["2025-08", 68.0], ["2025-09", 71.0], ["2025-10", 66.0], ["2025-11", 65.0], ["2025-12", 66.0], ["2026-01", 64.0], ["2026-02", 66.0], ["2026-03", 69.0], ["2026-04", 64.0], ["2026-05", 69.0], ["2026-06", 61.0], ["2026-07", 68.0], ["2026-08", 64.0], ["2026-09", 62.5]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
+      inyeccion: { datos: [["2025-06", 88.0], ["2025-07", 89.0], ["2025-08", 89.0], ["2025-09", 89.0], ["2025-10", 92.0], ["2025-11", 90.0], ["2025-12", 91.0], ["2026-01", 86.0], ["2026-02", 84.0], ["2026-03", 89.0], ["2026-04", 93.0], ["2026-05", 90.0], ["2026-06", 91.0], ["2026-07", 90.0], ["2026-08", 90.0], ["2026-09", 87.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
+      scrap: { datos: [["2025-06", 7.0], ["2025-07", 13.0], ["2025-08", 9.0], ["2025-09", 17.0], ["2025-10", 8.0], ["2025-11", 10.0], ["2025-12", 16.0], ["2026-01", 9.0], ["2026-02", 6.0], ["2026-03", 8.0], ["2026-04", 2.0], ["2026-05", 6.0], ["2026-06", 5.0], ["2026-07", 6.0], ["2026-08", 7.0], ["2026-09", 4.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
+      recuento: { meta: 98, datos: [['2025-09', 99.24], ['2025-10', 98.00], ['2025-11', 99.12], ['2025-12', 98.15], ['2026-01', 96.63], ['2026-02', 100], ['2026-03', 95.61], ['2026-04', 99.17], ['2026-05', 100], ['2026-06', 100], ['2026-07', 98.81], ['2026-08', 99.17], ['2026-09', 98.68]].map(([mes, valor]) => ({ mes, valor, nota: '' })) }
+    };
+    let inoferKpis = {};
+    try { inoferKpis = JSON.parse(localStorage.getItem(INOFER_KPI_KEY) || 'null') || JSON.parse(JSON.stringify(INOFER_KPI_INICIAL)); } catch (e) { inoferKpis = JSON.parse(JSON.stringify(INOFER_KPI_INICIAL)); }
+    let inoferKpiActual = 'resumen';
+    let inoferKpiRango = 'todo';
+    const inoferKpiCharts = {};
+
+    function inoferKpiDef(k) { return INOFER_KPI_DEF.find(d => d.key === k); }
+    function inoferKpiData(k) {
+      const d = inoferKpiDef(k);
+      const o = inoferKpis[k] = inoferKpis[k] || { meta: d.metaDef, datos: [] };
+      if (o.meta === undefined || o.meta === null || o.meta === '') o.meta = d.metaDef;
+      o.datos = (o.datos || []).filter(x => /^\d{4}-\d{2}$/.test(x.mes)).sort((a, b) => a.mes.localeCompare(b.mes));
+      return o;
+    }
+    function inoferMesTxt(mes) { const [y, m] = mes.split('-'); return `${INOFER_MESES[Number(m) - 1]}-${y.slice(2)}`; }
+    function inoferPct(v) { return (Number(v) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'; }
+    function inoferGuardarKpis() {
+      try { localStorage.setItem(INOFER_KPI_KEY, JSON.stringify(inoferKpis)); } catch (e) { }
+      try { pushCloudModuleState('kpis', inoferKpis); } catch (e) { }
+    }
+    function inoferKpiFiltrados(k) {
+      const datos = inoferKpiData(k).datos;
+      if (inoferKpiRango === 'todo' || !datos.length) return datos;
+      const n = Number(inoferKpiRango);
+      return datos.slice(-n);
+    }
+    function inoferKpiStats(k) {
+      const def = inoferKpiDef(k), o = inoferKpiData(k), datos = inoferKpiFiltrados(k);
+      if (!datos.length) return null;
+      const vals = datos.map(x => Number(x.valor));
+      const prom = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const mejor = def.mayorEsMejor ? Math.max(...vals) : Math.min(...vals);
+      const peor = def.mayorEsMejor ? Math.min(...vals) : Math.max(...vals);
+      const cumple = v => def.mayorEsMejor ? v >= Number(o.meta) : v <= Number(o.meta);
+      const enMeta = vals.filter(cumple).length;
+      // tendencia: pendiente de la recta de los últimos 6 meses
+      const ult = vals.slice(-6);
+      let pend = 0;
+      if (ult.length >= 3) {
+        const n = ult.length, xs = ult.map((_, i) => i), mx = (n - 1) / 2, my = ult.reduce((a, b) => a + b, 0) / n;
+        pend = xs.reduce((a, x, i) => a + (x - mx) * (ult[i] - my), 0) / xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+      }
+      const mejora = def.mayorEsMejor ? pend > 0.05 : pend < -0.05;
+      const empeora = def.mayorEsMejor ? pend < -0.05 : pend > 0.05;
+      const ultimo = datos[datos.length - 1], anterior = datos[datos.length - 2];
+      return {
+        ultimo, anterior, prom, mejor, peor, enMeta, total: vals.length, meta: Number(o.meta),
+        mejorMes: datos.find(x => Number(x.valor) === mejor), peorMes: datos.find(x => Number(x.valor) === peor),
+        tendencia: mejora ? '↗ Mejorando' : (empeora ? '↘ Empeorando' : '→ Estable'), tendClase: mejora ? 'text-emerald-300' : (empeora ? 'text-rose-300' : 'text-slate-300'),
+        cumpleUltimo: cumple(Number(ultimo.valor))
+      };
+    }
+
+    // ---------- gráfico estilo planilla (fondo azul, línea negra, etiquetas blancas)
+    const inoferKpiEtiquetas = {
+      id: 'inoferKpiEtiquetas',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0);
+        if (!ds || !meta || !meta.data) return;
+        ctx.save();
+        ctx.font = 'bold 11px Inter, Arial, sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        meta.data.forEach((pt, i) => {
+          const v = ds.data[i]; if (v === null || v === undefined) return;
+          const txt = inoferPct(v), w = ctx.measureText(txt).width;
+          const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
+          ctx.textAlign = derecha ? 'right' : 'left';
+          ctx.fillText(txt, derecha ? pt.x - 7 : pt.x + 7, pt.y + 8);
+        });
+        ctx.restore();
+      }
+    };
+    function inoferKpiDibujar(canvas, k, opts) {
+      if (!canvas || typeof Chart === 'undefined') return null;
+      const def = inoferKpiDef(k), o = inoferKpiData(k), datos = (opts && opts.datos) || inoferKpiFiltrados(k);
+      const vals = datos.map(x => Number(x.valor));
+      const meta = Number(o.meta);
+      // la meta entra en la escala solo si está cerca de los datos (si no, aplasta la curva)
+      const dMin = Math.min(...vals), dMax = Math.max(...vals), rango = Math.max(dMax - dMin, 2);
+      const metaVisible = isFinite(meta) && meta >= dMin - rango && meta <= dMax + rango;
+      let lo = metaVisible ? Math.min(dMin, meta) : dMin, hi = metaVisible ? Math.max(dMax, meta) : dMax;
+      if (!isFinite(lo)) { lo = 0; hi = 100; }
+      const margen = Math.max(1, (hi - lo) * 0.15);
+      lo = Math.max(def.min, Math.floor(lo - margen)); hi = Math.min(def.max, Math.ceil(hi + margen));
+      if (hi - lo < 2) { hi = Math.min(def.max, lo + 2); }
+      if (canvas.__chart) { try { canvas.__chart.destroy(); } catch (e) { } }
+      const grid = 'rgba(255,255,255,0.45)';
+      const chart = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: datos.map(x => inoferMesTxt(x.mes)),
+          datasets: [
+            { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false },
+            { label: 'Meta ' + inoferPct(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: !(opts && opts.sinAnimacion),
+          layout: { padding: { right: 36, top: 6 } },
+          plugins: {
+            legend: { display: true, position: 'bottom', labels: { color: '#ffffff', boxWidth: 18, font: { weight: 'bold', size: 11 } } },
+            title: { display: true, text: def.titulo, color: '#ffffff', font: { size: 16, weight: 'bold' }, padding: { bottom: 10 } },
+            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${inoferPct(c.parsed.y)}` } }
+          },
+          scales: {
+            x: { grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 } } },
+            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 }, callback: v => inoferPct(v) } }
+          }
+        },
+        plugins: [...(opts && opts.sinEtiquetas ? [] : [inoferKpiEtiquetas]), { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
+      });
+      canvas.__chart = chart;
+      return chart;
+    }
+
+    // ---------- interfaz
+    function inoferBuildKpiUi() {
+      if (document.getElementById('viewKpi')) return;
+      const ganttBtn = document.getElementById('tabGanttBtn');
+      if (ganttBtn) {
+        const b = document.createElement('button');
+        b.id = 'tabKpiBtn'; b.type = 'button';
+        b.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-sky-300 hover:text-white';
+        b.innerHTML = '📊 Indicadores';
+        b.addEventListener('click', () => switchTab('kpi'));
+        ganttBtn.parentNode.insertBefore(b, ganttBtn.nextSibling);
+      }
+      const ref = document.getElementById('viewGantt');
+      if (!ref) return;
+      const v = document.createElement('div');
+      v.id = 'viewKpi'; v.className = 'hidden space-y-4';
+      v.innerHTML = `
+        <div class="rounded-2xl border border-sky-500/30 bg-slate-900/80 p-4 shadow-xl">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 class="text-base font-extrabold text-white">📊 Indicadores de planta — tendencia histórica</h2>
+              <p class="text-xs text-slate-400">Cargá el valor de cada mes y se arma el gráfico. Desde acá imprimís el informe de cada indicador o el de todos juntos.</p></div>
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="kpiRango" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white">
+                <option value="todo">Todo el historial</option><option value="12">Últimos 12 meses</option><option value="6">Últimos 6 meses</option><option value="24">Últimos 24 meses</option>
+              </select>
+              <button id="kpiPrintAllBtn" type="button" class="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-emerald-400">🖨️ Informe de todos</button>
+            </div>
+          </div>
+          <div id="kpiSubtabs" class="mt-3 flex flex-wrap gap-1.5"></div>
+        </div>
+        <div id="kpiBody"></div>`;
+      ref.parentNode.insertBefore(v, ref.nextSibling);
+      v.querySelector('#kpiRango').addEventListener('change', e => { inoferKpiRango = e.target.value; inoferRenderKpi(); });
+      v.querySelector('#kpiPrintAllBtn').addEventListener('click', () => inoferImprimirKpi(INOFER_KPI_DEF.map(d => d.key)));
+    }
+
+    function inoferRenderKpi() {
+      const sub = document.getElementById('kpiSubtabs'), body = document.getElementById('kpiBody');
+      if (!sub || !body) return;
+      const tabs = [{ key: 'resumen', corto: 'Resumen', icono: '🧭' }].concat(INOFER_KPI_DEF);
+      sub.innerHTML = tabs.map(t => `<button type="button" data-kpi-tab="${t.key}" class="rounded-lg px-3 py-1.5 text-xs font-bold ${inoferKpiActual === t.key ? 'bg-sky-500 text-slate-950' : 'border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'}">${t.icono} ${t.corto}</button>`).join('');
+      sub.querySelectorAll('[data-kpi-tab]').forEach(b => b.addEventListener('click', () => { inoferKpiActual = b.dataset.kpiTab; inoferRenderKpi(); }));
+      Object.keys(inoferKpiCharts).forEach(id => { try { inoferKpiCharts[id].destroy(); } catch (e) { } delete inoferKpiCharts[id]; });
+      if (inoferKpiActual === 'resumen') return inoferRenderKpiResumen(body);
+      inoferRenderKpiDetalle(body, inoferKpiActual);
+    }
+
+    function inoferKpiTarjetaStats(k) {
+      const st = inoferKpiStats(k), def = inoferKpiDef(k);
+      if (!st) return '<p class="text-xs text-slate-400">Todavía no hay datos cargados.</p>';
+      const dif = st.anterior ? Number(st.ultimo.valor) - Number(st.anterior.valor) : 0;
+      const difBuena = def.mayorEsMejor ? dif >= 0 : dif <= 0;
+      return `<div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Último (${inoferMesTxt(st.ultimo.mes)})</div><div class="text-base font-extrabold ${st.cumpleUltimo ? 'text-emerald-300' : 'text-rose-300'}">${inoferPct(st.ultimo.valor)}</div>${st.anterior ? `<div class="text-[10px] ${difBuena ? 'text-emerald-300' : 'text-rose-300'}">${dif >= 0 ? '▲ +' : '▼ '}${dif.toFixed(2)} pts</div>` : ''}</div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Meta</div><div class="text-base font-extrabold text-amber-300">${inoferPct(st.meta)}</div><div class="text-[10px] text-slate-500">${def.mayorEsMejor ? 'mayor es mejor' : 'menor es mejor'}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Promedio</div><div class="text-base font-extrabold text-white">${inoferPct(st.prom)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Mejor mes</div><div class="text-sm font-extrabold text-emerald-300">${inoferPct(st.mejor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.mejorMes.mes)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Peor mes</div><div class="text-sm font-extrabold text-rose-300">${inoferPct(st.peor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.peorMes.mes)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">En meta / tendencia</div><div class="text-sm font-extrabold text-white">${st.enMeta} de ${st.total} meses</div><div class="text-[10px] font-bold ${st.tendClase}">${st.tendencia}</div></div>
+      </div>`;
+    }
+
+    function inoferRenderKpiResumen(body) {
+      body.innerHTML = `<div class="grid gap-4 lg:grid-cols-2">${INOFER_KPI_DEF.map(d => `
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl space-y-2">
+          <div class="flex items-center justify-between"><span class="text-sm font-extrabold text-white">${d.icono} ${d.corto}</span>
+            <button type="button" data-kpi-ir="${d.key}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">Ver / cargar datos →</button></div>
+          <div class="relative h-60 rounded-xl overflow-hidden">${inoferKpiData(d.key).datos.length ? `<canvas id="kpiMini_${d.key}"></canvas>` : '<div class="flex h-full items-center justify-center bg-[#5b9bd5] text-xs font-bold text-white">Sin datos todavía</div>'}</div>
+          ${inoferKpiTarjetaStats(d.key)}
+        </div>`).join('')}</div>`;
+      body.querySelectorAll('[data-kpi-ir]').forEach(b => b.addEventListener('click', () => { inoferKpiActual = b.dataset.kpiIr; inoferRenderKpi(); }));
+      INOFER_KPI_DEF.forEach(d => { const c = document.getElementById('kpiMini_' + d.key); if (c) inoferKpiCharts['m' + d.key] = inoferKpiDibujar(c, d.key, { sinEtiquetas: inoferKpiFiltrados(d.key).length > 8 }); });
+    }
+
+    function inoferRenderKpiDetalle(body, k) {
+      const def = inoferKpiDef(k), o = inoferKpiData(k);
+      const hoy = new Date(); const mesDef = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+      body.innerHTML = `
+        <div class="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+          <div class="space-y-3">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl">
+              <div class="mb-2 flex flex-wrap items-center justify-end gap-2">
+                <button type="button" id="kpiPngBtn" class="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400">📥 Descargar gráfico PNG</button>
+                <button type="button" id="kpiPrintBtn" class="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-emerald-400">🖨️ Imprimir informe</button>
+              </div>
+              <div class="relative h-[420px] rounded-xl overflow-hidden">${o.datos.length ? '<canvas id="kpiChartMain"></canvas>' : '<div class="flex h-full items-center justify-center bg-[#5b9bd5] text-sm font-bold text-white">Cargá el primer mes para ver el gráfico →</div>'}</div>
+            </div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl">${inoferKpiTarjetaStats(k)}</div>
+          </div>
+          <div class="space-y-3">
+            <form id="kpiForm" class="rounded-2xl border border-sky-500/30 bg-slate-900/80 p-3.5 shadow-xl space-y-2.5 text-xs">
+              <div class="text-sm font-extrabold text-sky-300">${def.icono} Cargar / corregir un mes</div>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="text-[11px] font-semibold text-slate-400">Mes<input type="month" id="kpiMes" value="${mesDef}" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white" required /></label>
+                <label class="text-[11px] font-semibold text-slate-400">Valor (%)<input type="number" id="kpiValor" step="0.01" min="0" max="100" placeholder="Ej: 98,68" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-white" required /></label>
+              </div>
+              <label class="block text-[11px] font-semibold text-slate-400">Nota (opcional)<input type="text" id="kpiNota" maxlength="120" placeholder="Ej: inventario de fin de año" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white" /></label>
+              <button type="submit" class="kpi-edit w-full rounded-lg bg-sky-500 py-2 text-xs font-extrabold text-slate-950 hover:bg-sky-400">Guardar mes</button>
+              <div class="flex items-center gap-2 border-t border-slate-800 pt-2">
+                <span class="text-[11px] text-slate-400">Meta (%)</span>
+                <input type="number" id="kpiMeta" step="0.01" min="0" max="100" value="${o.meta}" class="kpi-edit w-24 rounded-lg border border-amber-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-amber-300" />
+                <span class="text-[10px] text-slate-500">${def.mayorEsMejor ? 'se cumple si el valor es igual o mayor' : 'se cumple si el valor es igual o menor'}</span>
+              </div>
+            </form>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl">
+              <div class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Valores cargados (${o.datos.length})</div>
+              <div class="max-h-72 overflow-auto"><table class="w-full text-left text-xs">
+                <thead><tr class="text-[10px] uppercase text-slate-500"><th class="py-1">Mes</th><th class="py-1 text-right">Valor</th><th class="py-1 pl-2">Nota / cargó</th><th></th></tr></thead>
+                <tbody>${o.datos.slice().reverse().map(x => `<tr class="border-t border-slate-800">
+                  <td class="py-1.5 font-semibold text-white">${inoferMesTxt(x.mes)}</td>
+                  <td class="py-1.5 text-right font-extrabold ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'text-emerald-300' : 'text-rose-300'}">${inoferPct(x.valor)}</td>
+                  <td class="py-1.5 pl-2 text-slate-400">${inoferEsc(x.nota || '')}${x.cargadoPor ? `<span class="block text-[10px] text-slate-500">${inoferEsc(x.cargadoPor)}${x.cargadoAt ? ' · ' + inoferEsc(new Date(x.cargadoAt).toLocaleDateString('es-AR')) : ''}</span>` : (x.nota ? '' : '<span class="text-[10px] text-slate-600">planilla histórica</span>')}</td>
+                  <td class="py-1.5 text-right whitespace-nowrap"><button type="button" data-kpi-editar="${x.mes}" class="kpi-edit rounded px-1.5 text-sky-300 hover:bg-slate-800" title="Editar">✏️</button><button type="button" data-kpi-borrar="${x.mes}" class="kpi-edit rounded px-1.5 text-rose-300 hover:bg-slate-800" title="Borrar">🗑️</button></td></tr>`).join('') || '<tr><td colspan="4" class="py-3 text-center text-slate-500">Sin datos</td></tr>'}</tbody></table></div>
+            </div>
+            <details class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl text-xs">
+              <summary class="cursor-pointer font-bold text-slate-300">📋 Cargar varios meses de una vez (pegar desde Excel o subir archivo)</summary>
+              <div class="mt-2 space-y-2">
+                <p class="text-[11px] text-slate-400">Copiá de Excel dos columnas (mes y valor) y pegalas acá. Sirven formatos como <b>sept-25 99,24%</b>, <b>2025-09 99.24</b> o <b>09/2025 99,24</b>.</p>
+                <textarea id="kpiPegar" rows="5" class="kpi-edit w-full rounded-lg border border-slate-700 bg-slate-950 p-2 font-mono text-[11px] text-white" placeholder="sept-25	99,24%&#10;oct-25	98,00%"></textarea>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" id="kpiPegarBtn" class="kpi-edit rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-sky-400">Cargar lo pegado</button>
+                  <label class="kpi-edit cursor-pointer rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">📎 Subir Excel / CSV<input type="file" id="kpiArchivo" accept=".xlsx,.xls,.csv,.txt" class="kpi-edit hidden" /></label>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>`;
+      const c = document.getElementById('kpiChartMain');
+      if (c) inoferKpiCharts.main = inoferKpiDibujar(c, k);
+      body.querySelector('#kpiForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const mes = document.getElementById('kpiMes').value, valor = Number(document.getElementById('kpiValor').value);
+        if (!/^\d{4}-\d{2}$/.test(mes) || !isFinite(valor) || document.getElementById('kpiValor').value === '') { showToast('Completá el mes y el valor'); return; }
+        const datos = inoferKpiData(k).datos;
+        const ex = datos.find(x => x.mes === mes);
+        const quien = inoferUsuarioEtiqueta(), cuando = new Date().toISOString();
+        if (ex) { ex.valor = valor; ex.nota = document.getElementById('kpiNota').value || ''; ex.cargadoPor = quien; ex.cargadoAt = cuando; }
+        else datos.push({ mes, valor, nota: document.getElementById('kpiNota').value || '', cargadoPor: quien, cargadoAt: cuando });
+        inoferGuardarKpis(); inoferRenderKpi();
+        showToast(`${def.corto} ${inoferMesTxt(mes)}: ${inoferPct(valor)} guardado`);
+      });
+      body.querySelector('#kpiMeta').addEventListener('change', e => { inoferKpiData(k).meta = Number(e.target.value) || 0; inoferGuardarKpis(); inoferRenderKpi(); });
+      body.querySelectorAll('[data-kpi-editar]').forEach(b => b.addEventListener('click', () => {
+        const x = inoferKpiData(k).datos.find(d => d.mes === b.dataset.kpiEditar); if (!x) return;
+        document.getElementById('kpiMes').value = x.mes; document.getElementById('kpiValor').value = x.valor; document.getElementById('kpiNota').value = x.nota || '';
+        document.getElementById('kpiValor').focus();
+      }));
+      body.querySelectorAll('[data-kpi-borrar]').forEach(b => b.addEventListener('click', () => {
+        if (!confirm(`¿Borrar ${def.corto} de ${inoferMesTxt(b.dataset.kpiBorrar)}?`)) return;
+        const o2 = inoferKpiData(k); o2.datos = o2.datos.filter(d => d.mes !== b.dataset.kpiBorrar);
+        inoferGuardarKpis(); inoferRenderKpi();
+      }));
+      body.querySelector('#kpiPegarBtn').addEventListener('click', () => inoferKpiImportarTexto(k, document.getElementById('kpiPegar').value));
+      body.querySelector('#kpiArchivo').addEventListener('change', e => inoferKpiImportarArchivo(k, e.target.files[0]));
+      body.querySelector('#kpiPngBtn').addEventListener('click', () => {
+        const cv = document.getElementById('kpiChartMain'); if (!cv) { showToast('Todavía no hay gráfico'); return; }
+        const a = document.createElement('a'); a.href = cv.toDataURL('image/png'); a.download = `INOFER_${def.corto.replace(/\W+/g, '_')}.png`; document.body.appendChild(a); a.click(); a.remove();
+      });
+      body.querySelector('#kpiPrintBtn').addEventListener('click', () => inoferImprimirKpi([k]));
+      try { inoferLockControls(); } catch (e) { }
+    }
+
+    // ---------- importar varios meses
+    function inoferKpiParseMes(t) {
+      t = String(t || '').trim().toLowerCase().replace(/\./g, '');
+      let m;
+      if ((m = t.match(/^(\d{4})[-\/](\d{1,2})/))) return `${m[1]}-${String(m[2]).padStart(2, '0')}`;
+      if ((m = t.match(/^(\d{1,2})[-\/](\d{4})/))) return `${m[2]}-${String(m[1]).padStart(2, '0')}`;
+      if ((m = t.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${String(m[2]).padStart(2, '0')}`; }
+      if ((m = t.match(/^([a-záéíóú]+)[\s\-\/]*(?:de\s*)?(\d{2,4})/))) {
+        const nombres = { ene: 1, feb: 2, mar: 3, abr: 4, may: 5, jun: 6, jul: 7, ago: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12 };
+        const n = nombres[m[1].slice(0, 3)];
+        if (n) { const y = m[2].length === 2 ? '20' + m[2] : m[2]; return `${y}-${String(n).padStart(2, '0')}`; }
+      }
+      return null;
+    }
+    function inoferKpiParseValor(t) {
+      if (typeof t === 'number') return t <= 1.5 && t > 0 ? Number((t * 100).toFixed(4)) : t; // Excel guarda 99,24% como 0,9924
+      let s = String(t || '').replace('%', '').trim();
+      if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(',', '.');
+      const v = parseFloat(s);
+      return isFinite(v) ? v : null;
+    }
+    function inoferKpiAgregarFilas(k, filas) {
+      const datos = inoferKpiData(k).datos; let n = 0;
+      filas.forEach(([mesT, valT]) => {
+        const mes = typeof mesT === 'number' ? (() => { const d = new Date(Math.round((mesT - 25569) * 86400000)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })() : (mesT instanceof Date ? `${mesT.getFullYear()}-${String(mesT.getMonth() + 1).padStart(2, '0')}` : inoferKpiParseMes(mesT));
+        const valor = inoferKpiParseValor(valT);
+        if (!mes || valor === null) return;
+        const ex = datos.find(x => x.mes === mes);
+        const quien = inoferUsuarioEtiqueta(), cuando = new Date().toISOString();
+        if (ex) { ex.valor = valor; ex.cargadoPor = quien; ex.cargadoAt = cuando; } else datos.push({ mes, valor, nota: '', cargadoPor: quien, cargadoAt: cuando });
+        n++;
+      });
+      if (n) { inoferGuardarKpis(); inoferRenderKpi(); }
+      showToast(n ? `${n} mes${n === 1 ? '' : 'es'} cargado${n === 1 ? '' : 's'} en ${inoferKpiDef(k).corto}` : 'No encontré filas con mes y valor');
+    }
+    function inoferKpiImportarTexto(k, texto) {
+      const filas = String(texto || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+        const partes = l.split(/\t|;|\s{2,}/).filter(Boolean);
+        if (partes.length >= 2) return [partes[0], partes[partes.length - 1]];
+        const m = l.match(/^(.*?)[\s,]+(-?[\d.,]+\s*%?)$/); return m ? [m[1], m[2]] : [l, ''];
+      });
+      inoferKpiAgregarFilas(k, filas);
+    }
+    function inoferKpiImportarArchivo(k, file) {
+      if (!file) return;
+      const r = new FileReader();
+      if (/\.(csv|txt)$/i.test(file.name)) { r.onload = () => inoferKpiImportarTexto(k, r.result); r.readAsText(file); return; }
+      if (typeof XLSX === 'undefined' || !XLSX.read) { showToast('No se pudo leer Excel en este equipo. Copiá las celdas y pegalas.'); return; }
+      r.onload = () => {
+        try {
+          const wb = XLSX.read(r.result, { type: 'array', cellDates: true });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const filas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }).filter(f => f && f.length >= 2).map(f => [f[0], f[1]]);
+          inoferKpiAgregarFilas(k, filas);
+        } catch (e) { showToast('No se pudo leer el archivo'); }
+      };
+      r.readAsArrayBuffer(file);
+    }
+
+    // ---------- informe imprimible
+    function inoferImprimirKpi(claves) {
+      const hoy = new Date().toLocaleDateString('es-AR');
+      const bloques = claves.map(k => {
+        const def = inoferKpiDef(k), o = inoferKpiData(k), st = inoferKpiStats(k), datos = inoferKpiFiltrados(k);
+        let img = '';
+        if (datos.length && typeof Chart !== 'undefined') {
+          const cv = document.createElement('canvas'); cv.width = 1100; cv.height = 520;
+          const wrap = document.createElement('div'); wrap.style.cssText = 'position:fixed;left:-9999px;top:0;width:1100px;height:520px'; wrap.appendChild(cv); document.body.appendChild(wrap);
+          const ch = inoferKpiDibujar(cv, k, { sinAnimacion: true });
+          try { ch.resize(1100, 520); ch.update('none'); img = cv.toDataURL('image/png'); } catch (e) { }
+          try { ch.destroy(); } catch (e) { } wrap.remove();
+        }
+        const filas = datos.map(x => `<tr><td>${inoferMesTxt(x.mes)}</td><td class="n ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'ok' : 'mal'}">${inoferPct(x.valor)}</td><td>${inoferEsc(x.nota || '')}</td><td>${inoferEsc(x.cargadoPor || '')}</td></tr>`).join('');
+        return `<section>
+          <h2>${def.titulo}</h2>
+          ${st ? `<div class="kpis">
+            <div><span>Último (${inoferMesTxt(st.ultimo.mes)})</span><b>${inoferPct(st.ultimo.valor)}</b></div>
+            <div><span>Meta</span><b>${inoferPct(st.meta)}</b></div>
+            <div><span>Promedio</span><b>${inoferPct(st.prom)}</b></div>
+            <div><span>Mejor / peor</span><b>${inoferPct(st.mejor)} / ${inoferPct(st.peor)}</b></div>
+            <div><span>Meses en meta</span><b>${st.enMeta} de ${st.total}</b></div>
+            <div><span>Tendencia</span><b>${st.tendencia}</b></div></div>` : '<p>Sin datos cargados.</p>'}
+          ${img ? `<img src="${img}" alt="">` : ''}
+          ${filas ? `<table><thead><tr><th>Mes</th><th>Valor</th><th>Nota</th><th>Cargó</th></tr></thead><tbody>${filas}</tbody></table>` : ''}
+        </section>`;
+      }).join('');
+      const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>INOFER — Informe de indicadores</title><style>
+        @page { size: A4; margin: 14mm; }
+        body { font-family: Arial, sans-serif; color: #111; font-size: 11px; }
+        header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid #1f4e79; margin-bottom: 10px; }
+        header h1 { font-size: 18px; margin: 0 0 4px; color: #1f4e79; }
+        section { page-break-inside: avoid; margin-bottom: 18px; }
+        section + section { page-break-before: always; }
+        h2 { font-size: 14px; color: #1f4e79; margin: 6px 0; }
+        .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 8px; }
+        .kpis div { border: 1px solid #c9d6e3; border-radius: 6px; padding: 5px; }
+        .kpis span { display: block; color: #555; font-size: 9px; } .kpis b { font-size: 12px; }
+        img { width: 100%; border-radius: 6px; margin: 4px 0 8px; }
+        table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #c9d6e3; padding: 3px 6px; text-align: left; }
+        th { background: #dde8f3; } td.n { text-align: right; font-weight: bold; } .ok { color: #13803d; } .mal { color: #b91c1c; }
+      </style></head><body>
+        <header><h1>INOFER — Informe de indicadores</h1><div>Emitido: ${hoy}${inoferSession ? ' · ' + inoferEsc(inoferSession.nombre) : ''} · Período: ${inoferKpiRango === 'todo' ? 'todo el historial' : 'últimos ' + inoferKpiRango + ' meses'}</div></header>
+        ${bloques}</body></html>`;
+      const fr = document.createElement('iframe');
+      fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+      document.body.appendChild(fr);
+      const d = fr.contentWindow.document; d.open(); d.write(html); d.close();
+      setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { } setTimeout(() => fr.remove(), 4000); }, 500);
+    }
+
+    // ---------- nube, solapas y permisos
+    const _inoferApplyModsKpi = window.applyCloudModules;
+    if (typeof _inoferApplyModsKpi === 'function') {
+      window.applyCloudModules = function (mods) {
+        const out = _inoferApplyModsKpi.apply(this, arguments);
+        try {
+          if (mods && mods.kpis && typeof mods.kpis === 'object' && JSON.stringify(mods.kpis) !== JSON.stringify(inoferKpis)) {
+            inoferKpis = mods.kpis;
+            try { localStorage.setItem(INOFER_KPI_KEY, JSON.stringify(inoferKpis)); } catch (e) { }
+            const a = document.activeElement;
+            const v = document.getElementById('viewKpi');
+            if (v && !v.classList.contains('hidden') && !(a && a.classList && a.classList.contains('kpi-edit'))) inoferRenderKpi();
+          }
+          let cargaHecha = false; try { cargaHecha = localStorage.getItem('tablero_inyectoras_kpis_carga_v2') === '1'; } catch (e) { }
+          if (!cargaHecha && inoferSession && inoferCan('indicadores', 'edit')) {
+            let agregados = 0;
+            Object.keys(INOFER_KPI_INICIAL).forEach(k => {
+              const o = inoferKpiData(k);
+              INOFER_KPI_INICIAL[k].datos.forEach(x => { if (!o.datos.some(y => y.mes === x.mes)) { o.datos.push({ ...x }); agregados++; } });
+            });
+            try { localStorage.setItem('tablero_inyectoras_kpis_carga_v2', '1'); } catch (e) { }
+            if (agregados || (mods && !mods.kpis && !mods.__parcial)) { inoferGuardarKpis(); const v = document.getElementById('viewKpi'); if (v && !v.classList.contains('hidden')) inoferRenderKpi(); }
+          } else if (mods && !mods.kpis && !mods.__parcial && inoferSession && inoferCan('indicadores', 'edit') && Object.keys(inoferKpis).length) {
+            // la nube todavía no tiene indicadores: se suben los de este equipo (incluye los datos iniciales)
+            inoferGuardarKpis();
+          }
+        } catch (e) { }
+        return out;
+      };
+    }
+    const _inoferSwitchKpi = window.switchTab;
+    window.switchTab = function (tab) {
+      const kv = document.getElementById('viewKpi'), kb = document.getElementById('tabKpiBtn');
+      if (tab === 'kpi') {
+        if (!inoferCan('indicadores', 'view')) return;
+        _inoferSwitchKpi('ai');
+        ['viewDashboard', 'viewSimulator', 'viewRecords', 'viewOrders', 'viewGantt', 'viewAi', 'viewPapelera'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('hidden'); });
+        ['tabAiBtn'].forEach(id => { const el = document.getElementById(id); if (el && !el.classList.contains('hidden')) el.className = 'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-violet-300 hover:text-white'; });
+        if (kv) kv.classList.remove('hidden');
+        if (kb) kb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition bg-sky-500 text-slate-950 shadow';
+        inoferRenderKpi();
+        return;
+      }
+      if (kv) kv.classList.add('hidden');
+      if (kb) kb.className = 'rounded-md px-3 py-1.5 text-xs font-semibold transition text-sky-300 hover:text-white' + (inoferCan('indicadores', 'view') ? '' : ' hidden');
+      return _inoferSwitchKpi.apply(this, arguments);
+    };
+    const _inoferPermsKpi = window.inoferApplyPermissions;
+    window.inoferApplyPermissions = function () {
+      const r = _inoferPermsKpi.apply(this, arguments);
+      const kb = document.getElementById('tabKpiBtn'), kv = document.getElementById('viewKpi');
+      if (kb) kb.classList.toggle('hidden', !inoferCan('indicadores', 'view'));
+      if (kv && !inoferCan('indicadores', 'view') && !kv.classList.contains('hidden')) { kv.classList.add('hidden'); try { switchTab('dashboard'); } catch (e) { } }
+      return r;
+    };
+    window.addEventListener('DOMContentLoaded', () => { inoferBuildKpiUi(); try { inoferApplyPermissions(); } catch (e) { } });
+  </script>
+

@@ -1,0 +1,93 @@
+  <script>
+    // ===== IA compartida: Gemini a través de la nube (la clave la carga el administrador una sola vez) =====
+    (function () {
+      let iaServidor = false;
+      const enNube = () => typeof inoferAuthMode !== 'undefined' && inoferAuthMode === 'nube' && typeof inoferAuthToken === 'function' && inoferAuthToken();
+      window.inoferIaDisponible = () => !!(typeof geminiApiKey !== 'undefined' && geminiApiKey) || (iaServidor && !!enNube());
+      async function directo(cuerpo, key) {
+        let ultimo = 'sin respuesta';
+        for (const model of (typeof GEMINI_MODELS !== 'undefined' ? GEMINI_MODELS : ['gemini-2.5-flash'])) {
+          let r, d;
+          try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(cuerpo) }); d = await r.json().catch(() => ({})); }
+          catch (e) { throw new Error('sin conexión a internet'); }
+          if (r.ok) { const t = (d?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim(); if (t) return t; ultimo = 'respuesta vacía'; continue; }
+          ultimo = String(d?.error?.message || r.status);
+          if (r.status === 400 && /api key/i.test(ultimo)) throw new Error('la clave de Gemini no es válida');
+        }
+        throw new Error(ultimo);
+      }
+      let proveedor = '';
+      window.inoferLLM = async function (cuerpo) {
+        // primero la IA de la nube (Claude o Gemini, la que cargó el administrador)
+        if (iaServidor && enNube()) {
+          let d = await inoferCloudPost({ action: 'iaGenerar', token: inoferAuthToken(), cuerpo });
+          // Google a veces está saturado unos segundos: se reintenta una vez
+          if (!(d && d.status === 'ok') && /demand|unavailable|overload|vac[ií]a|try again|l[ií]mite/i.test((d && d.error) || '')) {
+            await new Promise(r => setTimeout(r, 2500));
+            d = await inoferCloudPost({ action: 'iaGenerar', token: inoferAuthToken(), cuerpo });
+          }
+          if (d && d.status === 'ok') return d.texto;
+          if (!(typeof geminiApiKey !== 'undefined' && geminiApiKey)) throw new Error((d && d.error) || 'la IA no respondió');
+        }
+        if (typeof geminiApiKey !== 'undefined' && geminiApiKey && !/^sk-ant-/.test(geminiApiKey)) return await directo(cuerpo, geminiApiKey);
+        throw new Error('la IA no está configurada');
+      };
+      async function info() {
+        if (!enNube()) return;
+        try { const d = await inoferCloudPost({ action: 'iaInfo', token: inoferAuthToken() }); iaServidor = !!(d && d.status === 'ok' && d.configurada); proveedor = (d && d.proveedor) || ''; } catch (e) { }
+        const badge = document.getElementById('aiEngineModeBadge');
+        if (badge && inoferIaDisponible()) badge.textContent = proveedor === 'claude' ? 'IA Claude activa ✓' : 'IA Gemini activa ✓';
+        const lbl = document.querySelector('label[for="geminiApiKeyInput"]') || (document.getElementById('geminiApiKeyInput') || {}).previousElementSibling;
+        if (lbl && lbl.tagName === 'LABEL' && !lbl.dataset.inoferIa) { lbl.dataset.inoferIa = '1'; lbl.textContent = 'Clave de IA: Claude (sk-ant-…) o Gemini (AIza…)'; }
+        const ki = document.getElementById('geminiApiKeyInput'); if (ki) ki.placeholder = 'sk-ant-… (Claude) o AIza… (Gemini)';
+      }
+      window.inoferIaInfo = info;
+      // al guardar la clave en la pestaña IA, el administrador también la deja en la nube para todos
+      document.addEventListener('click', ev => {
+        const b = ev.target.closest && ev.target.closest('#saveGeminiKeyBtn');
+        if (!b || !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()) || !enNube()) return;
+        const k = (document.getElementById('geminiApiKeyInput') || {}).value || '';
+        if (k.trim()) {
+          // la clave (Claude o Gemini) la prueba la nube y queda guardada solo ahí, para todos los usuarios
+          ev.preventDefault(); ev.stopImmediatePropagation();
+          const esClaude = /^sk-ant-/.test(k.trim());
+          const badge = document.getElementById('aiEngineModeBadge'); if (badge) badge.textContent = 'Probando la clave…';
+          inoferCloudPost({ action: 'iaConfig', token: inoferAuthToken(), clave: k.trim() }).then(d => {
+            if (d && d.status === 'ok') { iaServidor = true; proveedor = d.proveedor || (esClaude ? 'claude' : 'gemini'); document.getElementById('geminiApiKeyInput').value = '';
+              try { geminiApiKey = ''; localStorage.removeItem('tablero_inyectoras_gemini_key'); } catch (e) { }
+              const nom = proveedor === 'claude' ? 'Claude' : 'Gemini';
+              if (badge) badge.textContent = `IA ${nom} activa ✓`; showToast(`${nom} activado para todos los usuarios ✓`); }
+            else { if (badge) badge.textContent = 'Motor OEE Integrado'; showToast('No se pudo activar la IA: ' + ((d && d.error) || '')); }
+          }).catch(() => showToast('Sin conexión con la nube'));
+          return;
+        }
+        // sin nube: sigue el guardado normal en este equipo
+      }, true);
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); setTimeout(info, 500); return r; };
+      }
+      setTimeout(info, 3000);
+
+      // IA INOFER: los pedidos de cambios sobre el plan los ejecuta el asistente del Gantt
+      const ORDEN = /\b(aument\w*|sub[ií]\w*|baj[aá]\w*|pon[eé]\w*|agreg\w*|sum[aá]\w*|rest[aá]\w*|sac[aá]\w*|quit[aá]\w*|borr[aá]\w*|mov[eé]\w*|pas[aá]\w*|program\w*|planific\w*|arm[aá]\w*|cambi[aá]\w*|reduc\w*|deshac\w*|llev[aá]\w*|necesito facturar|factur[aá])\b/i;
+      const SOBRE_PLAN = /(\d{4,}|sem(ana)?\s*\d|gantt|piezas?|200v|200n|\b180\b|h50|z30|factur|lote|turno)/i;
+      if (typeof window.handleAiUserPrompt === 'function') {
+        const orig = window.handleAiUserPrompt;
+        window.handleAiUserPrompt = async function (text, chart) {
+          const t = String(text || '').trim();
+          if (t && !chart && ORDEN.test(t) && SOBRE_PLAN.test(t) && typeof inoferGanttEjecutar === 'function' && !/^(record[aá] que|aprend[eé] que|ten[eé] en cuenta que|regla:|nota:|criterio:)/i.test(t)) {
+            appendAiChatMessage('user', t);
+            try { aiShowTyping(true); } catch (e) { }
+            let html = '';
+            try { html = await inoferGanttEjecutar(t); } catch (e) { html = '✗ ' + e.message; }
+            try { aiShowTyping(false); } catch (e) { }
+            const md = String(html || 'Listo.').replace(/<br\s*\/?>/gi, '\n').replace(/<\/?b>/gi, '**').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            appendAiChatMessage('assistant', md + '\n\n*(Cambio aplicado en el Gantt: ' + (window.inoferSemanasAsistente ? inoferSemanasAsistente().join(', ') : '') + ')*');
+            return;
+          }
+          return orig.apply(this, arguments);
+        };
+      }
+    })();
+  </script>

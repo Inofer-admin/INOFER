@@ -1,0 +1,60 @@
+  <script>
+    // ===== Guardado sin pisarse: cada equipo recuerda qué versión de la nube conocía ("base") =====
+    (function () {
+      const KEY = 'tablero_inyectoras_base_v1';
+      const CLAVES = ['orders', 'catalog', 'gantt'];
+      const hashTxt = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + '.' + s.length.toString(36); };
+      const hashObj = o => hashTxt(JSON.stringify(o === undefined ? null : o));
+      let base = {};
+      try { base = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { base = {}; }
+      const guardar = () => { try { localStorage.setItem(KEY, JSON.stringify(base)); } catch (e) { } };
+      function calcular(k, d) {
+        const out = {};
+        if (k === 'gantt') {
+          Object.keys(d || {}).forEach(w => { const m = {}; Object.keys((d[w] && d[w].machines) || {}).forEach(x => { m[x] = hashObj(d[w].machines[x]); }); out[w] = { h: hashObj(d[w]), m }; });
+        } else {
+          (Array.isArray(d) ? d : []).forEach(o => { if (!o || o.id == null) return; const b = { h: hashObj(o) }; if (k === 'orders') b.l = (o.logs || []).map(l => String(l.id)); out[String(o.id)] = b; });
+        }
+        return out;
+      }
+      function recordar(k, d) { if (!CLAVES.includes(k) || d == null) return; base[k] = calcular(k, d); guardar(); }
+      window.inoferBaseDe = k => (CLAVES.includes(k) && base[k] ? base[k] : undefined);
+      const local = k => k === 'orders' ? (typeof productionOrders !== 'undefined' ? productionOrders : null) : (k === 'catalog' ? (typeof partsCatalog !== 'undefined' ? partsCatalog : null) : (k === 'gantt' ? (typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : null) : null));
+      // después de guardar, el equipo se queda con lo que quedó en la nube (incluye lo que cargaron otros)
+      window.inoferAdoptar = function (k, enviado, d) {
+        if (!d || d.status !== 'ok' || !d.modules || d.modules[k] === undefined || !CLAVES.includes(k)) return;
+        const nube = d.modules[k];
+        recordar(k, nube);
+        if (d.versiones) window.__inoferVersiones = Object.assign({}, window.__inoferVersiones || {}, { [k]: d.versiones[k] });
+        const actual = local(k);
+        const sinCambiosLocales = JSON.stringify(actual) === JSON.stringify(enviado);
+        if (sinCambiosLocales && JSON.stringify(nube) !== JSON.stringify(actual)) {
+          try { applyCloudModules({ [k]: nube, __parcial: true }); } catch (e) { }
+          if (d.fusion && d.fusion.deOtros) { try { showToast('🔄 Se sumaron cambios que hicieron otros equipos al mismo tiempo'); } catch (e) { } }
+        }
+      };
+      function instalar() {
+        if (typeof window.applyCloudModules !== 'function' || window.applyCloudModules.__base) return;
+        const am = window.applyCloudModules;
+        const f = function (mods) {
+          const r = am.apply(this, arguments);
+          try {
+            const pend = window.inoferModsPendientes ? inoferModsPendientes() : [];
+            if (mods) CLAVES.forEach(k => { if (mods[k] !== undefined && !pend.includes(k)) recordar(k, mods[k]); });
+          } catch (e) { }
+          return r;
+        };
+        Object.assign(f, am); f.__base = true;
+        window.applyCloudModules = f;
+      }
+      instalar();
+      window.addEventListener('load', () => setTimeout(instalar, 100));
+      // no dejar cerrar sesión si quedan cargas sin subir
+      document.addEventListener('click', e => {
+        if (!e.target.closest || !e.target.closest('#inoferMenuLogout')) return;
+        const n = ((window.inoferModsPendientes && inoferModsPendientes().length) || 0) + ((window.inoferPartesPendientes && inoferPartesPendientes()) || 0);
+        if (!n) return;
+        if (!confirm(`⚠️ Hay ${n} carga${n > 1 ? 's' : ''} guardada${n > 1 ? 's' : ''} solo en este equipo que todavía no se subieron a la nube.\n\nConectate a internet y esperá a que desaparezca el aviso "sin subir" antes de cerrar sesión.\n\n¿Cerrar sesión igual? (Aceptar = cerrar, se pueden perder esas cargas)`)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      }, true);
+    })();
+  </script>

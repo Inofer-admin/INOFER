@@ -1,0 +1,554 @@
+  <script>
+    // ===== Carga rápida de órdenes para el operario en máquina =====
+    (function () {
+      // En celular el encabezado fijo tapa un tercio de la pantalla: que se desplace con la página
+      try { const stl = document.createElement('style'); stl.textContent = '@media (max-width: 640px){ body > header.sticky{ position: static; } }'; document.head.appendChild(stl); } catch (e) { }
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const PREF_KEY = 'tablero_inyectoras_operario_v1';
+      const MAQ = [
+        { id: '200V', full: 'Italpresse 200 Tn (V)' }, { id: '200N', full: 'Italpresse 200 Tn (N)' }, { id: '180', full: 'Italpresse 180 Tn' },
+        { id: 'H50', full: 'H-50' }, { id: 'Z30', full: 'Italpresse 30 Tn (Z-30)' }
+      ];
+      // Turnos configurables por el administrador (módulo de nube "turnos", se ve en todos los equipos)
+      const TURNOS_KEY = 'tablero_inyectoras_turnos_v1';
+      const TURNOS_DEF = { activo: 'e3', esquemas: [
+        { id: 'e3', nombre: '3 turnos de 8 h', turnos: [{ nombre: 'Mañana', ini: '06:00', fin: '14:00' }, { nombre: 'Tarde', ini: '14:00', fin: '22:00' }, { nombre: 'Noche', ini: '22:00', fin: '06:00' }] },
+        { id: 'e2', nombre: '2 turnos de 12 h', turnos: [{ nombre: 'Día', ini: '06:00', fin: '18:00' }, { nombre: 'Noche', ini: '18:00', fin: '06:00' }] }
+      ] };
+      let cfgTurnos = null;
+      try { cfgTurnos = JSON.parse(localStorage.getItem(TURNOS_KEY) || 'null'); } catch (e) { }
+      if (!cfgTurnos || !Array.isArray(cfgTurnos.esquemas) || !cfgTurnos.esquemas.length) cfgTurnos = JSON.parse(JSON.stringify(TURNOS_DEF));
+      const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+      const icono = ini => { const h = aMin(ini) / 60; return h >= 4 && h < 11 ? '🌅' : (h >= 11 && h < 17 ? '☀️' : (h >= 17 && h < 21 ? '🌇' : '🌙')); };
+      const esquemaActivo = () => cfgTurnos.esquemas.find(e => e.id === cfgTurnos.activo) || cfgTurnos.esquemas[0];
+      const turnos = () => (esquemaActivo().turnos || []).map((t, i) => ({ id: 'T' + i, nombre: t.nombre || ('Turno ' + (i + 1)), ini: t.ini || '06:00', fin: t.fin || '14:00', ico: icono(t.ini) }));
+      function guardarTurnos(subir) {
+        try { localStorage.setItem(TURNOS_KEY, JSON.stringify(cfgTurnos)); } catch (e) { }
+        if (subir) { try { pushCloudModuleState('turnos', cfgTurnos); } catch (e) { } }
+      }
+      window.inoferTurnosConfig = () => cfgTurnos;
+      const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const turnoActual = () => {
+        const n = new Date(); const m = n.getHours() * 60 + n.getMinutes();
+        const t = turnos().find(x => { const a = aMin(x.ini), b = aMin(x.fin); return a <= b ? (m >= a && m < b) : (m >= a || m < b); });
+        return (t || turnos()[0] || { id: 'T0' }).id;
+      };
+      let pref = {};
+      try { pref = JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch (e) { pref = {}; }
+      const guardarPref = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) { } };
+      const st = { paso: 'maquina', maq: pref.maq || '', ordId: '', turno: turnoActual(), parada: false, nueva: false };
+
+      const maqDeOrden = o => { const f = norm(o.machine); const m = MAQ.find(x => norm(x.full) === f || norm(x.id) === f); return m ? m.id : ''; };
+      const fullDe = id => (MAQ.find(m => m.id === id) || {}).full || id;
+      const cat = () => (typeof partsCatalog !== 'undefined' ? partsCatalog : []);
+      const puedeEditar = () => typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit');
+      const nombreOperario = () => pref.operario || (typeof inoferSession !== 'undefined' && inoferSession && inoferSession.nombre) || '';
+      function avance(o) { try { const m = computeOrderMetrics(o); return { pct: Math.min(100, Math.round((m && m.progressPct) || 0)), ok: (m && m.totalOk) || 0 }; } catch (e) { return { pct: 0, ok: 0 }; } }
+      const abierta = o => !(o.status === 'Completada' || avance(o).pct >= 100);
+      function siguienteNumero() {
+        const n = (typeof productionOrders !== 'undefined' ? productionOrders : []).map(o => parseInt(String(o.ordNumber).replace(/\D/g, ''), 10) || 0);
+        return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0');
+      }
+      // Piezas planificadas en el Gantt para esa máquina (semana activa)
+      function piezasDelGantt(maq) {
+        try {
+          const out = [];
+          Object.values(ganttWeeksData || {}).forEach(w => {
+            const items = (((w.machines || {})[maq]) || {}).items || [];
+            items.forEach(it => { if (it.isSharedCompanion) return; const tot = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (tot > 0) out.push({ part: it.part, qty: tot, sem: w.code }); });
+          });
+          const act = typeof activeGanttWeekCode !== 'undefined' ? activeGanttWeekCode : '';
+          const vistos = {};
+          return out.sort((a, b) => (b.sem === act) - (a.sem === act)).filter(x => { if (vistos[norm(x.part)]) return false; vistos[norm(x.part)] = 1; return true; }).slice(0, 8);
+        } catch (e) { return []; }
+      }
+
+      const BTN = 'rounded-2xl border-2 px-4 py-4 text-left font-bold transition active:scale-[0.98]';
+      function render() {
+        const box = $('inoferCR');
+        if (!box) return;
+        try {
+          const tag = $('crEsquemaTag'); if (tag) tag.textContent = 'Turnos: ' + esquemaActivo().nombre;
+          const cb = $('crTurnosCfgBtn'); if (cb) cb.classList.toggle('hidden', !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()));
+        } catch (e) { }
+        if (!puedeEditar()) { box.innerHTML = '<div class="rounded-2xl border border-slate-700 p-6 text-center text-sm text-slate-300">Tu usuario solo puede ver las órdenes. Para cargar avances pedile permiso de edición al administrador.</div>'; return; }
+        const pasos = ['maquina', 'orden', 'turno'];
+        const idx = pasos.indexOf(st.paso);
+        const migas = `<div class="mb-4 flex items-center gap-2 text-xs font-bold">
+          ${['1 Máquina', '2 Orden', '3 Cargar turno'].map((t, i) => `<button type="button" class="cr-miga rounded-full px-3 py-1 ${i === idx ? 'bg-amber-500 text-slate-950' : (i < idx ? 'bg-slate-700 text-white' : 'bg-slate-800 text-slate-500')}" data-paso="${pasos[i]}" ${i > idx ? 'disabled' : ''}>${t}</button>`).join('<span class="text-slate-600">›</span>')}
+        </div>`;
+        let html = '';
+        if (st.paso === 'maquina') {
+          html = `<h3 class="mb-3 text-lg font-black text-white">¿En qué máquina estás?</h3>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              ${MAQ.map(m => `<button type="button" class="cr-maq ${BTN} ${st.maq === m.id ? 'border-amber-400 bg-amber-500/15' : 'border-slate-700 bg-slate-950 hover:border-amber-400'}" data-maq="${m.id}">
+                <span class="block text-2xl text-amber-300">${m.id}</span><span class="block text-[11px] font-normal text-slate-400">${esc(m.full)}</span></button>`).join('')}
+            </div>`;
+        } else if (st.paso === 'orden') {
+          const ords = productionOrders.filter(o => maqDeOrden(o) === st.maq && abierta(o));
+          const puedeCrear = typeof inoferPuede !== 'function' || inoferPuede('ord_crear');
+          if ((st.nueva || !ords.length) && !puedeCrear) {
+            html = `<h3 class="mb-2 text-lg font-black text-white">No hay órdenes abiertas en la ${esc(st.maq)}</h3>
+              <p class="text-sm text-slate-300">Tu usuario solo puede cargar producción en órdenes ya creadas. Pedile al supervisor que cree la orden, o elegí otra máquina.</p>`;
+          } else if (st.nueva || !ords.length) {
+            const plan = piezasDelGantt(st.maq);
+            const piezasMaq = cat().filter(c => (c.machines || []).includes(st.maq) || norm(c.machine) === norm(fullDe(st.maq)));
+            html = `<h3 class="mb-1 text-lg font-black text-white">Orden nueva en la ${esc(st.maq)}</h3>
+              <p class="mb-3 text-xs text-slate-400">${ords.length ? '' : 'No hay órdenes abiertas en esta máquina. '}Elegí la pieza: el molde, las bocas, el material y los pesos se completan solos desde la base de datos.</p>
+              ${plan.length ? `<div class="mb-3"><span class="mb-1.5 block text-[11px] font-bold uppercase text-emerald-300">Planificadas en el Gantt</span>
+                <div class="flex flex-wrap gap-2">${plan.map(p => `<button type="button" class="cr-plan rounded-xl border-2 border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-bold text-emerald-200" data-part="${esc(p.part)}" data-qty="${p.qty}">${esc(p.part)} <span class="text-[11px] font-normal text-emerald-400">${p.qty.toLocaleString('es-AR')} u</span></button>`).join('')}</div></div>` : ''}
+              <form id="crNuevaForm" class="space-y-3">
+                <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Pieza</span>
+                  <input id="crPieza" list="crPiezasList" required autocomplete="off" placeholder="Escribí el código, ej: 26608" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-white focus:border-amber-400 focus:outline-none">
+                  <datalist id="crPiezasList">${(piezasMaq.length ? piezasMaq : cat()).slice(0, 400).map(c => `<option value="${esc(c.part)}">${esc(c.desc || '')}</option>`).join('')}</datalist>
+                </label>
+                <div id="crPiezaInfo" class="hidden rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-300"></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Cantidad a inyectar</span>
+                    <input id="crCantidad" type="number" inputmode="numeric" min="1" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-emerald-300 focus:border-amber-400 focus:outline-none"></label>
+                  <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">N° de orden</span>
+                    <input id="crNumero" inputmode="numeric" value="${siguienteNumero()}" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-white focus:border-amber-400 focus:outline-none"></label>
+                </div>
+                <div class="flex gap-2">
+                  ${ords.length ? '<button type="button" id="crCancelarNueva" class="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Volver</button>' : ''}
+                  <button type="submit" class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-base font-black text-slate-950 hover:bg-amber-400">Crear orden y seguir →</button>
+                </div>
+              </form>`;
+          } else {
+            html = `<h3 class="mb-3 text-lg font-black text-white">¿Qué orden estás haciendo en la ${esc(st.maq)}?</h3>
+              <div class="grid gap-3 sm:grid-cols-2">
+                ${ords.map(o => { const a = avance(o); return `<button type="button" class="cr-ord ${BTN} border-slate-700 bg-slate-950 hover:border-amber-400" data-id="${esc(o.id)}">
+                  <span class="flex items-center justify-between"><span class="text-xl text-amber-300">${esc(o.part || 'Sin pieza')}</span><span class="text-sm text-slate-300">${a.pct}%</span></span>
+                  <span class="block text-[11px] font-normal text-slate-400">OP ${esc(o.ordNumber)} · ${a.ok.toLocaleString('es-AR')} de ${Number(o.qtyTarget || 0).toLocaleString('es-AR')} u</span>
+                  <span class="mt-2 block h-2 overflow-hidden rounded-full bg-slate-800"><span class="block h-full bg-amber-400" style="width:${a.pct}%"></span></span></button>`; }).join('')}
+                ${puedeCrear ? `<button type="button" id="crNuevaBtn" class="${BTN} border-dashed border-slate-600 bg-transparent text-center text-slate-300 hover:border-amber-400 hover:text-white"><span class="block text-2xl">+</span><span class="text-sm">Empezar una orden nueva</span></button>` : ''}
+              </div>`;
+          }
+        } else {
+          const o = productionOrders.find(x => x.id === st.ordId);
+          if (!o) { st.paso = 'orden'; return render(); }
+          const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+          const a = avance(o);
+          const falta = Math.max(0, (Number(o.qtyTarget) || 0) - a.ok);
+          html = `<div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
+              <div><span class="text-base font-black text-amber-300">${esc(o.part)}</span> <span class="text-xs text-slate-400">· ${esc(st.maq)} · OP ${esc(o.ordNumber)}</span></div>
+              <div class="text-xs text-slate-300">Van <b>${a.ok.toLocaleString('es-AR')}</b> · faltan <b>${falta.toLocaleString('es-AR')}</b></div>
+            </div>
+            <form id="crTurnoForm" class="space-y-4">
+              <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Turno</span>
+                <div class="grid ${['grid-cols-1', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-2 sm:grid-cols-4'][Math.min(4, turnos().length)]} gap-2">${turnos().map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
+                <details class="mt-1.5 text-xs text-slate-400"><summary class="cursor-pointer">Cambiar horario o fecha</summary>
+                  <div class="mt-2 grid grid-cols-3 gap-2">
+                    <input id="crFecha" type="date" value="${st.fecha || hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crIni" type="time" value="${t.ini}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crFin" type="time" value="${t.fin}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                  </div></details>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="col-span-2 block sm:col-span-1"><span class="mb-1 block text-sm font-black text-emerald-300">✅ Piezas buenas</span>
+                  <input id="crOk" type="number" inputmode="numeric" min="0" required placeholder="0" class="w-full rounded-xl border-2 border-emerald-500/50 bg-slate-950 px-4 py-4 text-3xl font-black text-emerald-300 focus:border-emerald-400 focus:outline-none"></label>
+                <label class="block"><span class="mb-1 block text-sm font-black text-rose-300">❌ Scrap</span>
+                  <input id="crScrap" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-rose-500/40 bg-slate-950 px-4 py-4 text-2xl font-black text-rose-300 focus:border-rose-400 focus:outline-none"></label>
+                <label class="block"><span class="mb-1 block text-sm font-bold text-amber-300">Arranque en baja</span>
+                  <input id="crBaja" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-4 text-2xl font-black text-amber-300 focus:border-amber-400 focus:outline-none"></label>
+              </div>
+              <div><span class="mb-1.5 block text-xs font-bold text-slate-300">¿Hubo paradas?</span>
+                <div class="grid grid-cols-2 gap-2">
+                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${!st.parada ? 'border-emerald-400 bg-emerald-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="0">No</button>
+                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${st.parada ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="1">Sí</button>
+                </div>
+                <div id="crParadaBox" class="${st.parada ? '' : 'hidden'} mt-2 space-y-2">
+                  <div id="crParadasList" class="space-y-2">${st.parada ? filaParada() : ''}</div>
+                  <div class="flex items-center justify-between gap-2">
+                    <button type="button" id="crAddParada" class="rounded-xl border-2 border-dashed border-rose-500/40 px-3 py-2 text-xs font-bold text-rose-200">+ Agregar otra parada</button>
+                    <span id="crParadasTotal" class="text-xs text-slate-400"></span>
+                  </div>
+                </div>
+              </div>
+              <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Operario</span>
+                <input id="crOperario" value="${esc(nombreOperario())}" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-base font-bold text-white focus:border-amber-400 focus:outline-none"></label>
+              <details class="text-xs text-slate-400"><summary class="cursor-pointer">Agregar una observación (opcional)</summary>
+                <input id="crObs" placeholder="Ej: cambié noyo" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></details>
+              <button type="submit" class="w-full rounded-2xl bg-emerald-500 px-4 py-4 text-lg font-black text-slate-950 hover:bg-emerald-400">${st.editLogId ? '💾 Guardar cambios' : '💾 Guardar turno'}</button>
+              ${st.editLogId ? '<button type="button" id="crCancelEdit" class="w-full rounded-2xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Cancelar edición</button>' : ''}
+            </form>`;
+          if (st.editLogId) {
+            const lg = (o.logs || []).find(x => x.id === st.editLogId);
+            if (lg) html = `<div class="mb-3 rounded-xl border border-amber-400/60 bg-amber-500/10 px-3 py-2 text-sm font-bold text-amber-200">✏️ Editando el turno del ${esc(lg.date)} (${esc(lg.turno || (lg.startTime + ' a ' + lg.endTime))} · ${esc(lg.operator)})</div>` + html;
+          }
+          const logs = (o.logs || []).slice().sort((a, b) => String(b.date + b.startTime).localeCompare(String(a.date + a.startTime))).slice(0, 12);
+          const puedeEditarTurnos = typeof inoferPuede !== 'function' || inoferPuede('ord_editar_turnos');
+          if (logs.length) html += `<div class="mt-5 space-y-2"><div class="text-xs font-bold uppercase tracking-wider text-slate-400">Turnos cargados en esta orden</div>
+            ${logs.map(l => `<div class="flex items-center justify-between gap-2 rounded-xl border ${l.id === st.editLogId ? 'border-amber-400' : 'border-slate-800'} bg-slate-950/60 px-3 py-2">
+              <div class="min-w-0 text-xs"><div class="font-bold text-white">${esc(l.date)} · ${esc(l.turno || (l.startTime + '–' + l.endTime))} · <span class="text-emerald-300">${Number(l.okPcs || 0).toLocaleString('es-AR')} buenas</span>${Number(l.scrapPcs) ? ` · <span class="text-rose-300">${l.scrapPcs} scrap</span>` : ''}</div>
+                <div class="truncate text-[11px] text-slate-400">${esc(l.operator)}${l.obs ? ' · ' + esc(l.obs) : ''}${l.modificadoPor ? ` · editado por ${esc(l.modificadoPor)}` : ''}</div></div>
+              ${puedeEditarTurnos ? `<div class="flex shrink-0 gap-1"><button type="button" class="cr-log-edit rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-bold text-cyan-300" data-id="${esc(l.id)}">✏️ Editar</button>
+                <button type="button" class="cr-log-del rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-bold text-rose-300" data-id="${esc(l.id)}">🗑️</button></div>` : ''}
+            </div>`).join('')}</div>`;
+        }
+        box.innerHTML = migas + html;
+        if (st.paso === 'turno' && st.editLogId) { try { precargarTurno(); } catch (e) { console.error(e); } }
+      }
+      function precargarTurno() {
+        const o = productionOrders.find(x => x.id === st.ordId);
+        const l = o && (o.logs || []).find(x => x.id === st.editLogId);
+        if (!l) return;
+        $('crFecha').value = l.date || hoy();
+        $('crIni').value = l.startTime || ''; $('crFin').value = l.endTime || '';
+        $('crOk').value = Number(l.okPcs) || 0; $('crScrap').value = Number(l.scrapPcs) || ''; $('crBaja').value = Number(l.lowStartPcs) || '';
+        $('crOperario').value = l.operator || '';
+        if ($('crObs')) $('crObs').value = l.obsUsuario != null ? l.obsUsuario : '';
+        const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
+        if (ps.length) {
+          st.parada = true;
+          $('crParadaBox').classList.remove('hidden');
+          $('crParadasList').innerHTML = ps.map(p => filaParada(p)).join('');
+          const v = $('orderSubViewRapida');
+          v.querySelectorAll('.cr-parada').forEach(b => { const on = b.dataset.p === '1'; const c = on ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+          totalParadas();
+        }
+      }
+      window.inoferEditarTurno = function (ordId, logId) {
+        const o = productionOrders.find(x => x.id === ordId);
+        if (!o) return;
+        if (typeof inoferPuede === 'function' && !inoferPuede('ord_editar_turnos')) { showToast('Tu usuario no puede editar turnos cargados'); return; }
+        const l = (o.logs || []).find(x => x.id === logId);
+        st.maq = maqDeOrden(o) || st.maq; st.ordId = ordId; st.paso = 'turno'; st.editLogId = logId; st.parada = false;
+        const t = l && turnos().find(x => x.nombre === l.turno || (x.ini === l.startTime && x.fin === l.endTime));
+        if (t) st.turno = t.id;
+        selectedOrderId = ordId;
+        try { switchTab('orders'); } catch (e) { }
+        switchOrderSubTab('rapida');
+        try { $('orderSubViewRapida').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
+      };
+
+      // ---------- editor de turnos (solo administrador) ----------
+      function renderCfgTurnos() {
+        const c = $('crTurnosCfg'); if (!c) return;
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white';
+        c.innerHTML = `<div class="rounded-xl border border-sky-500/30 bg-slate-950/70 p-3 space-y-3">
+          <div class="flex items-center justify-between"><span class="text-sm font-black text-sky-300">⚙️ Horarios de turnos</span><button type="button" class="crt-cerrar text-xs text-slate-400 hover:text-white">✕ Cerrar</button></div>
+          <p class="text-[11px] text-slate-400">Elegí qué esquema se usa ahora. Los operarios ven solo los turnos del esquema activo. Los cambios se guardan solos y llegan a todos los equipos.</p>
+          ${cfgTurnos.esquemas.map((e, ei) => `<div class="rounded-xl border ${e.id === cfgTurnos.activo ? 'border-amber-400 bg-amber-500/5' : 'border-slate-800'} p-2.5 space-y-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="flex items-center gap-1.5 text-xs font-bold text-white"><input type="radio" name="crtActivo" class="crt-activo" data-e="${ei}" ${e.id === cfgTurnos.activo ? 'checked' : ''}> En uso</label>
+              <input class="crt-enombre ${inp} flex-1 font-bold" data-e="${ei}" value="${esc(e.nombre)}">
+              ${cfgTurnos.esquemas.length > 1 ? `<button type="button" class="crt-ebor text-xs text-rose-300" data-e="${ei}">Borrar esquema</button>` : ''}
+            </div>
+            ${(e.turnos || []).map((t, ti) => `<div class="flex flex-wrap items-center gap-2 pl-5">
+              <input class="crt-tn ${inp} w-28" data-e="${ei}" data-t="${ti}" value="${esc(t.nombre)}" placeholder="Nombre">
+              <input type="time" class="crt-ti ${inp}" data-e="${ei}" data-t="${ti}" value="${esc(t.ini)}">
+              <span class="text-xs text-slate-500">a</span>
+              <input type="time" class="crt-tf ${inp}" data-e="${ei}" data-t="${ti}" value="${esc(t.fin)}">
+              <span class="text-[11px] text-slate-500">${(((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440 || 1440) / 60} h</span>
+              ${(e.turnos || []).length > 1 ? `<button type="button" class="crt-tbor text-xs text-rose-300" data-e="${ei}" data-t="${ti}">✕</button>` : ''}
+            </div>`).join('')}
+            <button type="button" class="crt-tadd ml-5 text-xs font-bold text-sky-300" data-e="${ei}">+ Agregar turno</button>
+          </div>`).join('')}
+          <button type="button" class="crt-eadd rounded-lg border border-dashed border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300">+ Nuevo esquema</button>
+        </div>`;
+      }
+      function cambioTurnos(rerender) {
+        guardarTurnos(true);
+        if (!turnos().some(t => t.id === st.turno)) st.turno = turnoActual();
+        if (rerender) renderCfgTurnos();
+        render();
+      }
+      function montarCfgTurnos() {
+        const c = $('crTurnosCfg'), b = $('crTurnosCfgBtn');
+        if (!c || !b) return;
+        b.addEventListener('click', () => { if (!(typeof inoferIsAdmin === 'function' && inoferIsAdmin())) return; c.classList.toggle('hidden'); if (!c.classList.contains('hidden')) renderCfgTurnos(); });
+        c.addEventListener('click', e => {
+          const el = e.target.closest('button, input[type=radio]'); if (!el) return;
+          const ei = Number(el.dataset.e), ti = Number(el.dataset.t), esq = cfgTurnos.esquemas[ei];
+          if (el.classList.contains('crt-cerrar')) { c.classList.add('hidden'); return; }
+          if (el.classList.contains('crt-activo')) { cfgTurnos.activo = esq.id; st.turno = turnoActual(); cambioTurnos(true); }
+          else if (el.classList.contains('crt-tadd')) { const u = esq.turnos[esq.turnos.length - 1] || { fin: '06:00' }; esq.turnos.push({ nombre: 'Turno ' + (esq.turnos.length + 1), ini: u.fin, fin: u.fin }); cambioTurnos(true); }
+          else if (el.classList.contains('crt-tbor')) { esq.turnos.splice(ti, 1); cambioTurnos(true); }
+          else if (el.classList.contains('crt-ebor')) { if (!confirm('¿Borrar el esquema "' + esq.nombre + '"?')) return; cfgTurnos.esquemas.splice(ei, 1); if (!cfgTurnos.esquemas.some(x => x.id === cfgTurnos.activo)) cfgTurnos.activo = cfgTurnos.esquemas[0].id; cambioTurnos(true); }
+          else if (el.classList.contains('crt-eadd')) { cfgTurnos.esquemas.push({ id: 'e' + Date.now(), nombre: 'Nuevo esquema', turnos: [{ nombre: 'Turno 1', ini: '06:00', fin: '14:00' }] }); cambioTurnos(true); }
+        });
+        c.addEventListener('change', e => {
+          const el = e.target, ei = Number(el.dataset.e), ti = Number(el.dataset.t), esq = cfgTurnos.esquemas[ei];
+          if (!esq) return;
+          if (el.classList.contains('crt-enombre')) esq.nombre = el.value.trim() || esq.nombre;
+          else if (el.classList.contains('crt-tn')) esq.turnos[ti].nombre = el.value.trim() || esq.turnos[ti].nombre;
+          else if (el.classList.contains('crt-ti')) esq.turnos[ti].ini = el.value || esq.turnos[ti].ini;
+          else if (el.classList.contains('crt-tf')) esq.turnos[ti].fin = el.value || esq.turnos[ti].fin;
+          else return;
+          cambioTurnos(true);
+        });
+      }
+      // Recibir los turnos desde la nube
+      if (typeof window.applyCloudModules === 'function') {
+        const _amT = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const out = _amT.apply(this, arguments);
+          try {
+            if (mods && mods.turnos && Array.isArray(mods.turnos.esquemas) && mods.turnos.esquemas.length && JSON.stringify(mods.turnos) !== JSON.stringify(cfgTurnos)) {
+              cfgTurnos = mods.turnos; guardarTurnos(false);
+              if (!turnos().some(t => t.id === st.turno)) st.turno = turnoActual();
+              const a = document.activeElement;
+              const editando = a && a.closest && a.closest('#crTurnosCfg');
+              if (!editando) { if ($('crTurnosCfg') && !$('crTurnosCfg').classList.contains('hidden')) renderCfgTurnos(); if (!(a && a.closest && a.closest('#crTurnoForm'))) render(); }
+            }
+          } catch (e) { }
+          return out;
+        };
+      }
+
+      function crearOrden(part, qty, numero) {
+        const c = cat().find(x => norm(x.part) === norm(part));
+        const d = hoy();
+        const rate = c ? Number(c.unitsPerHour) || 180 : 180;
+        const w = c ? Number(c.weightWithSprueKg) || 0 : 0;
+        const o = {
+          id: 'ord-' + Date.now(), ordNumber: numero || siguienteNumero(), date: d, machine: fullDe(st.maq),
+          mold: c ? (c.mold || '') : '', part: c ? c.part : part.toUpperCase(), cavities: c ? Number(c.cavities) || 1 : 1, unitsPerHour: rate,
+          material: c ? (c.material || 'ZAMAC') : (['200V', '200N'].includes(st.maq) ? 'ALSI' : 'ZAMAC'), weightWithSprueKg: w, weightOkGrs: c ? Number(c.weightOkGrs) || 0 : 0,
+          qtyTarget: qty, hoursToUse: Number((qty / rate).toFixed(2)), kgTotal: Number((qty * w).toFixed(1)), status: 'En Proceso', logs: [],
+          back: { date: d, moldVersion: c ? (c.mold || '') : '', dieCut: c ? (c.dieCut || '') : '', machiningDev: c ? (c.machiningDev || '') : '', endDate: '', endTime: '', unmountDate: '', unmountStart: '', unmountEnd: '',
+            upSupervisor: '', upStaff: '', downSupervisor: '', downStaff: '', daterExists: 'SI', daterPos: 'LADO FIJO', daterYear: d.slice(0, 4), daterMonth: d.slice(5, 7), eyeboltExists: 'SI',
+            coolClamps: '', coolBridges: '', coolHoses: '', comments: '' },
+          creadaPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : ''
+        };
+        productionOrders.unshift(o);
+        selectedOrderId = o.id;
+        saveProductionOrders();
+        try { renderProductionOrdersView(); } catch (e) { }
+        return o;
+      }
+
+      // ---------- paradas (varias por turno, sin límite de duración) ----------
+      function filaParada(p) {
+        p = p || {};
+        const pmin = Number(p.min) || 0;
+        const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-center text-base font-bold text-white';
+        return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2">
+          <div class="flex gap-2">
+            <select class="cr-pcod flex-1 rounded-lg border-2 border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-white">
+              <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+            </select>
+            <button type="button" class="cr-pdel rounded-lg border border-slate-700 px-3 text-sm text-rose-300" title="Quitar">✕</button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-ph ${inp}" style="width:4.5rem" placeholder="0" value="${pmin >= 60 ? Math.floor(pmin / 60) : ''}"> h</label>
+            <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-pm ${inp}" style="width:4.5rem" placeholder="0" value="${pmin % 60 || ''}"> min</label>
+            <span class="flex gap-1">${[15, 30, 60].map(m => `<button type="button" class="cr-padd rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200" data-m="${m}">+${m < 60 ? m + ' min' : '1 h'}</button>`).join('')}</span>
+          </div>
+        </div>`;
+      }
+      const minFila = r => (Number(r.querySelector('.cr-ph').value) || 0) * 60 + (Number(r.querySelector('.cr-pm').value) || 0);
+      const fmtMin = m => { const h = Math.floor(m / 60), r = m % 60; return h ? (h + ' h' + (r ? ' ' + r + ' min' : '')) : (r + ' min'); };
+      function leerParadas() {
+        return [...document.querySelectorAll('#crParadasList .cr-prow')].map(r => ({ codigo: r.querySelector('.cr-pcod').value, min: minFila(r) })).filter(p => p.codigo || p.min);
+      }
+      function totalParadas() {
+        const el = $('crParadasTotal'); if (!el) return;
+        const ps = leerParadas(); const tot = ps.reduce((a, p) => a + p.min, 0);
+        const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+        const dur = ($('crIni') && $('crFin')) ? (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440 || 1440) : 1440;
+        el.innerHTML = ps.length ? `${ps.length} parada${ps.length > 1 ? 's' : ''} · total <b class="${tot > dur ? 'text-rose-400' : 'text-white'}">${fmtMin(tot)}</b>${tot > dur ? ' (más que el turno)' : ''}` : '';
+      }
+
+      function guardarTurno() {
+        const o = productionOrders.find(x => x.id === st.ordId);
+        if (!o) return;
+        const ok = Number($('crOk').value);
+        if (!($('crOk').value !== '' && ok >= 0)) { showToast('Poné cuántas piezas buenas hiciste'); $('crOk').focus(); return; }
+        const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+        const operario = $('crOperario').value.trim();
+        if (!operario) { showToast('Poné tu nombre'); $('crOperario').focus(); return; }
+        const paradas = st.parada ? leerParadas() : [];
+        if (st.parada && !paradas.length) { showToast('Cargá al menos una parada o marcá "No"'); return; }
+        if (paradas.some(p => !p.codigo)) { showToast('Elegí el motivo de cada parada'); return; }
+        if (paradas.some(p => !p.min)) { showToast('Poné cuánto duró cada parada'); return; }
+        const durTurno = (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440) || 1440;
+        const min = paradas.reduce((a, p) => a + p.min, 0);
+        if (min > durTurno && !confirm(`Las paradas suman ${fmtMin(min)} y el turno dura ${fmtMin(durTurno)}. ¿Guardar igual?`)) return;
+        // controles: valores fuera de lo normal piden confirmación antes de guardar
+        try {
+          const avisos = (window.inoferControlTurno || (() => []))(o, { ok, scrap: Number($('crScrap').value) || 0, baja: Number($('crBaja').value) || 0, fecha: $('crFecha').value || hoy(), ini: $('crIni').value || t.ini, fin: $('crFin').value || t.fin, paradasMin: min, turno: t.nombre, editLogId: st.editLogId });
+          if (avisos.bloqueo) { showToast(avisos.bloqueo); return; }
+          if (avisos.length && !confirm('Revisá antes de guardar:\n\n• ' + avisos.join('\n• ') + '\n\n¿Está bien así? (Aceptar = guardar igual)')) return;
+        } catch (e) { }
+        const codigo = paradas.length ? paradas[0].codigo : '';
+        const obs = [paradas.map(p => `Cód ${p.codigo.split('-')[0]} · ${fmtMin(p.min)}`).join('; '), ($('crObs') || {}).value || ''].filter(Boolean).join(' — ');
+        if (!o.logs) o.logs = [];
+        const datos = {
+          date: $('crFecha').value || hoy(), operator: operario, startTime: $('crIni').value || t.ini, endTime: $('crFin').value || t.fin,
+          okPcs: ok, lowStartPcs: Number($('crBaja').value) || 0, scrapPcs: Number($('crScrap').value) || 0, stopCode: codigo, stopMinutes: min, paradas, obs,
+          obsUsuario: ($('crObs') || {}).value || '', turno: (turnos().find(x => x.ini === ($('crIni').value || t.ini) && x.fin === ($('crFin').value || t.fin)) || {}).nombre || t.nombre
+        };
+        const editando = st.editLogId && o.logs.find(x => x.id === st.editLogId);
+        if (editando) {
+          Object.assign(editando, datos, { modificadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', modificadoAt: new Date().toISOString() });
+        } else {
+          o.logs.push(Object.assign({ id: 'lg-' + Date.now() }, datos, { cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString() }));
+        }
+        st.editLogId = ''; st.fecha = '';
+        pref.operario = operario; guardarPref();
+        const a = avance(o);
+        if (a.pct >= 100 && o.status !== 'Completada') { o.status = 'Completada'; o.autoCompletada = true; }
+        else if (a.pct < 100 && o.status === 'Completada' && o.autoCompletada) { o.status = 'En Proceso'; o.autoCompletada = false; }
+        saveProductionOrders();
+        try { renderProductionOrdersView(); } catch (e) { }
+        showToast(editando ? `Turno corregido ✓ (${o.part})` : `Turno guardado ✓ ${ok.toLocaleString('es-AR')} piezas buenas en ${o.part}`);
+        const box = $('inoferCR');
+        st.parada = false;
+        box.innerHTML = `<div class="space-y-4 py-6 text-center">
+          <div class="text-5xl">✅</div>
+          <div class="text-xl font-black text-white">${editando ? '¡Turno corregido!' : '¡Turno guardado!'}</div>
+          <div class="text-sm text-slate-300">${esc(o.part)} · ${ok.toLocaleString('es-AR')} piezas buenas · avance de la orden ${a.pct}%</div>
+          ${a.pct >= 100 ? '<div class="text-sm font-bold text-emerald-300">La orden llegó a la cantidad pedida y quedó como Completada.</div>' : ''}
+          <div class="flex flex-wrap justify-center gap-2 pt-2">
+            <button type="button" id="crOtroTurno" class="rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950">Cargar otro turno</button>
+            <button type="button" id="crOtraOrden" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200">Otra orden</button>
+          </div></div>`;
+      }
+
+      function infoPieza() {
+        const inp = $('crPieza'), info = $('crPiezaInfo');
+        if (!inp || !info) return;
+        const c = cat().find(x => norm(x.part) === norm(inp.value));
+        if (!c) { info.classList.toggle('hidden', !inp.value.trim()); info.innerHTML = inp.value.trim() ? '⚠️ Esa pieza no está en la base de datos. Se crea igual y después se completan los datos técnicos.' : ''; return; }
+        info.classList.remove('hidden');
+        info.innerHTML = `✓ <b>${esc(c.part)}</b> ${esc(c.desc || '')} · Molde ${esc(c.mold || '—')} · ${esc(c.cavities || 1)} boca/s · ${esc(c.unitsPerHour || '—')} u/h · ${esc(c.material || '')}`;
+        const plan = piezasDelGantt(st.maq).find(p => norm(p.part) === norm(c.part));
+        if (plan && !$('crCantidad').value) $('crCantidad').value = plan.qty;
+      }
+
+      function montar() {
+        const eff = $('orderSubViewEfficiency');
+        if (!eff || $('orderSubViewRapida')) return;
+        const ref = document.querySelector('.order-subtab-btn[data-order-subtab="list"]') || document.querySelector('.order-subtab-btn[data-order-subtab="efficiency"]');
+        if (ref) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.dataset.orderSubtab = 'rapida';
+          b.className = 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+          b.textContent = '⚡ Carga rápida';
+          ref.parentElement.insertBefore(b, ref);
+          b.addEventListener('click', () => switchOrderSubTab('rapida'));
+        }
+        const v = document.createElement('div');
+        v.id = 'orderSubViewRapida'; v.className = 'hidden';
+        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="flex items-center gap-2"><span id="crEsquemaTag" class="text-[11px] text-slate-500"></span><button type="button" id="crTurnosCfgBtn" class="hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">⚙️ Horarios de turnos</button></span></div><div id="crTurnosCfg" class="hidden mb-4"></div><div id="inoferCR"></div></div>';
+        eff.parentElement.insertBefore(v, eff);
+        montarCfgTurnos();
+
+        v.addEventListener('click', e => {
+          if (e.target.closest('#crTurnosCfg')) return;
+          const g = s => e.target.closest(s);
+          let el;
+          if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; render(); }
+          else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
+          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
+          else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
+          else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
+          else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
+          else if ((el = g('.cr-turno'))) {
+            st.turno = el.dataset.t; const t = turnos().find(x => x.id === st.turno);
+            v.querySelectorAll('.cr-turno').forEach(b => { const on = b.dataset.t === st.turno; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); b.classList.toggle('bg-slate-950', !on); b.classList.toggle('text-slate-300', !on); });
+            $('crIni').value = t.ini; $('crFin').value = t.fin;
+          }
+          else if ((el = g('.cr-parada'))) {
+            st.parada = el.dataset.p === '1';
+            $('crParadaBox').classList.toggle('hidden', !st.parada);
+            if (st.parada && !document.querySelector('#crParadasList .cr-prow')) $('crParadasList').insertAdjacentHTML('beforeend', filaParada());
+            totalParadas();
+            v.querySelectorAll('.cr-parada').forEach(b => { const on = (b.dataset.p === '1') === st.parada; const c = b.dataset.p === '1' ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+          }
+          else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
+          else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
+          else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
+          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; render(); }
+          else if ((el = g('.cr-log-edit'))) { window.inoferEditarTurno(st.ordId, el.dataset.id); }
+          else if (g('#crCancelEdit')) { st.editLogId = ''; st.parada = false; render(); }
+          else if ((el = g('.cr-log-del'))) {
+            if (typeof inoferPuede === 'function' && !inoferPuede('ord_editar_turnos')) { showToast('Tu usuario no puede borrar turnos'); return; }
+            const o = productionOrders.find(x => x.id === st.ordId); const l = o && (o.logs || []).find(x => x.id === el.dataset.id);
+            if (!l || !confirm(`¿Borrar el turno del ${l.date} (${l.okPcs} piezas buenas)?`)) return;
+            o.logs = o.logs.filter(x => x.id !== l.id);
+            if (st.editLogId === l.id) st.editLogId = '';
+            if (o.status === 'Completada' && o.autoCompletada && avance(o).pct < 100) { o.status = 'En Proceso'; o.autoCompletada = false; }
+            saveProductionOrders(); try { renderProductionOrdersView(); } catch (e) { }
+            showToast('Turno borrado'); render();
+          }
+          else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
+        });
+        v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
+        v.addEventListener('change', e => { if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
+        v.addEventListener('submit', e => {
+          e.preventDefault();
+          if (!puedeEditar()) { showToast('Tu usuario no puede cargar órdenes'); return; }
+          if (e.target.id === 'crNuevaForm') {
+            const part = $('crPieza').value.trim(), qty = Number($('crCantidad').value) || 0;
+            if (!part || qty <= 0) { showToast('Completá la pieza y la cantidad'); return; }
+            if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(part)) { showToast('Las piezas -R no se inyectan'); return; }
+            const o = crearOrden(part, qty, $('crNumero').value.trim());
+            showToast(`Orden ${o.ordNumber} creada para la ${o.part}`);
+            st.ordId = o.id; st.nueva = false; st.paso = 'turno'; st.turno = turnoActual(); render();
+          } else if (e.target.id === 'crTurnoForm') guardarTurno();
+        });
+
+        const prev = switchOrderSubTab;
+        switchOrderSubTab = function (sub) {
+          const rv = $('orderSubViewRapida');
+          if (sub === 'rapida') {
+            prev('list');
+            currentOrderSubTab = 'rapida';
+            const lv = $('orderSubViewList'); if (lv) lv.classList.add('hidden');
+            ['orderSubViewEfficiency', 'orderSubViewFront', 'orderSubViewBack', 'orderSubViewSheet', 'orderSubViewCatalog', 'orderSubViewGlobalReport'].forEach(i => $(i) && $(i).classList.add('hidden'));
+            rv.classList.remove('hidden');
+            document.querySelectorAll('.order-subtab-btn').forEach(btn => {
+              const hid = btn.classList.contains('hidden');
+              btn.className = btn.dataset.orderSubtab === 'rapida' ? 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-500 text-slate-950 shadow' : 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+              if (hid) btn.classList.add('hidden');
+            });
+            if (st.paso === 'turno' && !productionOrders.some(o => o.id === st.ordId)) st.paso = 'orden';
+            if (st.paso === 'maquina' && st.maq) st.paso = 'orden';
+            render();
+          } else { rv.classList.add('hidden'); prev(sub); }
+        };
+        if (typeof INOFER_EDIT_CONTROLS !== 'undefined') INOFER_EDIT_CONTROLS.ordenes.push('#crNuevaForm input', '#crNuevaForm button', '#crTurnoForm input', '#crTurnoForm select', '#crTurnoForm button');
+        // Los que no son administradores entran directo a la carga rápida
+        const esAdmin = typeof inoferIsAdmin === 'function' && inoferIsAdmin();
+        if (!esAdmin && puedeEditar()) switchOrderSubTab('rapida');
+      }
+      // abrir la carga rápida ya posicionada (QR de máquina/orden, avisos de turnos sin cargar)
+      function abrir(o) {
+        o = o || {};
+        if (o.maq) { st.maq = o.maq; pref.maq = o.maq; guardarPref(); }
+        st.editLogId = ''; st.nueva = false; st.parada = false; st.fecha = o.fecha || '';
+        if (o.turnoNombre) { const t = turnos().find(x => norm(x.nombre) === norm(o.turnoNombre)); if (t) st.turno = t.id; } else st.turno = turnoActual();
+        if (o.ordId && productionOrders.some(x => x.id === o.ordId)) { st.ordId = o.ordId; selectedOrderId = o.ordId; st.paso = 'turno'; }
+        else st.paso = st.maq ? 'orden' : 'maquina';
+        try { switchTab('orders'); } catch (e) { }
+        switchOrderSubTab('rapida');
+        try { $('orderSubViewRapida').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
+      }
+      window.inoferCargaRapida = { estado: st, render, abrir, maqDeOrden, turnos, abierta };
+
+      // Limpiar los valores de ejemplo del formulario viejo (350 / 10 / 8) para que no se carguen datos falsos
+      function limpiarFormViejo() {
+        [['logOkPcs', ''], ['logLowStart', '0'], ['logScrap', '0']].forEach(([id, v]) => { const el = $(id); if (el) el.value = v; });
+        const op = $('logOperator'); if (op && !op.value) op.value = nombreOperario();
+      }
+      function iniciar() { try { montar(); } catch (e) { console.error(e); } try { limpiarFormViejo(); } catch (e) { } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+      // Al iniciar sesión, decidir la pestaña por defecto según el rol
+      if (typeof inoferApplyPermissions === 'function') {
+        const ap = inoferApplyPermissions;
+        inoferApplyPermissions = function () {
+          const r = ap.apply(this, arguments);
+          try {
+            if (inoferSession && !inoferIsAdmin() && puedeEditar() && currentOrderSubTab === 'list') switchOrderSubTab('rapida');
+            const op = $('logOperator'); if (op && !op.value) op.value = nombreOperario();
+          } catch (e) { }
+          return r;
+        };
+      }
+    })();
+  </script>

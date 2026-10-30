@@ -4,7 +4,10 @@ La carpeta `inofer/` de este repositorio ES la app publicada en GitHub Pages (ht
 Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde acá.
 
 ## Estructura
-- `fuente/res/web/index.html` → interfaz completa (fuente de verdad). NO editar `index.html` de la raíz a mano.
+- `fuente/web/NN_*.html` → FUENTE DE VERDAD de la interfaz, partida por tema (00_pagina = head + HTML; 01 = núcleo; luego un archivo por bloque). Se editan estas partes.
+- `fuente/herramientas/armar_web.js` → une las partes y genera `fuente/res/web/index.html` (NO editar a mano: se pisa) con el CSS de Tailwind ya generado (con `fuente/vendor/tailwind-play-3.4.17.js` en Chromium, incluye clases con colores variables `-${c}-`) y Chart.js (`fuente/vendor/chart-4.4.1.umd.js`) dentro de la página: abre más rápido y funciona 100% sin internet. Comparado píxel por píxel contra el CDN: idéntico.
+- `fuente/pruebas/suite.js` → red de seguridad (nube simulada `nube_simulada.js` con el Código.gs real + servidor.gs, Chromium): login, estilos, todas las pestañas, menú, carga rápida, dos equipos sin pisarse, borrado no revive, sin internet, asistente, permisos, informe/registro. publicar.sh la corre y NO publica si falla (saltear solo con SIN_PRUEBAS=1).
+- NO editar `index.html` de la raíz a mano.
 - `fuente/src/ar/inofer/mes/*.java` → programa de escritorio (Java 11+, sin dependencias):
   servidor local 127.0.0.1:47821, guardado en %APPDATA%\INOFER_MES, instalador de accesos directos,
   y `Actualizador` (lee `version.json` de Pages, baja index.html e INOFER.jar con SHA-256).
@@ -53,10 +56,10 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Papelera: el admin puede borrar elementos sueltos o vaciarla toda (vaciarPapelera con ids/soloIds o todo).
 
 ## Cómo aplicar un pedido del usuario
-1. Editar `fuente/res/web/index.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`).
+1. Editar las partes `fuente/web/NN_*.html` (y/o los .java, y/o `fuente/servidor/servidor.gs`). Bloque nuevo = archivo nuevo con el número siguiente.
 2. Si se tocó Java: subir `VERSION` en `Main.java` (ej. 2.3 → 2.4). Si solo cambia la web, no hace falta.
 3. Si se cambió `sw.js`, subir el nombre de `CACHE`.
-4. Verificar sintaxis JS (extraer los <script> y `node --check`) y probar con Playwright si es posible.
+4. Verificar sintaxis JS y sumar a `fuente/pruebas/suite.js` una prueba de lo nuevo.
 5. Ejecutar `inofer/fuente/publicar.sh` (publica en `inofer/`), hacer commit en `main` y push. En ~1–2 minutos todos los dispositivos se actualizan.
 
 ## No romper
@@ -155,3 +158,11 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Archivo de órdenes: `archivarOrdenes {meses}` pasa las OP Completadas con último turno anterior al corte a la hoja BD_Archivo_Ordenes (json partido desde la col H) y las saca del módulo `orders`; `saveModule orders` filtra ids archivados (`idsArchivadas_`, caché 10 min) para que una copia vieja no las reviva; `archivoRestaurar {id}`; `archivoListar`. Siguen contando: `archivoRegistros` (turnos en formato del tablero, `archivada:true`) se pide una vez cada 30 min y se suma en `getFilteredRecords` (envuelto `__planta`); el informe semanal también lee el archivo.
 - Encabezado "opción B" (último bloque de index.html): barra `#nbBar` con logo, menús por grupo (`GRUPOS`: Producción, Planificación, Análisis, IA, Admin) en `#nbNav` y menú flotante `#nbMenu`; íconos a la derecha `#nbRight` (estado de sincronización, 🔔, 💬📨, 📺, ⛶, usuario) que `juntar()` mueve desde donde los crean los otros bloques. El encabezado viejo queda oculto (sus botones de solapa siguen existiendo y se les hace .click()). Visibilidad por permisos (`PERM`), no por la clase hidden de la solapa vieja. Cargar horas / Importar / Exportar CSV pasan a `#nbRecTools` dentro del Historial; `plantRoleSelect` pasa al menú del usuario ("Vista"); los filtros del tablero solo se ven en Tablero e Historial. Para sumar una pestaña nueva: agregarla en GRUPOS y en VISTAS.
 - Pruebas visuales: /tmp/work/tw/build4.mjs arma CSS con Tailwind v4 local (/opt/npm-tools/node_modules/tailwindcss, API compile) → out4.css.
+
+## Guardado sin pisarse y sincronización liviana (parte 20_guardado_sin_pisarse… + servidor)
+- Cada equipo guarda en `tablero_inyectoras_base_v1` un resumen (hash djb2 `hashTxt` por elemento; órdenes con ids de turnos `l`; Gantt por semana y máquina) de la versión de la nube que conoce (`inoferBaseDe`), y lo manda en `saveModule` como `base`. El servidor (`fusionarLista_` / `fusionarOrden_` / `fusionarGantt_`, bajo un solo candado con `guardarModuloSinLock_`) hace fusión de 3 vías: lo que no tocó el equipo queda como está en la nube; lo que agregaron otros se conserva; solo se borra lo que este equipo borró y nadie había cambiado; si los dos cambiaron una orden se unen los turnos por id (gana el más nuevo por modificadoAt/cargadoAt). Responde el módulo fusionado y el equipo lo adopta (`inoferAdoptar`) si no cambió nada mientras tanto.
+- Partes: `replace` ahora solo agrega/actualiza por id y borra los ids de `borrados` (`fusionarRegistros_`); el reemplazo total exige `todo:true` y admin ("Vaciar todo" pide escribir BORRAR).
+- Versiones: `marcarVersion_(clave)` en Script Properties VER_<clave> (módulos y 'records'). GET `action=versiones` (chiquito) y `action=json&solo=a,b&partes=0` (parcial, `__parcial` en applyCloudModules: los envoltorios no deben subir datos si falta un módulo en una respuesta parcial). Descarga completa cada 10 min. Con la ventana oculta consulta cada 60 s.
+- No deja cerrar sesión con cargas sin subir (confirm).
+- Limpieza (parte 21): sin "Restaurar datos de ejemplo", sin perfiles de vista, Calculadora oculta (#tabSimulatorBtn), Órdenes con barra `#ordNav` (Carga rápida · Órdenes · Detalle de la OP · Base de datos · Informe) y `#ordDetNav` (Seguimiento · Frente · Dorso · Planilla) dentro de la tarjeta de la orden, que solo se ve en el detalle.
+- Parte de horas manual: partes_cargar / partes_editar / partes_borrar son de habilitación explícita (`opt: true`, `inoferDetOn`: hace falta detalle[k] === true; admin siempre). El servidor también lo exige en add/edit/delete/replace.

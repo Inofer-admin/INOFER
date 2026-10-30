@@ -1,0 +1,196 @@
+  <script>
+    // =====================================================================
+    // PISTONES: diámetro con que se inyecta cada pieza y pistones de cada máquina.
+    // Módulo "pistones" (área gantt): { maquinas: { '200V': { disponibles: [60,70], montado: 70 } }, horasCambio: 2 }
+    // =====================================================================
+    const INOFER_PISTONES_KEY = 'tablero_inyectoras_pistones_v1';
+    let inoferPistones = { maquinas: {}, horasCambio: 2 };
+    try { const g = JSON.parse(localStorage.getItem(INOFER_PISTONES_KEY) || 'null'); if (g && typeof g === 'object') inoferPistones = Object.assign({ maquinas: {}, horasCambio: 2 }, g); } catch (e) { }
+
+    function inoferPistonesCfg() { return inoferPistones; }
+    // Solo estas máquinas cambian de pistón; la H50 y la Z30 tienen un pistón único
+    const INOFER_MAQUINAS_CON_PISTON = ['200V', '200N', '180'];
+    function inoferTienePistonVariable(m) { return INOFER_MAQUINAS_CON_PISTON.includes(String(m)); }
+    /** Orden de armado: urgentes primero y, dentro de cada nivel, las piezas del mismo pistón seguidas. */
+    function inoferOrdenarPorPiston(list) {
+      const nivel = x => x.urgencyLevel === 'critical' ? 0 : (x.urgencyLevel === 'medium' ? 1 : 2);
+      const bandas = [[], [], []];
+      (list || []).forEach(x => bandas[nivel(x)].push(x));
+      const out = []; let ultimo = 0;
+      bandas.forEach(banda => {
+        const grupos = new Map();
+        banda.forEach(x => { const mm = inoferPistonDe(x.part) || 0; if (!grupos.has(mm)) grupos.set(mm, []); grupos.get(mm).push(x); });
+        let claves = [...grupos.keys()];
+        if (ultimo && grupos.has(ultimo)) claves = [ultimo, ...claves.filter(k => k !== ultimo)]; // seguir con el pistón que quedó montado
+        claves.forEach(k => { out.push(...grupos.get(k)); if (k) ultimo = k; });
+      });
+      return out;
+    }
+    function inoferPistonDe(part) { const c = typeof inoferCatDe === 'function' ? inoferCatDe(part) : null; return c ? (Number(c.pistonMm) || 0) : 0; }
+    // Diámetros de pistón usados en la planta
+    const INOFER_DIAMETROS_PISTON = [40, 45, 50, 55, 65];
+    function inoferDisponibles(m) {
+      const d = ((inoferPistones.maquinas[m] || {}).disponibles || []).map(Number).filter(x => x > 0);
+      return d.length ? d : (inoferTienePistonVariable(m) ? INOFER_DIAMETROS_PISTON.slice() : []);
+    }
+    function inoferMaquinaAdmitePiston(m, mm) {
+      if (!mm || !inoferTienePistonVariable(m)) return true;
+      const d = inoferDisponibles(m);
+      return !d.length || d.includes(Number(mm)); // sin lista cargada = no se restringe
+    }
+    function inoferGuardarPistones() {
+      try { localStorage.setItem(INOFER_PISTONES_KEY, JSON.stringify(inoferPistones)); } catch (e) { }
+      try { pushCloudModuleState('pistones', inoferPistones); } catch (e) { }
+    }
+
+    // Recibir cambios de la nube
+    const _inoferApplyModsPis = window.applyCloudModules;
+    if (typeof _inoferApplyModsPis === 'function') {
+      window.applyCloudModules = function (mods) {
+        const out = _inoferApplyModsPis.apply(this, arguments);
+        try {
+          if (mods && mods.pistones && typeof mods.pistones === 'object' && JSON.stringify(mods.pistones) !== JSON.stringify(inoferPistones)) {
+            inoferPistones = Object.assign({ maquinas: {}, horasCambio: 2 }, mods.pistones);
+            try { localStorage.setItem(INOFER_PISTONES_KEY, JSON.stringify(inoferPistones)); } catch (e) { }
+            const a = document.activeElement;
+            if (!(a && a.classList && a.classList.contains('inofer-piston-cfg'))) { try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { } }
+          }
+        } catch (e) { }
+        return out;
+      };
+    }
+
+    // ---------- panel de pistones por máquina (en el Plan Gantt)
+    function inoferRenderPanelPistones() {
+      const gv = document.getElementById('viewGantt');
+      if (!gv) return;
+      let box = document.getElementById('inoferPanelPistones');
+      if (!box) {
+        box = document.createElement('details'); box.id = 'inoferPanelPistones';
+        box.className = 'rounded-2xl border border-sky-500/30 bg-slate-900/80 p-3.5 shadow-xl text-xs';
+        gv.insertBefore(box, gv.firstChild);
+      }
+      const abierto = box.open;
+      const filas = GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).map(mc => {
+        const cfg = inoferPistones.maquinas[mc.id] || {};
+        const disp = inoferDisponibles(mc.id);
+        const opciones = disp.length ? disp : (cfg.montado ? [Number(cfg.montado)] : []);
+        return `<tr class="border-t border-slate-800">
+          <td class="py-2 pr-3 font-extrabold text-white whitespace-nowrap">${inoferEsc(mc.name)}</td>
+          <td class="py-2 pr-3"><input type="text" data-pis-disp="${mc.id}" value="${disp.join(', ')}" placeholder="Ej: 60, 70, 80" class="inofer-piston-cfg w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white" /></td>
+          <td class="py-2"><select data-pis-mont="${mc.id}" class="inofer-piston-cfg rounded-lg border border-sky-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-sky-200">
+            <option value="">— Sin definir —</option>
+            ${opciones.map(mm => `<option value="${mm}" ${Number(cfg.montado) === mm ? 'selected' : ''}>${mm} mm</option>`).join('')}
+          </select></td></tr>`;
+      }).join('');
+      const conPiston = (partsCatalog || []).filter(x => Number(x.pistonMm) > 0).length;
+      box.innerHTML = `
+        <summary class="cursor-pointer select-none font-extrabold text-sky-300">⚙️ Pistones por máquina <span class="ml-1 font-normal text-slate-400">— montado hoy: ${GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).map(mc => `${mc.short || mc.id} ${(inoferPistones.maquinas[mc.id] || {}).montado ? (inoferPistones.maquinas[mc.id].montado + ' mm') : '—'}`).join(' · ')}</span></summary>
+        <div class="mt-3 space-y-2">
+          <p class="text-[11px] text-slate-400">Para ahorrar SET-UP, el armado automático pone seguidas las piezas con el mismo diámetro de pistón (respetando primero las urgentes), prefiere la máquina que ya lo tiene montado y suma el tiempo de cambio (fila <b>CPIS</b>) solo cuando no se puede evitar. Solo la 200V, la 200N y la 180 cambian de pistón; la H50 y la Z30 tienen pistón único. El diámetro de cada pieza se carga en la Base de Datos de Piezas (${conPiston} pieza${conPiston === 1 ? '' : 's'} con pistón cargado).</p>
+          <div class="overflow-x-auto"><table class="w-full text-left">
+            <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400"><th class="py-1 pr-3">Máquina</th><th class="py-1 pr-3">Pistones que tiene (mm)</th><th class="py-1">Montado hoy</th></tr></thead>
+            <tbody>${filas}</tbody></table></div>
+          <label class="inline-flex items-center gap-2 text-[11px] text-slate-300">Horas por cambio de pistón
+            <input type="number" min="0" step="0.25" data-pis-horas="1" value="${Number(inoferPistones.horasCambio) || 2}" class="inofer-piston-cfg w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white" /></label>
+        </div>`;
+      box.open = abierto;
+      try { inoferLockControls(); } catch (e) { }
+    }
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains('inofer-piston-cfg')) return;
+      if (el.dataset.pisDisp) {
+        const m = el.dataset.pisDisp;
+        const lista = [...new Set(String(el.value).split(/[^0-9.]+/).map(Number).filter(x => x > 0))].sort((a, b) => a - b);
+        const cfg = inoferPistones.maquinas[m] = inoferPistones.maquinas[m] || {};
+        cfg.disponibles = lista;
+        if (cfg.montado && lista.length && !lista.includes(Number(cfg.montado))) cfg.montado = '';
+      } else if (el.dataset.pisMont) {
+        const cfg = inoferPistones.maquinas[el.dataset.pisMont] = inoferPistones.maquinas[el.dataset.pisMont] || {};
+        cfg.montado = el.value ? Number(el.value) : '';
+      } else if (el.dataset.pisHoras) {
+        inoferPistones.horasCambio = Math.max(0, Number(el.value) || 0);
+      }
+      inoferGuardarPistones();
+      inoferRenderPanelPistones(); inoferRevisarPistones();
+      showToast('Pistones guardados');
+    });
+
+    // ---------- avisos del Gantt: cambios de pistón y pistones que la máquina no tiene
+    const INOFER_DIAS_CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    function inoferAnalisisPistones(week) {
+      const cambios = [], sinPiston = [];
+      if (!week || !week.machines) return { cambios, sinPiston };
+      GANTT_MACHINES_CONFIG.filter(mc => inoferTienePistonVariable(mc.id)).forEach(mc => {
+        const items = ((week.machines[mc.id] || {}).items || [])
+          .map(it => ({ it, mm: inoferPistonDe(it.part), dia: (it.dailyQty || []).findIndex(q => Number(q) > 0) }))
+          .filter(x => x.dia >= 0 && x.mm > 0)
+          .sort((a, b) => a.dia - b.dia);
+        let actual = Number((inoferPistones.maquinas[mc.id] || {}).montado) || 0;
+        items.forEach(x => {
+          if (!inoferMaquinaAdmitePiston(mc.id, x.mm)) sinPiston.push({ mach: mc.short || mc.id, part: x.it.part, mm: x.mm });
+          if (actual && actual !== x.mm) cambios.push({ mach: mc.short || mc.id, part: x.it.part, de: actual, a: x.mm, dia: x.dia });
+          actual = x.mm;
+        });
+      });
+      return { cambios, sinPiston };
+    }
+    function inoferRevisarPistones() {
+      try {
+        const a = inoferAnalisisPistones(getActiveGanttWeek());
+        inoferAvisoBox('inoferPisAvisoError', 'viewGantt', a.sinPiston.length ? `
+          <div class="mb-1 text-sm font-extrabold text-rose-300">⛔ Pistón que la máquina no tiene</div>
+          <ul class="list-disc space-y-0.5 pl-5 text-rose-100">${a.sinPiston.map(x => `<li>${inoferEsc(x.part)} necesita pistón de <b>${x.mm} mm</b> y la <b>${inoferEsc(x.mach)}</b> no lo tiene cargado</li>`).join('')}</ul>` : '');
+        const be = document.getElementById('inoferPisAvisoError'); if (be) be.className = 'rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-xs shadow';
+        inoferAvisoBox('inoferPisAvisoCambio', 'viewGantt', a.cambios.length ? `
+          <div class="mb-1 text-sm font-extrabold text-sky-300">⚙️ Cambios de pistón esta semana (${a.cambios.length})</div>
+          <ul class="list-disc space-y-0.5 pl-5 text-sky-100">${a.cambios.map(c => `<li><b>${inoferEsc(c.mach)}</b> · ${INOFER_DIAS_CORTOS[c.dia] || ''}: de ${c.de} mm a <b>${c.a} mm</b> para la ${inoferEsc(c.part)}</li>`).join('')}</ul>
+          <p class="mt-1 text-[11px] text-sky-200/70">Agrupá en cada máquina las piezas del mismo pistón para hacer menos cambios.</p>` : '');
+        const bc = document.getElementById('inoferPisAvisoCambio'); if (bc) bc.className = 'rounded-2xl border border-sky-500/40 bg-sky-500/10 p-3.5 text-xs shadow';
+        // el panel de pistones siempre arriba de todo
+        const panel = document.getElementById('inoferPanelPistones'), gv = document.getElementById('viewGantt');
+        if (panel && gv && gv.firstChild !== panel) gv.insertBefore(panel, gv.firstChild);
+      } catch (e) { }
+    }
+
+    // ---------- carga manual: no dejar una pieza en una máquina sin su pistón
+    document.addEventListener('submit', ev => {
+      if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+      const part = (document.getElementById('ganttModalPart')?.value || '').trim();
+      const mach = document.getElementById('ganttModalMachine')?.value;
+      const mm = inoferPistonDe(part);
+      if (mm && !inoferMaquinaAdmitePiston(mach, mm)) {
+        ev.preventDefault(); ev.stopImmediatePropagation();
+        const ok = GANTT_MACHINES_CONFIG.filter(mc => inoferMaquinaAdmitePiston(mc.id, mm)).map(mc => mc.short || mc.id);
+        showToast(`🚫 ${part} se inyecta con pistón de ${mm} mm y la ${mach} no lo tiene.${ok.length ? ' Lo tienen: ' + ok.join(', ') + '.' : ''}`);
+      }
+    }, true);
+
+    // ---------- pistón de cada pieza editable desde la tabla
+    document.addEventListener('change', ev => {
+      const el = ev.target;
+      if (!el || !el.classList || !el.classList.contains('inline-piston-input')) return;
+      const item = (partsCatalog || []).find(x => String(x.id) === String(el.dataset.inlinePiston));
+      if (!item) return;
+      item.pistonMm = Math.max(0, Number(el.value) || 0);
+      savePartsCatalog();
+      showToast(item.pistonMm ? `${item.part}: pistón de ${item.pistonMm} mm` : `${item.part}: sin pistón definido`);
+    });
+
+    // Enganches
+    const _inoferRenderGanttPis = window.renderGanttView;
+    if (typeof _inoferRenderGanttPis === 'function') {
+      window.renderGanttView = function () {
+        const r = _inoferRenderGanttPis.apply(this, arguments);
+        try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { }
+        return r;
+      };
+    }
+    const _inoferSaveGanttPis = window.saveGanttWeeks;
+    if (typeof _inoferSaveGanttPis === 'function') {
+      window.saveGanttWeeks = function () { const r = _inoferSaveGanttPis.apply(this, arguments); try { inoferRevisarPistones(); } catch (e) { } return r; };
+    }
+    window.addEventListener('DOMContentLoaded', () => { setTimeout(() => { try { inoferRenderPanelPistones(); inoferRevisarPistones(); } catch (e) { } }, 400); });
+  </script>
+

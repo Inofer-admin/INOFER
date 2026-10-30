@@ -1,0 +1,2749 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INOFER</title>
+  <script>
+    // Instalación como app: se guarda el aviso del navegador para usarlo en la pantalla de ingreso
+    window.__inoferInstallEvt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault(); window.__inoferInstallEvt = e;
+      try { window.dispatchEvent(new Event('inofer-install-ready')); } catch (x) {}
+    });
+    window.addEventListener('appinstalled', function () {
+      window.__inoferInstallEvt = null; window.__inoferInstalled = true;
+      try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
+    });
+  </script>
+  <meta name="inofer-version" content="2026.10.30.04" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="INOFER" />
+  <link id="dynamicManifestLink" rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    .gauge-needle {
+      transition: transform 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transform-origin: 100px 100px;
+    }
+    .gauge-arc {
+      transition: stroke-dashoffset 0.65s ease-out;
+    }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      opacity: 1;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 3px;
+    }
+    @page {
+      size: A4 landscape;
+      margin: 6mm 8mm;
+    }
+    @media print {
+      html, body {
+        background: #ffffff !important;
+        color: #000000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+      }
+      body * {
+        visibility: hidden !important;
+      }
+      #printableOrderSheet, #printableOrderSheet *,
+      #printableGanttSheet, #printableGanttSheet *,
+      #printableInoferReportSheet, #printableInoferReportSheet * {
+        visibility: visible !important;
+      }
+      #printableOrderSheet, #printableGanttSheet, #printableInoferReportSheet {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        box-shadow: none !important;
+      }
+      .gantt-print-page {
+        page-break-after: always !important;
+        break-after: page !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+      }
+      .gantt-print-page:last-child {
+        page-break-after: auto !important;
+        break-after: auto !important;
+      }
+      .sheet-page-front {
+        page-break-after: always !important;
+        break-after: page !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        background: #ffffff !important;
+      }
+      .sheet-page-back {
+        page-break-before: always !important;
+        break-before: page !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        background: #ffffff !important;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-slate-950">
+
+  <!-- Top Navigation / Header -->
+  <header class="sticky top-0 z-30 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 shadow-lg shadow-cyan-500/20">
+          <svg class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="rounded bg-cyan-500/20 border border-cyan-500/40 px-1.5 py-0.5 text-[10px] font-black tracking-wider text-cyan-300">INOFER v2.6</span><span id="inoferVersionTag" class="ml-1 text-[9px] font-semibold text-slate-500" title="Versión de las pantallas"></span>
+            <h1 class="text-lg font-bold tracking-tight text-white sm:text-xl">Sistema Integral de Inyección y Planificación</h1>
+          </div>
+          <p class="text-xs text-slate-400">OEE · Órdenes de Producción · Base de Moldes · Plan Gantt M1-M12 · IA INOFER</p>
+        </div>
+      </div>
+
+      <!-- Mode / View Switcher & Quick Actions -->
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700" style="max-width:calc(100vw - 32px);overflow-x:auto">
+          <button id="tabDashboardBtn" type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold transition bg-cyan-500 text-slate-950 shadow">
+            Tablero y Velocímetros
+          </button>
+          <button id="tabSimulatorBtn" type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold transition text-slate-300 hover:text-white">
+            Calculadora Directa
+          </button>
+          <button id="tabRecordsBtn" type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold transition text-slate-300 hover:text-white">
+            Historial (<span id="recordCountBadge">0</span>)
+          </button>
+          <button id="tabOrdersBtn" type="button" class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-amber-300 hover:text-white">
+            <svg class="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Órdenes de Prod. (<span id="ordersCountBadge">1</span>)
+          </button>
+          <button id="tabGanttBtn" type="button" class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-emerald-300 hover:text-white">
+            <svg class="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            Plan Gantt (Semanal/Mensual)
+          </button>
+          <button id="tabAiBtn" type="button" class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-violet-300 hover:text-white">
+            <svg class="h-3.5 w-3.5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+            </svg>
+            INOFER (IA)
+          </button>
+        </div>
+
+        <button id="openNewEntryModalBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Cargar Horas
+        </button>
+
+        <input type="file" id="importCsvInput" accept=".csv,text/csv" class="hidden" />
+        <button id="importCsvBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 transition hover:bg-cyan-500/20">
+          <svg class="h-4 w-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          Importar CSV
+        </button>
+
+        <button id="exportCsvBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition hover:bg-slate-700">
+          <svg class="h-4 w-4 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          Exportar CSV
+        </button>
+
+        <button id="syncNowBtn" type="button" title="Sincronizar datos ahora" class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20">
+          <span id="syncStatusDot" class="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="syncStatusText">Modo Local</span>
+        </button>
+
+        <select id="plantRoleSelect" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs font-bold text-cyan-300 focus:border-cyan-400 focus:outline-none" title="Cambiar perfil de visualización según el puesto en planta">
+          <option value="all" selected>👨‍💼 Perfil: Sistema Completo</option>
+          <option value="pcp">📅 Perfil: Programación PCP y Gantt</option>
+          <option value="operator">👷‍♂️ Perfil: Operario / Pie de Máquina</option>
+          <option value="tv">📺 Perfil: Monitor Smart TV Planta</option>
+        </select>
+
+        <button id="toggleFullscreenBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white" title="Alternar Pantalla Completa (Ideal para TV o Tablet)">
+          ⛶
+        </button>
+
+        <button id="openCloudModalBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20">
+          <svg class="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+          </svg>
+          Activar Tiempo Real
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="mx-auto max-w-7xl px-4 py-5 sm:px-6 space-y-6">
+
+    <!-- Filter Bar -->
+    <section class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl">
+      <div class="flex flex-wrap items-end justify-between gap-4">
+        <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-5">
+          <!-- Machine Filter -->
+          <div>
+            <label for="filterMachine" class="block text-xs font-medium text-slate-400 mb-1">Máquina / Inyectora</label>
+            <select id="filterMachine" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none">
+              <option value="ALL">Todas las inyectoras (5)</option>
+              <option value="Italpresse 200 Tn (N)">Italpresse 200 Tn (N)</option>
+              <option value="Italpresse 200 Tn (V)">Italpresse 200 Tn (V)</option>
+              <option value="Italpresse 180 Tn">Italpresse 180 Tn</option>
+              <option value="H-50">H-50</option>
+              <option value="Italpresse 30 Tn (Z-30)">Italpresse 30 Tn (Z-30)</option>
+            </select>
+          </div>
+
+          <!-- Shift Filter -->
+          <div>
+            <label for="filterShift" class="block text-xs font-medium text-slate-400 mb-1">Turno</label>
+            <select id="filterShift" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none">
+              <option value="ALL">Todos los turnos</option>
+              <option value="Mañana">Turno Mañana</option>
+              <option value="Tarde">Turno Tarde</option>
+              <option value="Noche">Turno Noche</option>
+              <option value="Día Completo">Día Completo (24h)</option>
+              <option value="Semana Completa">Semana Completa</option>
+            </select>
+          </div>
+
+          <!-- Fuente de los datos -->
+          <div>
+            <label for="filterFuente" class="block text-xs font-medium text-slate-400 mb-1">Datos de</label>
+            <select id="filterFuente" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none">
+              <option value="ALL">Partes manuales + Órdenes</option>
+              <option value="MANUAL">Solo partes de horas manuales</option>
+              <option value="OP">Solo Órdenes de Producción</option>
+            </select>
+          </div>
+
+          <!-- Date From -->
+          <div>
+            <label for="filterDateFrom" class="block text-xs font-medium text-slate-400 mb-1">Desde fecha</label>
+            <input type="date" id="filterDateFrom" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none" />
+          </div>
+
+          <!-- Date To -->
+          <div>
+            <label for="filterDateTo" class="block text-xs font-medium text-slate-400 mb-1">Hasta fecha</label>
+            <input type="date" id="filterDateTo" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-white focus:border-cyan-500 focus:outline-none" />
+          </div>
+
+          <!-- Target Goal Threshold -->
+          <div>
+            <label for="targetUtilizationInput" class="block text-xs font-medium text-slate-400 mb-1">Meta Utilización (%)</label>
+            <div class="flex items-center gap-2">
+              <input type="number" id="targetUtilizationInput" min="10" max="100" step="1" value="80" class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-cyan-400 focus:border-cyan-500 focus:outline-none" />
+              <button id="resetFiltersBtn" type="button" title="Restablecer filtros" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white">
+                Limpiar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 1: MAIN DASHBOARD & SPEEDOMETERS -->
+    <div id="viewDashboard" class="space-y-6">
+
+      <!-- 5 Machines Quick Speedometer Strip -->
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-xl">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-sm font-bold text-white">Estado por Máquina Inyectora (% Utilización Individual)</h2>
+            <p class="text-xs text-slate-400">Hacé clic en cualquier inyectora para filtrar todo el tablero por esa máquina</p>
+          </div>
+          <span class="text-xs text-cyan-400 font-medium">5 Inyectoras activas</span>
+        </div>
+        <div id="machinesQuickGrid" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <!-- Dynamically populated by JS -->
+        </div>
+      </div>
+
+      <!-- Top Hero Row: Main Utilization Speedometer + Secondary Speedometers + KPI Summary -->
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+
+        <!-- Main Speedometer Card (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col justify-between rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900 to-slate-900/60 p-5 shadow-xl">
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-xs font-semibold text-cyan-400 border border-cyan-500/20">
+                Indicador Principal
+              </span>
+              <h2 class="mt-1 text-lg font-bold text-white">Velocímetro de Utilización</h2>
+            </div>
+            <div id="statusBadgeMain" class="rounded-lg px-3 py-1 text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              En Meta
+            </div>
+          </div>
+
+          <!-- Main SVG Speedometer -->
+          <div class="my-2 flex flex-col items-center justify-center">
+            <div class="relative w-full max-w-[310px]">
+              <svg viewBox="0 0 200 128" class="w-full overflow-visible">
+                <defs>
+                  <linearGradient id="mainGaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ef4444" />
+                    <stop offset="55%" stop-color="#f59e0b" />
+                    <stop offset="80%" stop-color="#10b981" />
+                    <stop offset="100%" stop-color="#06b6d4" />
+                  </linearGradient>
+                </defs>
+
+                <!-- Background Track Arc -->
+                <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
+
+                <!-- Zone Bands (Red 0-60%, Amber 60-80%, Green 80-100%) -->
+                <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="0" opacity="0.25" />
+
+                <!-- Active Value Arc -->
+                <path id="mainGaugeActiveArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
+
+                <!-- Scale Labels -->
+                <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
+                <text x="38" y="42" fill="#64748b" font-size="7.5" font-weight="600" text-anchor="middle">25%</text>
+                <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
+                <text x="162" y="42" fill="#64748b" font-size="7.5" font-weight="600" text-anchor="middle">75%</text>
+                <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+
+                <!-- Needle Group -->
+                <g id="mainGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
+                  <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
+                  <circle cx="100" cy="100" r="8" fill="#06b6d4" stroke="#0f172a" stroke-width="3" />
+                </g>
+              </svg>
+
+              <!-- Center Readout -->
+              <div class="mt-1 text-center">
+                <div class="text-4xl font-extrabold tracking-tight text-white" id="mainUtilPctText">0.0%</div>
+                <p class="mt-0.5 text-xs text-slate-400">
+                  Fórmula: <span class="text-slate-200 font-medium">(Horas Productivas / Horas Disponibles) × 100</span>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Quick Breakdown inside Main Card -->
+          <div class="grid grid-cols-3 gap-2 border-t border-slate-800 pt-3 text-center">
+            <div class="rounded-xl bg-slate-800/60 p-2.5">
+              <span class="block text-[11px] text-slate-400">Hs Disponibles</span>
+              <span id="kpiAvailableHrs" class="text-base font-bold text-white">0.0 h</span>
+            </div>
+            <div class="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-2.5">
+              <span class="block text-[11px] text-emerald-300">Hs Utilización</span>
+              <span id="kpiProductiveHrs" class="text-base font-bold text-emerald-400">0.0 h</span>
+            </div>
+            <div class="rounded-xl bg-rose-500/10 border border-rose-500/20 p-2.5">
+              <span class="block text-[11px] text-rose-300">Hs Paradas Totales</span>
+              <span id="kpiDowntimeHrs" class="text-base font-bold text-rose-400">0.0 h</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Secondary Gauge + Quick Inline Hours Loader (7 cols) -->
+        <div class="lg:col-span-7 flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div>
+              <h2 class="text-base font-bold text-white">Velocímetros por Categoría de Parada (% sobre Hs Disponibles)</h2>
+              <p class="text-xs text-slate-400">Impacto porcentual y en horas de cada motivo sobre el tiempo total disponible</p>
+            </div>
+            <span id="TopStoppageAlert" class="rounded-lg bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-xs font-medium text-amber-300">
+              Mayor pérdida: -
+            </span>
+          </div>
+
+          <!-- 8 Mini Speedometer Gauges Grid -->
+          <div id="categoryGaugesGrid" class="my-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <!-- Dynamically rendered via JS -->
+          </div>
+
+          <!-- Bottom Bar: Interactive Quick Adjustment Prompt -->
+          <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-800/70 px-4 py-2.5 border border-slate-700/70">
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+              <span class="h-2.5 w-2.5 rounded-full bg-cyan-400"></span>
+              <span>¿Querés simular o cargar horas en directo sin guardar en historial?</span>
+            </div>
+            <button id="jumpToSimulatorBtn" type="button" class="text-xs font-bold text-cyan-400 hover:text-cyan-300 underline">
+              Abrir Calculadora Directa de Velocímetro &rarr;
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Row: Pareto of Downtime Causes & Evolution Trend -->
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <!-- Horizontal Bar / Pareto Chart -->
+        <div class="lg:col-span-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div class="mb-3 flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-white">Ranking de Horas Improductivas por Motivo</h3>
+              <p class="text-xs text-slate-400">Comparativa en horas y porcentaje de incidencia</p>
+            </div>
+            <select id="chartMetricToggle" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-200">
+              <option value="hours">Ver en Horas (h)</option>
+              <option value="percent">Ver en % sobre Disponibles</option>
+            </select>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="downtimeBarChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Distribution Doughnut / Machine Comparison -->
+        <div class="lg:col-span-6 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <div class="mb-3 flex items-center justify-between">
+            <div>
+              <h3 class="text-sm font-bold text-white">Distribución Total de Horas Disponibles</h3>
+              <p class="text-xs text-slate-400">Proporción entre tiempo productivo (utilización) y cada parada</p>
+            </div>
+            <span class="text-xs font-semibold text-cyan-400" id="doughnutTotalLabel">Total: 0 h</span>
+          </div>
+          <div class="relative h-72 w-full">
+            <canvas id="utilizationDoughnutChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detailed Breakdown Table by Category -->
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-bold text-white">Desglose Detallado de Indicadores Cargados</h3>
+            <p class="text-xs text-slate-400">Resumen consolidado según los filtros activos</p>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400 uppercase">
+                <th class="py-2.5 px-3">Concepto / Categoría</th>
+                <th class="py-2.5 px-3 text-right">Horas Acumuladas</th>
+                <th class="py-2.5 px-3 text-right">% sobre Hs Disponibles</th>
+                <th class="py-2.5 px-3 text-right">% sobre Total Paradas</th>
+                <th class="py-2.5 px-3">Barra de Impacto</th>
+              </tr>
+            </thead>
+            <tbody id="summaryBreakdownTableBody" class="divide-y divide-slate-800/60">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: DIRECT LIVE CALCULATOR / SIMULATOR -->
+    <div id="viewSimulator" class="hidden space-y-6">
+      <div class="rounded-2xl border border-cyan-500/30 bg-slate-900/90 p-5 shadow-xl">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <span class="rounded-full bg-cyan-500/20 px-2.5 py-0.5 text-xs font-bold text-cyan-300">Modo Interactivo Instantáneo</span>
+            <h2 class="mt-1 text-lg font-bold text-white">Calculadora Directa de Utilización con Velocímetro</h2>
+            <p class="text-xs text-slate-400">Cargá las horas disponibles y las horas de cada parada para ver el velocímetro en vivo o guardarlo como registro.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="simResetZeroBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700">
+              Poner todo en 0
+            </button>
+            <button id="simSaveToRecordsBtn" type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow hover:bg-emerald-400">
+              Guardar en el Tablero
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <!-- Inputs Column (7 cols) -->
+          <div class="lg:col-span-7 space-y-4">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-4 bg-slate-800/50 p-3.5 rounded-xl border border-slate-700/70">
+              <div>
+                <label for="simDate" class="block text-xs font-semibold text-slate-300 mb-1">Fecha</label>
+                <input type="date" id="simDate" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-white" />
+              </div>
+              <div>
+                <label for="simMachine" class="block text-xs font-semibold text-slate-300 mb-1">Inyectora</label>
+                <select id="simMachine" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-white">
+                  <option value="Italpresse 200 Tn (N)">Italpresse 200 Tn (N)</option>
+                  <option value="Italpresse 200 Tn (V)">Italpresse 200 Tn (V)</option>
+                  <option value="Italpresse 180 Tn">Italpresse 180 Tn</option>
+                  <option value="H-50">H-50</option>
+                  <option value="Italpresse 30 Tn (Z-30)">Italpresse 30 Tn (Z-30)</option>
+                </select>
+              </div>
+              <div>
+                <label for="simShift" class="block text-xs font-semibold text-slate-300 mb-1">Turno</label>
+                <select id="simShift" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-white">
+                  <option value="Mañana">Mañana (8h)</option>
+                  <option value="Tarde">Tarde (8h)</option>
+                  <option value="Noche">Noche (8h)</option>
+                  <option value="Día Completo">Día Completo (24h)</option>
+                </select>
+              </div>
+              <div>
+                <label for="simAvailableHours" class="block text-xs font-bold text-cyan-400 mb-1">Horas Disponibles (hs)</label>
+                <input type="number" id="simAvailableHours" min="0" step="any" value="24" class="w-full rounded-lg border-2 border-cyan-500 bg-slate-950 px-3 py-1.5 text-sm font-bold text-white focus:outline-none" />
+              </div>
+            </div>
+
+            <!-- 8 Stoppage Categories Inputs -->
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_parada_maquina" class="block text-xs font-semibold text-rose-300">1. Paradas de máquina (rotura, inyectora, etc.)</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_parada_maquina" min="0" step="any" value="1.5" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_setup_molde" class="block text-xs font-semibold text-amber-300">2. Setup / Cambio de molde</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_setup_molde" min="0" step="any" value="2.0" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_puesta_punto" class="block text-xs font-semibold text-orange-300">3. Puesta a punto / Arranque</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_puesta_punto" min="0" step="any" value="0.75" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_mant_preventivo" class="block text-xs font-semibold text-sky-300">4. Mantenimiento preventivo</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_mant_preventivo" min="0" step="any" value="0.5" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_mant_correctivo" class="block text-xs font-semibold text-pink-300">5. Mantenimiento correctivo</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_mant_correctivo" min="0" step="any" value="0.5" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_falta_material" class="block text-xs font-semibold text-purple-300">6. Falta de material</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_falta_material" min="0" step="any" value="0.25" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_falta_operario" class="block text-xs font-semibold text-indigo-300">7. Falta de operario</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_falta_operario" min="0" step="any" value="0.0" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-800/40 p-3">
+                <label for="sim_otros" class="block text-xs font-semibold text-slate-300">8. Otros</label>
+                <div class="mt-1.5 flex items-center gap-2">
+                  <input type="number" id="sim_otros" min="0" step="any" value="0.25" class="sim-input w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white" />
+                  <span class="text-xs text-slate-400">hs</span>
+                </div>
+              </div>
+            </div>
+
+            <div id="simValidationBanner" class="hidden rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
+              Atención: La suma de horas de parada supera las horas disponibles cargadas. Revisá los valores ingresados.
+            </div>
+          </div>
+
+          <!-- Live Speedometer Preview Column (5 cols) -->
+          <div class="lg:col-span-5 flex flex-col items-center justify-between rounded-2xl border border-slate-800 bg-slate-950 p-5">
+            <div class="text-center">
+              <span class="text-xs font-semibold uppercase tracking-wider text-cyan-400">Resultado en Vivo</span>
+              <h3 class="text-base font-bold text-white">Velocímetro de Utilización Calculada</h3>
+            </div>
+
+            <div class="my-4 w-full max-w-[290px]">
+              <svg viewBox="0 0 200 125" class="w-full overflow-visible">
+                <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
+                <path id="simGaugeArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
+                <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
+                <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
+                <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+                <g id="simGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
+                  <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
+                  <circle cx="100" cy="100" r="8" fill="#10b981" stroke="#0f172a" stroke-width="3" />
+                </g>
+              </svg>
+              <div class="text-center">
+                <div id="simUtilPctText" class="text-4xl font-extrabold text-white">76.0%</div>
+                <div id="simUtilFormulaSub" class="mt-1 text-xs text-slate-400">18.25 hs productivas de 24.00 hs disponibles</div>
+              </div>
+            </div>
+
+            <div class="w-full space-y-2 border-t border-slate-800 pt-3 text-xs">
+              <div class="flex justify-between">
+                <span class="text-slate-400">Horas Disponibles:</span>
+                <span id="simSummaryAvail" class="font-bold text-white">24.00 h (100%)</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-emerald-400">Horas de Utilización (Producción):</span>
+                <span id="simSummaryProd" class="font-bold text-emerald-400">18.25 h (76.0%)</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-rose-400">Total Horas de Parada:</span>
+                <span id="simSummaryStop" class="font-bold text-rose-400">5.75 h (24.0%)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: RECORDS TABLE & MANAGEMENT -->
+    <div id="viewRecords" class="hidden space-y-4">
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base font-bold text-white">Historial de Cargas de Horas por Turno / Máquina</h2>
+            <p class="text-xs text-slate-400">Podés editar cualquier registro cargado haciendo clic en "Editar", eliminar filas o cargar nuevos partes.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="restoreDemoDataBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700">
+              Restaurar Datos de Ejemplo
+            </button>
+            <button id="clearAllRecordsBtn" type="button" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20">
+              Vaciar Todo
+            </button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto custom-scrollbar">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2.5 px-2">Fecha</th>
+                <th class="py-2.5 px-2">Máquina</th>
+                <th class="py-2.5 px-2">Turno</th>
+                <th class="py-2.5 px-2 text-right text-cyan-400">Hs Disp.</th>
+                <th class="py-2.5 px-2 text-right text-emerald-400">Hs Utiliz.</th>
+                <th class="py-2.5 px-2 text-right text-emerald-400">% Utiliz.</th>
+                <th class="py-2.5 px-2 text-right">Parada Máq.</th>
+                <th class="py-2.5 px-2 text-right">Setup Molde</th>
+                <th class="py-2.5 px-2 text-right">Puesta Punto</th>
+                <th class="py-2.5 px-2 text-right">M. Prev.</th>
+                <th class="py-2.5 px-2 text-right">M. Corr.</th>
+                <th class="py-2.5 px-2 text-right">F. Mat.</th>
+                <th class="py-2.5 px-2 text-right">F. Oper.</th>
+                <th class="py-2.5 px-2 text-right">Otros</th>
+                <th class="py-2.5 px-2">Cargado por</th>
+                <th class="py-2.5 px-2 text-center">Acción</th>
+              </tr>
+            </thead>
+            <tbody id="recordsTableBody" class="divide-y divide-slate-800/60">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 4: AI ASSISTANT & REPORTS (INOFER MULTISOLAPA + APRENDIZAJE + GRÁFICOS) -->
+    <div id="viewAi" class="hidden space-y-6">
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+
+        <!-- Left Sidebar: Multi-Tab Options, Continuous Learning Memory & Weekly Saves (5 cols) -->
+        <div class="lg:col-span-5 space-y-4">
+          <div class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-slate-900 to-slate-900/70 p-5 shadow-xl space-y-4">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2.5">
+                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/20 border border-violet-500/30 text-violet-300">
+                  <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 class="text-base font-bold text-white">INOFER — Inteligencia Artificial Integral</h2>
+                  <p class="text-xs text-slate-400">Conectado a todas las solapas con aprendizaje continuo y gráficos</p>
+                </div>
+              </div>
+              <span id="inoferMemoryBadge" class="rounded-full bg-violet-500/20 border border-violet-500/40 px-2.5 py-1 text-[10px] font-bold text-violet-300">
+                🧠 0 aprendizajes
+              </span>
+            </div>
+
+            <!-- Live Context Snapshot across ALL tabs -->
+            <div class="rounded-xl border border-slate-800 bg-slate-950/80 p-3 space-y-1.5 text-xs">
+              <div class="flex items-center justify-between text-slate-400">
+                <span>Tablero (Partes / Utilización):</span>
+                <span id="aiContextRecordsCount" class="font-bold text-white">0 partes</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-400">
+                <span>Utilización actual vs. Meta:</span>
+                <span id="aiContextUtilStatus" class="font-bold text-cyan-400">0.0% / 80%</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-400">
+                <span>Principal cuello de botella:</span>
+                <span id="aiContextTopCause" class="font-bold text-rose-400">-</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-400">
+                <span>Inyectora más crítica:</span>
+                <span id="aiContextWorstMachine" class="font-bold text-amber-300">-</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-400 border-t border-slate-800/80 pt-1.5">
+                <span>Órdenes / Piezas en Base / Gantt:</span>
+                <span id="aiContextCrossTabs" class="font-bold text-emerald-400">1 OP · 3 Piezas · Sem 38</span>
+              </div>
+            </div>
+
+            <!-- Multi-Tab Category Selector for Quick Reports, Improvements & Tips -->
+            <div class="space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Opciones por Solapa (Informes, Mejoras y Tips)</span>
+              </div>
+
+              <!-- Category Pills -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800 text-[11px]">
+                <button type="button" data-ai-cat="util" class="ai-cat-tab-btn rounded-lg py-1.5 px-2 font-bold bg-violet-500 text-slate-950 shadow">
+                  1. Utilización
+                </button>
+                <button type="button" data-ai-cat="orders" class="ai-cat-tab-btn rounded-lg py-1.5 px-2 font-semibold text-slate-300 hover:text-white">
+                  2. Órdenes OP
+                </button>
+                <button type="button" data-ai-cat="gantt" class="ai-cat-tab-btn rounded-lg py-1.5 px-2 font-semibold text-slate-300 hover:text-white">
+                  3. Plan Gantt
+                </button>
+                <button type="button" data-ai-cat="global" class="ai-cat-tab-btn rounded-lg py-1.5 px-2 font-semibold text-slate-300 hover:text-white">
+                  4. Base y 360°
+                </button>
+              </div>
+
+              <!-- Group 1: Utilización y Paradas -->
+              <div id="aiCatGroup_util" class="space-y-1.5">
+                <button type="button" data-ai-prompt="Generame un informe ejecutivo completo del estado de utilización actual de las inyectoras según el historial cargado." data-ai-chart="util_machines" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  📊 <strong class="text-violet-300">Informe Ejecutivo de Utilización + Gráfico</strong>
+                  <span class="block text-[11px] text-slate-400">KPIs, desvíos frente a la meta y comparativa por máquina</span>
+                </button>
+                <button type="button" data-ai-prompt="¿Qué ideas de mejora concretas y tips prácticos me recomendás para subir el porcentaje de utilización en base a las paradas registradas?" data-ai-chart="stoppages_pareto" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  💡 <strong class="text-emerald-300">Plan de Mejoras (SMED / TPM) y Tips de Planta</strong>
+                  <span class="block text-[11px] text-slate-400">Acciones para reducir setup, puesta a punto y roturas</span>
+                </button>
+                <button type="button" data-ai-prompt="Haceme un ranking y diagnóstico detallado de las 5 inyectoras (Italpresse 200 N, 200 V, 180, H-50 y Z-30)." data-ai-chart="util_machines" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🏭 <strong class="text-cyan-300">Diagnóstico por Máquina Inyectora</strong>
+                  <span class="block text-[11px] text-slate-400">Foco técnico en la máquina más crítica vs. mejor referente</span>
+                </button>
+                <button type="button" data-ai-prompt="Compará el rendimiento entre los turnos (Mañana, Tarde y Noche) y dame tips para equilibrar la producción." data-ai-chart="stoppages_pareto" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🕒 <strong class="text-amber-300">Comparativa por Turnos y Tips de Relevos</strong>
+                  <span class="block text-[11px] text-slate-400">Detecta pérdidas en cambios de turno y esperas operativas</span>
+                </button>
+              </div>
+
+              <!-- Group 2: Órdenes de Producción y Herramental -->
+              <div id="aiCatGroup_orders" class="hidden space-y-1.5">
+                <button type="button" data-ai-prompt="Haceme un informe ejecutivo de todas las órdenes de producción con la eficiencia general, rendimiento por máquina y control de scrap." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  📋 <strong class="text-amber-300">Informe General de Órdenes y Eficiencia + Gráfico</strong>
+                  <span class="block text-[11px] text-slate-400">Avance de lotes, cadencia real vs. estándar y desempeño por máquina</span>
+                </button>
+                <button type="button" data-ai-prompt="Dame tips técnicos de inyección para reducir el scrap de producción, el arranque en baja y los problemas de calidad en las órdenes." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🎯 <strong class="text-rose-300">Tips para Reducir Scrap y Arranque en Baja</strong>
+                  <span class="block text-[11px] text-slate-400">Recomendaciones sobre temperatura de molde, rechupes, poros y rebabas</span>
+                </button>
+                <button type="button" data-ai-prompt="Analizá el estado de herramental (dorso de las órdenes: refrigeración, fechador, cáncamo, subida/bajada) y los 31 códigos de parada INOFER." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🛠️ <strong class="text-cyan-300">Auditoría de Herramental y Códigos de Parada</strong>
+                  <span class="block text-[11px] text-slate-400">Checklist preventivo de mangueras, puentes, correderas y moldes</span>
+                </button>
+              </div>
+
+              <!-- Group 3: Plan Gantt y Materiales -->
+              <div id="aiCatGroup_gantt" class="hidden space-y-1.5">
+                <button type="button" data-ai-prompt="Analizá la planificación del cronograma Gantt semanal y mensual: carga de horas de inyección vs. tareas auxiliares por máquina." data-ai-chart="gantt_load" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  📅 <strong class="text-emerald-300">Informe del Plan Gantt y Balance de Carga + Gráfico</strong>
+                  <span class="block text-[11px] text-slate-400">Evalúa cuellos de botella semanales y capacidad libre por inyectora</span>
+                </button>
+                <button type="button" data-ai-prompt="Haceme un informe de materiales del Gantt (ALSI y ZAMAC: kilos con colada, recupero y tips de fundición/horno)." data-ai-chart="gantt_materials" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  ⚖️ <strong class="text-sky-300">Balance de Materiales (ALSI y ZAMAC) + Gráfico</strong>
+                  <span class="block text-[11px] text-slate-400">Kilos con colada, recupero estimado y tips de desgasificado/lingoteo</span>
+                </button>
+                <button type="button" data-ai-prompt="Dame ideas y tips para optimizar la secuencia del Gantt y reducir horas de CMO (cambio de molde), CMA (cambio de material) y ALIS." data-ai-chart="gantt_load" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  ⚡ <strong class="text-amber-300">Tips de Secuenciación en Gantt (Menos Cambios)</strong>
+                  <span class="block text-[11px] text-slate-400">Cómo agrupar lotes por aleación y familia de molde</span>
+                </button>
+              </div>
+
+              <!-- Group 4: Base de Datos e Informe 360° -->
+              <div id="aiCatGroup_global" class="hidden space-y-1.5">
+                <button type="button" data-ai-prompt="Generame un Informe Integral 360° que cruce todas las solapas: Utilización del Tablero, Órdenes de Producción, Base de Datos y Plan Gantt." data-ai-chart="util_machines" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🌐 <strong class="text-purple-300">Informe Integral 360° (Todas las Solapas)</strong>
+                  <span class="block text-[11px] text-slate-400">Cruza paradas reales, eficiencia de órdenes y programación Gantt</span>
+                </button>
+                <button type="button" data-ai-prompt="Auditá la Base de Datos de Piezas y Moldes: compará las cadencias estándar (STD u/h) con el rendimiento real en las órdenes." data-ai-chart="orders_efficiency" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🗄️ <strong class="text-cyan-300">Auditoría de Base de Datos y Estándares STD</strong>
+                  <span class="block text-[11px] text-slate-400">Detecta piezas cuyos estándares teóricos difieren de la realidad</span>
+                </button>
+                <button type="button" data-ai-prompt="Simulá cuántas horas productivas y cuántos puntos de utilización ganaríamos reduciendo un 30% las dos principales causas de parada." data-ai-chart="stoppages_pareto" class="ai-quick-btn w-full text-left rounded-xl border border-slate-800 bg-slate-800/60 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-violet-500/50 hover:bg-violet-500/10">
+                  🚀 <strong class="text-pink-300">Proyección de Ganancia de Horas (+30%)</strong>
+                  <span class="block text-[11px] text-slate-400">Simulación de impacto directo en el velocímetro de planta</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Continuous Learning & Memory Section of INOFER -->
+            <div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3.5 space-y-2.5 text-xs">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-violet-300">🧠 Memoria y Aprendizaje Continuo de INOFER</span>
+                <button id="clearInoferMemoryBtn" type="button" class="text-[10px] text-slate-400 hover:text-rose-300 underline">Reiniciar memoria</button>
+              </div>
+              <p class="text-[11px] text-slate-400">INOFER aprende de tus consultas, recuerda qué informes pedís con más frecuencia y guarda criterios propios de tu planta:</p>
+              <div id="inoferLearnedSummaryBox" class="rounded-lg bg-slate-950/90 border border-slate-800 p-2.5 text-[11px] text-slate-300 space-y-1 max-h-28 overflow-y-auto custom-scrollbar">
+                <!-- Populated by JS -->
+              </div>
+              <div class="flex gap-1.5">
+                <input type="text" id="inoferTeachInput" placeholder="Enseñale algo a INOFER (ej: Meta scrap máx 2% en 200V)..." class="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-violet-400 focus:outline-none" />
+                <button id="inoferTeachBtn" type="button" class="rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-violet-400 shrink-0">
+                  Enseñar
+                </button>
+              </div>
+            </div>
+
+            <!-- Weekly Record Saving Section with INOFER -->
+            <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-emerald-300">📅 Registros Semanales con INOFER</span>
+                <span id="weeklySavedCountBadge" class="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">0 guardados</span>
+              </div>
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <input type="text" id="weeklyLabelInput" placeholder="Ej: Semana 43 (Oct)" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-emerald-400 focus:outline-none" />
+                <button id="saveWeeklyCloseBtn" type="button" class="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition">
+                  Guardar Cierre Semanal
+                </button>
+              </div>
+              <button id="viewWeeklyArchiveBtn" type="button" class="w-full rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-slate-700 transition">
+                Ver / Comparar Semanas Guardadas en el Chat
+              </button>
+            </div>
+
+            <!-- Optional Gemini API Key Configuration -->
+            <div class="border-t border-slate-800 pt-2.5">
+              <details class="group text-xs">
+                <summary class="cursor-pointer font-semibold text-slate-400 hover:text-slate-200 flex items-center justify-between">
+                  <span>⚙️ Conectar la IA: Claude o Gemini</span>
+                  <span id="aiEngineModeBadge" class="rounded bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-300">Motor OEE Integrado</span>
+                </summary>
+                <div class="mt-2.5 space-y-2 rounded-xl bg-slate-950 p-3 border border-slate-800">
+                  <p class="text-[11px] text-slate-400">INOFER funciona sin clave usando su motor experto integrado. Para que entienda todo lo que le escribas, pegá una clave de <b>Claude</b> (empieza con sk-ant-) o de <b>Gemini</b> (empieza con AIza). Al guardarla queda en la nube para todos los usuarios.</p>
+                  <input type="password" id="geminiApiKeyInput" placeholder="AIzaSy..." class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-violet-400 focus:outline-none" />
+                  <p class="text-[11px] text-slate-500">Claude: <span class="text-violet-300">console.anthropic.com</span> → API Keys (pago por uso). Gemini: gratis en <span class="text-violet-300">aistudio.google.com/apikey</span>.</p>
+                  <label class="flex items-center gap-2 text-[11px] text-slate-400"><input type="checkbox" id="geminiShareKeyChk" class="accent-violet-500" /> Usar esta clave en todos los dispositivos conectados a la nube</label>
+                  <div class="flex justify-end gap-2">
+                    <button id="saveGeminiKeyBtn" type="button" class="rounded-lg bg-violet-500 px-3 py-1 text-xs font-bold text-slate-950 hover:bg-violet-400">
+                      Guardar Clave
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Main Column: Interactive Chart Generator + Conversational AI Chat (7 cols) -->
+        <div class="lg:col-span-7 flex flex-col gap-4">
+
+          <!-- INOFER Dynamic Chart Card (Printable & Downloadable as PNG) -->
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+              <div class="flex items-center gap-2">
+                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-300 font-bold text-xs">📈</span>
+                <div>
+                  <h3 class="text-xs font-bold text-white">Gráfico Generado por INOFER (Descargable e Imprimible)</h3>
+                  <p class="text-[11px] text-slate-400">Cambia automáticamente según el informe que le pidas o elegí el gráfico acá</p>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5">
+                <select id="inoferChartTypeSelect" class="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-semibold text-cyan-300 focus:border-cyan-400 focus:outline-none">
+                  <option value="util_machines">1. % Utilización vs. Meta por Máquina</option>
+                  <option value="stoppages_pareto">2. Pareto de Causas de Parada (Hs)</option>
+                  <option value="orders_efficiency">3. Eficiencia y Calidad por Orden (OP)</option>
+                  <option value="gantt_load">4. Carga en Plan Gantt (Inyección vs. Aux)</option>
+                  <option value="gantt_materials">5. Materiales en Gantt (ALSI vs. ZAMAC kg)</option>
+                  <option value="weekly_evolution">6. Evolución de Cierres Semanales (%)</option>
+                </select>
+                <button id="inoferDownloadChartBtn" type="button" class="inline-flex items-center gap-1 rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 shadow transition" title="Descargar gráfico como imagen PNG">
+                  📥 Descargar PNG
+                </button>
+                <button id="inoferPrintReportChartBtn" type="button" class="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25 transition" title="Imprimir el último informe de INOFER junto con este gráfico en hoja A4">
+                  🖨️ Imprimir Informe + Gráfico
+                </button>
+              </div>
+            </div>
+
+            <div class="relative h-56 w-full rounded-xl bg-slate-950/90 p-3 border border-slate-800/80">
+              <canvas id="inoferDynamicChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Conversational AI Interface -->
+          <div class="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/70 shadow-xl overflow-hidden h-[470px]">
+            <!-- Chat Header -->
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-900 px-5 py-3">
+              <div class="flex items-center gap-2">
+                <span class="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <h3 class="text-sm font-bold text-white">Conversación con INOFER — Informes, Mejoras y Tips</h3>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="aiCopyLastReportBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white">
+                  Copiar Último Informe
+                </button>
+                <button id="aiClearChatBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white">
+                  Limpiar Chat
+                </button>
+              </div>
+            </div>
+
+            <!-- Messages Stream -->
+            <div id="aiChatMessages" class="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
+              <!-- Populated dynamically by JS -->
+            </div>
+
+            <!-- Chat Input Form -->
+            <form id="aiChatForm" class="border-t border-slate-800 bg-slate-900/95 p-3">
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  id="aiChatInput"
+                  placeholder="Pedile a INOFER un informe, gráfico, tip de mejora o enseñale una regla ('Recordá que...')..."
+                  class="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:border-violet-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  id="aiSendBtn"
+                  class="inline-flex items-center gap-1.5 rounded-xl bg-violet-500 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-violet-500/20 transition hover:bg-violet-400"
+                >
+                  <span>Enviar</span>
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 12h15" />
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- VIEW 5: PRODUCTION ORDERS (FRENTE & DORSO INOFER) & EFFICIENCY TRACKING -->
+    <div id="viewOrders" class="hidden space-y-6">
+
+      <!-- Top Header & Order Selector Bar -->
+      <div class="rounded-2xl border border-amber-500/30 bg-slate-900/90 p-5 shadow-xl">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <span class="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-bold text-amber-300">Gestión Integral INOFER</span>
+            <h2 class="mt-1 text-lg font-bold text-white">Órdenes de Fabricación por Inyección y Eficiencia de Pieza</h2>
+            <p class="text-xs text-slate-400">Generá órdenes (Frente y Dorso de Herramental), registrá el avance por turno/operador y medí la eficiencia real de cada pieza.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="newOrderBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-bold text-slate-950 shadow hover:bg-amber-400">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Nueva Orden de Producción
+            </button>
+            <button id="printOrderBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3.5 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/20">
+              🖨️ Vista Oficial / Imprimir (Frente y Dorso)
+            </button>
+            <button id="deleteCurrentOrderBtn" type="button" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/20">
+              Eliminar Orden
+            </button>
+          </div>
+        </div>
+
+        <!-- Active Orders Selector & Sub-view Switcher -->
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-3 flex-1" style="min-width:0;max-width:100%">
+            <label for="activeOrderSelect" class="text-xs font-bold text-slate-300">Orden Activa:</label>
+            <select id="activeOrderSelect" style="max-width:100%" class="min-w-0 sm:min-w-[280px] rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-bold text-amber-300 focus:border-amber-400 focus:outline-none">
+              <!-- Populated by JS -->
+            </select>
+            <span id="orderStatusBadge" class="rounded-lg px-2.5 py-1 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+              En Proceso
+            </span>
+          </div>
+
+          <!-- Sub-tabs: Seguimiento y Eficiencia | Frente (Orden y Partes) | Dorso (Informe Herramental) | Planilla Imprimible -->
+          <div class="flex flex-wrap gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
+            <button type="button" data-order-subtab="efficiency" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-500 text-slate-950">
+              1. Eficiencia y Seguimiento
+            </button>
+            <button type="button" data-order-subtab="front" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white">
+              2. Frente (Datos y Carga de Turnos)
+            </button>
+            <button type="button" data-order-subtab="back" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white">
+              3. Dorso (Informe de Herramental)
+            </button>
+            <button type="button" data-order-subtab="sheet" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white">
+              4. Planilla Oficial (Frente/Dorso)
+            </button>
+            <button type="button" data-order-subtab="catalog" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:text-white">
+              5. Base de Datos (Piezas y Moldes)
+            </button>
+            <button type="button" data-order-subtab="globalReport" class="order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-purple-300 hover:text-white">
+              6. Informe General de Órdenes
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW A: EFFICIENCY & TRACKING DASHBOARD FOR THE SELECTED PIECE/ORDER -->
+      <div id="orderSubViewEfficiency" class="space-y-6">
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+
+          <!-- Speedometer of Piece Efficiency (4 cols) -->
+          <div class="lg:col-span-4 flex flex-col justify-between rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900 to-slate-900/60 p-5 shadow-xl">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-amber-400">Rendimiento de la Pieza</span>
+                <h3 class="text-base font-bold text-white" id="effPieceTitle">Pieza 07615/1 (Molde 7615)</h3>
+              </div>
+              <span id="effGlobalBadge" class="rounded-lg px-2.5 py-1 text-xs font-bold bg-emerald-500/20 text-emerald-300">OEE Pieza</span>
+            </div>
+
+            <div class="my-3 flex flex-col items-center">
+              <div class="w-full max-w-[250px]">
+                <svg viewBox="0 0 200 125" class="w-full overflow-visible">
+                  <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
+                  <path id="orderEffGaugeArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
+                  <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
+                  <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
+                  <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+                  <g id="orderEffGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
+                    <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
+                    <circle cx="100" cy="100" r="8" fill="#f59e0b" stroke="#0f172a" stroke-width="3" />
+                  </g>
+                </svg>
+                <div class="text-center">
+                  <div id="orderEffPctText" class="text-3xl font-extrabold text-white">0.0%</div>
+                  <p class="mt-0.5 text-xs text-slate-400">Eficiencia de Cadencia (Unidades/h reales vs. estándar)</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3 text-center text-xs">
+              <div class="rounded-xl bg-slate-800/60 p-2">
+                <span class="block text-[11px] text-slate-400">Cadencia Estándar</span>
+                <span id="effStdRate" class="font-bold text-white">180 u/h</span>
+              </div>
+              <div class="rounded-xl bg-amber-500/10 border border-amber-500/20 p-2">
+                <span class="block text-[11px] text-amber-300">Cadencia Real</span>
+                <span id="effActualRate" class="font-bold text-amber-400">0 u/h</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress, Time & Quality Breakdown Cards (8 cols) -->
+          <div class="lg:col-span-8 flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-4">
+            <div>
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                <span class="text-xs font-bold text-white">Avance de Fabricación (Piezas S/ SCRAP vs. Cantidad a Inyectar)</span>
+                <span id="orderProgressLabel" class="text-xs font-extrabold text-emerald-400">0 / 700 u. (0.0%)</span>
+              </div>
+              <div class="h-3.5 w-full rounded-full bg-slate-800 overflow-hidden p-0.5">
+                <div id="orderProgressBar" class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- 4 Metric Boxes -->
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <span class="block text-[11px] text-slate-400">Piezas OK (S/ Scrap)</span>
+                <span id="orderKpiOkPcs" class="mt-1 block text-lg font-extrabold text-emerald-400">0</span>
+                <span id="orderKpiRemainingPcs" class="text-[11px] text-slate-500">Faltan: 700 u.</span>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <span class="block text-[11px] text-slate-400">Scrap + Arranque Baja</span>
+                <span id="orderKpiScrapPcs" class="mt-1 block text-lg font-extrabold text-rose-400">0</span>
+                <span id="orderKpiQualityPct" class="text-[11px] text-slate-400">Calidad: 100% OK</span>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <span class="block text-[11px] text-slate-400">Horas a Utilizar vs. Real</span>
+                <span id="orderKpiHoursComp" class="mt-1 block text-lg font-extrabold text-cyan-400">0.00 / 3.89 h</span>
+                <span id="orderKpiTimeEff" class="text-[11px] text-slate-400">Desvío horario: 0.0h</span>
+              </div>
+
+              <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <span class="block text-[11px] text-slate-400">Material / KG Totales</span>
+                <span id="orderKpiKgTotal" class="mt-1 block text-lg font-extrabold text-amber-300">45.6 kg</span>
+                <span id="orderKpiMaterialName" class="text-[11px] text-slate-400">ZAMAC (0.065 kg/u)</span>
+              </div>
+            </div>
+
+            <!-- Quick Add Production Shift Row directly from Tracking View -->
+            <div class="rounded-xl border border-slate-700/80 bg-slate-800/40 p-3.5">
+              <div class="mb-2 flex items-center justify-between">
+                <span class="text-xs font-bold text-cyan-300">➕ Registrar Turno / Avance de Producción en esta Orden</span>
+                <span class="text-[11px] text-slate-400">Actualiza automáticamente la eficiencia de la pieza</span>
+              </div>
+              <form id="quickOrderLogForm" class="grid grid-cols-2 gap-2 sm:grid-cols-8 items-end">
+                <div>
+                  <label class="block text-[10px] text-slate-400 mb-0.5">Fecha</label>
+                  <input type="date" id="logDate" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-400 mb-0.5">Operador</label>
+                  <input type="text" id="logOperator" placeholder="Nombre" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-400 mb-0.5">Hora Inicio</label>
+                  <input type="time" id="logStart" value="06:00" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-400 mb-0.5">Hora Final</label>
+                  <input type="time" id="logEnd" value="10:00" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-emerald-300 mb-0.5">Cant. piezas s/scrap</label>
+                  <input type="number" id="logOkPcs" min="0" value="350" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs font-bold text-emerald-400" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-amber-300 mb-0.5">Arranque en baja</label>
+                  <input type="number" id="logLowStart" min="0" value="10" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-rose-300 mb-0.5">Scrap de producc.</label>
+                  <input type="number" id="logScrap" min="0" value="8" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white" />
+                </div>
+                <div>
+                  <button type="submit" class="w-full rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+                    Agregar Fila
+                  </button>
+                </div>
+                <div class="col-span-2 sm:col-span-8 grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
+                  <div>
+                    <label class="block text-[10px] text-slate-400 mb-0.5">Código de Parada INOFER (1 a 31)</label>
+                    <select id="logStopCode" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-white">
+                      <option value="">Sin parada registrada</option>
+                    </select>
+                  </div>
+                  <div class="sm:col-span-2">
+                    <label class="block text-[10px] text-slate-400 mb-0.5">Observaciones y horario de parada (ej: Cód 1 de 06:00 a 06:30)</label>
+                    <input type="text" id="logObs" placeholder="Indicar código, hs de inicio, hs final y detalle..." class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recorded Logs Table for Active Order -->
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <h3 class="text-sm font-bold text-white mb-3">Tabla de Seguimiento Cargada en la Orden Activa</h3>
+          <div class="overflow-x-auto custom-scrollbar">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-slate-800 text-slate-400 uppercase">
+                  <th class="py-2.5 px-2.5">Fecha</th>
+                  <th class="py-2.5 px-2.5">Operador</th>
+                  <th class="py-2.5 px-2.5">Hora Inicio</th>
+                  <th class="py-2.5 px-2.5">Hora Final</th>
+                  <th class="py-2.5 px-2.5 text-right text-emerald-400">Cantidad de piezas s/scrap</th>
+                  <th class="py-2.5 px-2.5 text-right text-amber-300">Arranque en baja</th>
+                  <th class="py-2.5 px-2.5 text-right text-rose-400">Scrap de producc.</th>
+                  <th class="py-2.5 px-2.5">Observaciones y códigos de paradas</th>
+                  <th class="py-2.5 px-2.5 text-center">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="orderLogsTableBody" class="divide-y divide-slate-800/60">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW B: FRENTE (CABECERA DE ORDEN DE FABRICACIÓN Y 28 CÓDIGOS INOFER) -->
+      <div id="orderSubViewFront" class="hidden space-y-6">
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-base font-bold text-white">Frente: Datos de la Orden de Fabricación por Inyección</h3>
+              <p class="text-xs text-slate-400">Elegí una pieza de tu Base de Datos para autocompletar Molde Base, Bocas, Unidades por Hora, Material y Pesos automáticamente.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="jumpToCatalogBtn" type="button" class="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20">
+                🗄️ Ir a Base de Datos de Piezas
+              </button>
+              <button id="saveOrderFrontBtn" type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+                Guardar Datos del Frente
+              </button>
+            </div>
+          </div>
+
+          <!-- Autocomplete from Master Database Banner -->
+          <div class="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold text-cyan-300">⚡ Autocompletar desde Base de Datos:</span>
+              <span class="text-xs text-slate-300">Seleccioná la Pieza o Molde y se cargan solos Unidades/h, N° de Bocas, Molde Base, Máquina y Pesos</span>
+            </div>
+            <select id="catalogQuickPicker" class="min-w-[280px] rounded-lg border border-cyan-500/50 bg-slate-950 px-3 py-1.5 text-xs font-bold text-white focus:border-cyan-400 focus:outline-none">
+              <option value="">-- Seleccionar Pieza / Molde de la Base de Datos --</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3 md:grid-cols-6">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">ORD. PROD N°</label>
+              <input type="text" id="ord_number" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-amber-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">FECHA</label>
+              <input type="date" id="ord_date" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Máquina</label>
+              <select id="ord_machine" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white">
+                <option value="Italpresse 200 Tn (N)">Italpresse 200 Tn (N)</option>
+                <option value="Italpresse 200 Tn (V)">Italpresse 200 Tn (V)</option>
+                <option value="Italpresse 180 Tn">Italpresse 180 Tn</option>
+                <option value="H-50">H-50</option>
+                <option value="Italpresse 30 Tn (Z-30)">Italpresse 30 Tn (Z-30)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">N° Molde</label>
+              <input type="text" id="ord_mold" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">N° Pieza</label>
+              <input type="text" id="ord_part" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-cyan-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">N° De bocas</label>
+              <input type="number" id="ord_cavities" min="1" step="1" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Unidades por hora</label>
+              <input type="number" id="ord_units_hr" min="1" step="1" class="ord-calc-trigger w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-bold text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Material a inyectar</label>
+              <input type="text" id="ord_material" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Peso prom. C/colada (kg)</label>
+              <input type="number" id="ord_weight_sprue" min="0" step="0.001" class="ord-calc-trigger w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">PESO PIEZA OK (grs)</label>
+              <input type="number" id="ord_weight_ok" min="0" step="0.1" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-emerald-400 mb-1">CANTIDAD A INYECTAR</label>
+              <input type="number" id="ord_qty_target" min="1" step="1" class="ord-calc-trigger w-full rounded-lg border-2 border-emerald-500/60 bg-slate-950 px-3 py-1.5 text-xs font-extrabold text-emerald-300" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-cyan-400 mb-1">HORAS A UTILIZAR (Calc.)</label>
+              <input type="number" id="ord_hours_to_use" step="0.01" class="w-full rounded-lg border border-cyan-500/40 bg-slate-900 px-3 py-1.5 text-xs font-extrabold text-cyan-300" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-amber-300 mb-1">KG Totales a inyectar</label>
+              <input type="number" id="ord_kg_total" step="0.1" class="w-full rounded-lg border border-amber-500/40 bg-slate-900 px-3 py-1.5 text-xs font-extrabold text-amber-300" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Estado de la Orden</label>
+              <select id="ord_status" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white">
+                <option value="En Proceso">En Proceso</option>
+                <option value="Pendiente">Pendiente</option>
+                <option value="Completada">Completada</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Reference Table of the 28 Official INOFER Stoppage Codes -->
+          <div class="mt-4 border-t border-slate-800 pt-4">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">Referencia Oficial: 31 Códigos de Paradas de Inyectoras INOFER (Rev. 0 - Fecha 8/23)</h4>
+            <div id="inofer28CodesGrid" class="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-4 text-[11px] text-slate-300">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW C: DORSO (INFORME DE HERRAMENTAL PARA PRODUCCIÓN) -->
+      <div id="orderSubViewBack" class="hidden space-y-6">
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-base font-bold text-white">Dorso: Informe de Herramental para Producción (INOFER)</h3>
+              <p class="text-xs text-slate-400">Registro de herramental, subida/bajada de molde, fechador, cáncamo, refrigeración y observaciones.</p>
+            </div>
+            <button id="saveOrderBackBtn" type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+              Guardar Informe de Herramental (Dorso)
+            </button>
+          </div>
+
+          <!-- Herramental Header -->
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-4 bg-slate-800/40 p-3.5 rounded-xl border border-slate-800">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">FECHA INFORME</label>
+              <input type="date" id="back_date" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">MOLDE: VERSIÓN INYECTADA N°</label>
+              <input type="text" id="back_mold_version" placeholder="Ej: 7615 - Rev 1" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">MATRIZ DE CORTE PARA PIEZA N°</label>
+              <input type="text" id="back_die_cut" placeholder="Ej: MC-07615" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">DISPOSITIVO DE MECANIZADO N°</label>
+              <input type="text" id="back_machining_dev" placeholder="Ej: DM-07615" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white" />
+            </div>
+          </div>
+
+          <!-- Final de Producción / Desmontar / Subida / Bajada -->
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-amber-300">FINAL DE PRODUCCIÓN</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">Fecha:</label>
+                <input type="date" id="back_end_date" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400">Hora:</label>
+                <input type="time" id="back_end_time" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-cyan-300">DESMONTAR MOLDE DE MÁQUINA</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">Fecha:</label>
+                <input type="date" id="back_unmount_date" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[11px] text-slate-400">Hora inicio:</label>
+                  <input type="time" id="back_unmount_start" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[11px] text-slate-400">Hora final:</label>
+                  <input type="time" id="back_unmount_end" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" />
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-emerald-300">SUBIDA DE MOLDE</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">SUPERVISOR:</label>
+                <input type="text" id="back_up_supervisor" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400">PERSONAL:</label>
+                <input type="text" id="back_up_staff" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-purple-300">BAJADA DE MOLDE</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">SUPERVISOR:</label>
+                <input type="text" id="back_down_supervisor" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400">PERSONAL:</label>
+                <input type="text" id="back_down_staff" class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Fechador / Cáncamo / Refrigeración -->
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-white">UBICACIÓN DEL FECHADOR</span>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-[11px] text-slate-400">¿Tiene Fechador?</label>
+                  <select id="back_dater_exists" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white">
+                    <option value="SI">SI</option>
+                    <option value="NO">NO</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[11px] text-slate-400">Posición:</label>
+                  <select id="back_dater_pos" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white">
+                    <option value="LADO FIJO">LADO FIJO</option>
+                    <option value="LADO MOVIL">LADO MOVIL</option>
+                    <option value="CORREDERA">CORREDERA</option>
+                    <option value="N/A">N/A</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2 pt-1">
+                <div>
+                  <label class="block text-[11px] text-slate-400">ÚLTIMA FECHA - AÑO:</label>
+                  <input type="text" id="back_dater_year" placeholder="2026" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" />
+                </div>
+                <div>
+                  <label class="block text-[11px] text-slate-400">MES:</label>
+                  <input type="text" id="back_dater_month" placeholder="10" class="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" />
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-white">ACCESORIO PARA COLGAR Y ARMAR MOLDE / AGUJERO CANCAMO</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">¿EXISTE AGUJERO PARA CÁNCAMO / ACCESORIO?</label>
+                <select id="back_eyebolt_exists" class="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white">
+                  <option value="SI">SI</option>
+                  <option value="NO">NO</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 space-y-2">
+              <span class="block text-xs font-bold text-white">REFRIGERACIÓN (MANGUERAS Y PUENTES)</span>
+              <div>
+                <label class="block text-[11px] text-slate-400">ABRAZADERAS:</label>
+                <input type="text" id="back_cool_clamps" placeholder="Estado de abrazaderas..." class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400">PUENTES:</label>
+                <input type="text" id="back_cool_bridges" placeholder="Estado de puentes..." class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-400">MANGUERAS:</label>
+                <input type="text" id="back_cool_hoses" placeholder="Estado de mangueras..." class="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-white" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Comentarios y Observaciones del Herramental -->
+          <div>
+            <label class="block text-xs font-bold text-slate-300 mb-1">Comentarios, sugerencias, observaciones (EJ: REFRIGERACIÓN, EXPULSIÓN, BOQUILLA, PULIDOS, ROTURAS, ETC.)</label>
+            <textarea id="back_comments" rows="3" placeholder="Escribí aquí las observaciones de taller o herramental al finalizar la orden..." class="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-white focus:border-amber-400 focus:outline-none"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW D: OFFICIAL PRINTABLE SHEET (FRENTE & DORSO EXACT REPLICA) -->
+      <div id="orderSubViewSheet" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-900 p-4 border border-slate-800">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="inline-flex items-center rounded-md bg-cyan-500/20 px-2 py-0.5 text-xs font-bold text-cyan-300 border border-cyan-500/30">Formato A4 Horizontal</span>
+              <span class="text-xs font-bold text-white">Impresión a Doble Cara (Frente y Dorso INOFER)</span>
+            </div>
+            <p class="text-xs text-slate-400">Página 1: Frente (Orden de Fabricación) | Página 2: Dorso (Informe de Herramental). En el cuadro de diálogo de tu impresora seleccioná: <strong>"Imprimir a doble cara (girar por borde largo)"</strong>.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="triggerBrowserPrintBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-400 shadow">
+              🖨️ Imprimir a Doble Cara / Guardar PDF
+            </button>
+          </div>
+        </div>
+
+        <div id="printableOrderSheet" class="space-y-8 rounded-xl bg-white p-6 text-black shadow-2xl overflow-x-auto">
+          <!-- Populated dynamically with exact Frente and Dorso tables -->
+        </div>
+        <div id="printableGanttSheet" class="hidden rounded-xl bg-white p-6 text-black shadow-2xl overflow-x-auto">
+          <!-- Populated dynamically when printing custom Gantt selection -->
+        </div>
+        <div id="printableInoferReportSheet" class="hidden rounded-xl bg-white p-6 text-black shadow-2xl overflow-x-auto">
+          <!-- Populated dynamically when printing INOFER AI report + chart -->
+        </div>
+      </div>
+
+      <!-- SUB-VIEW E: MASTER DATABASE OF PARTS, MOLDS, CAVITIES & UNITS PER HOUR -->
+      <div id="orderSubViewCatalog" class="hidden space-y-6">
+        <div class="rounded-2xl border border-emerald-500/30 bg-slate-900/90 p-5 shadow-xl space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div>
+              <span class="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-300">Catálogo Maestro Automático</span>
+              <h3 class="mt-1 text-base font-bold text-white">Base de Datos de Piezas, Moldes Base, Bocas y Unidades por Hora</h3>
+              <p class="text-xs text-slate-400">Todo lo que cargues acá estará disponible para autocompletar automáticamente las Órdenes de Producción al elegir el N° de Pieza o N° de Molde.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <input type="file" id="importCatalogCsvInput" accept=".csv,text/csv" class="hidden" />
+              <button id="importCatalogCsvBtn" type="button" class="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/20">
+                Importar CSV de Piezas
+              </button>
+              <button id="exportCatalogCsvBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700">
+                Exportar Base CSV
+              </button>
+              <button id="deleteSelectedCatalogBtn" type="button" class="hidden rounded-lg border border-rose-500/60 bg-rose-500/20 px-3 py-1.5 text-xs font-bold text-rose-300 hover:bg-rose-500/30 transition">
+                🗑️ Eliminar Seleccionados (<span id="selectedCatalogCount">0</span>)
+              </button>
+              <button id="clearAllCatalogBtn" type="button" class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20 transition">
+                ⚠️ Eliminar Toda la Base de Datos
+              </button>
+              <button id="restoreDemoCatalogBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700 transition">
+                Restaurar Ejemplos
+              </button>
+            </div>
+          </div>
+
+          <!-- Form to Add or Edit a Part/Mold in the Database -->
+          <form id="catalogForm" class="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <span id="catalogFormTitle" class="text-xs font-bold text-emerald-400">➕ Agregar / Actualizar Pieza en la Base de Datos</span>
+              <button id="catalogResetFormBtn" type="button" class="text-[11px] text-slate-400 hover:text-white underline">Limpiar formulario</button>
+            </div>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 md:grid-cols-6">
+              <div>
+                <label class="block text-[11px] font-semibold text-cyan-300 mb-1">N° Pieza *</label>
+                <input type="text" id="cat_part" placeholder="Ej: 07615/1" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-amber-300 mb-1">N° Molde Base *</label>
+                <input type="text" id="cat_mold" placeholder="Ej: 7615" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-white mb-1">N° De bocas *</label>
+                <input type="number" id="cat_cavities" min="1" step="1" value="1" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-emerald-300 mb-1">Unidades por hora *</label>
+                <input type="number" id="cat_units_hr" min="1" step="1" value="180" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-emerald-400" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-[11px] font-bold text-emerald-300 mb-1">Máquinas Compatibles (Podés marcar 1, 2 o más máquinas) *</label>
+                <div class="flex flex-wrap items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" value="200V" class="cat-mach-cb rounded bg-slate-950 text-emerald-500" checked /><span>200V</span></label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" value="200N" class="cat-mach-cb rounded bg-slate-950 text-emerald-500" checked /><span>200N</span></label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" value="180" class="cat-mach-cb rounded bg-slate-950 text-emerald-500" /><span>180</span></label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" value="H50" class="cat-mach-cb rounded bg-slate-950 text-emerald-500" /><span>H50</span></label>
+                  <label class="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" value="Z30" class="cat-mach-cb rounded bg-slate-950 text-emerald-500" /><span>Z30</span></label>
+                </div>
+                <input type="hidden" id="cat_machine" value="Italpresse 200 Tn (V)" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-300 mb-1">Material a inyectar</label>
+                <input type="text" id="cat_material" value="ZAMAC" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+
+              <div>
+                <label class="block text-[11px] text-slate-300 mb-1">Peso prom. C/colada (kg)</label>
+                <input type="number" id="cat_weight_sprue" min="0" step="0.001" value="0.065" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-300 mb-1">Peso Pieza OK (grs)</label>
+                <input type="number" id="cat_weight_ok" min="0" step="0.1" value="0" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-300 mb-1">Matriz de Corte N°</label>
+                <input type="text" id="cat_die_cut" placeholder="Ej: MC-7615" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-300 mb-1">Disp. Mecanizado N°</label>
+                <input type="text" id="cat_machining_dev" placeholder="Ej: DM-7615" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-purple-300 mb-1">🔗 Comparte Molde con (Pieza Simultánea)</label>
+                <input type="text" id="cat_shared_mold" placeholder="Ej: 15401/PB (sale al mismo tiempo)" class="w-full rounded-lg border border-purple-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-purple-300 placeholder-slate-500 focus:border-purple-400 focus:outline-none" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-[11px] font-bold text-orange-300 mb-1">🧩 Portamolde / Molde base compartido (versiones del mismo molde)</label>
+                <input type="text" id="cat_portamolde" list="inoferPortamoldeList" placeholder="Ej: PM-34111 → las piezas con el mismo portamolde NO pueden estar en máquina a la vez" class="w-full rounded-lg border border-orange-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-orange-300 placeholder:text-slate-500 placeholder:font-normal" />
+                <datalist id="inoferPortamoldeList"></datalist>
+                <p id="cat_portamolde_info" class="mt-1 text-[10px] text-orange-200/80">Dejalo vacío si el molde es único. Escribí el mismo código en todas las piezas que salen del mismo portamolde (ej: 34111-PB y 34548-PB).</p>
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-sky-300 mb-1">⚙️ Diámetro de pistón (mm)</label>
+                <select id="cat_piston" class="w-full rounded-lg border border-sky-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-sky-300"><option value="">Sin definir</option><option value="40">40 mm</option><option value="45">45 mm</option><option value="50">50 mm</option><option value="55">55 mm</option><option value="65">65 mm</option></select>
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-lime-300 mb-1">💲 Precio unitario sin IVA ($)</label>
+                <input type="number" id="cat_precio" min="0" step="0.01" placeholder="Ej: 1250.50" class="w-full rounded-lg border border-lime-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-lime-300" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-violet-300 mb-1">📦 Lote mínimo de inyección (u)</label>
+                <input type="number" id="cat_lote_min" min="0" step="1" placeholder="Ej: 500" class="w-full rounded-lg border border-violet-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-violet-300" />
+              </div>
+              <div class="flex items-end">
+                <button type="submit" id="catSubmitBtn" class="w-full rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+                  Guardar Pieza en Base de Datos
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <!-- Search & Multi-Machine Filter Bar for Database -->
+          <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-950/80 p-3 border border-slate-800 text-xs">
+            <div class="flex flex-wrap items-center gap-2 flex-1">
+              <span class="font-bold text-slate-300">🔍 Buscar Pieza / Molde:</span>
+              <input type="text" id="catalogSearchInput" placeholder="Filtrar por código (ej: 13717, 07615), molde o máquina (200N, Z30)..." class="flex-1 min-w-[220px] rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-white focus:border-emerald-400 focus:outline-none" />
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="catalogTotalCountBadge" class="rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1 text-xs font-bold text-emerald-300">0 piezas en base</span>
+              <button id="loadFullExcelCatalogBtn" type="button" class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 shadow">
+                📥 Cargar las 376 Piezas del Excel INOFER
+              </button>
+            </div>
+          </div>
+
+          <!-- Master Catalog Table -->
+          <div class="overflow-x-auto custom-scrollbar max-h-[520px]">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-slate-800 text-slate-400 uppercase">
+                  <th class="py-2.5 px-2.5 w-10 text-center">
+                    <input type="checkbox" id="selectAllCatalogCheckbox" title="Seleccionar toda la base de datos" class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0 cursor-pointer" />
+                  </th>
+                  <th class="py-2.5 px-2.5 text-cyan-300">N° Pieza</th>
+                  <th class="py-2.5 px-2.5 text-amber-300">N° Molde Base / 🔗 Comparte Molde Con</th>
+                  <th class="py-2.5 px-2.5 text-center">N° De bocas</th>
+                  <th class="py-2.5 px-2.5 text-right text-emerald-400">Unidades por hora</th>
+                  <th class="py-2.5 px-2.5 text-emerald-300">Máquinas Compatibles (Clic para activar/desactivar)</th>
+                  <th class="py-2.5 px-2.5">Material</th>
+                  <th class="py-2.5 px-2.5 text-right">Peso C/colada (kg)</th>
+                  <th class="py-2.5 px-2.5 text-right">Peso Pieza OK (grs)</th>
+                  <th class="py-2.5 px-2.5">Matriz / Disp.</th>
+                  <th class="py-2.5 px-2.5 text-center">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="catalogTableBody" class="divide-y divide-slate-800/60">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-VIEW F: GLOBAL PRODUCTION ORDERS REPORT (EFICIENCIA GENERAL Y POR MÁQUINA) -->
+      <div id="orderSubViewGlobalReport" class="hidden space-y-6">
+        <div class="rounded-2xl border border-purple-500/30 bg-slate-900/90 p-5 shadow-xl space-y-6">
+
+          <!-- Header & Report Actions -->
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div>
+              <span class="rounded-full bg-purple-500/20 px-2.5 py-0.5 text-xs font-bold text-purple-300">Consolidado Ejecutivo</span>
+              <h3 class="mt-1 text-lg font-bold text-white">Informe General de Órdenes de Producción: Eficiencia Global y por Máquina</h3>
+              <p class="text-xs text-slate-400">Balance consolidado de todas las órdenes emitidas, rendimiento de inyección, control de scrap y análisis por inyectora.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="copyGlobalReportBtn" type="button" class="rounded-lg bg-purple-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-purple-400 shadow">
+                📋 Copiar Informe Ejecutivo
+              </button>
+              <button id="exportOrdersSummaryCsvBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">
+                Exportar CSV de Órdenes
+              </button>
+              <button id="askInoferAboutOrdersBtn" type="button" class="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs font-semibold text-violet-300 hover:bg-violet-500/20">
+                🤖 Analizar con INOFER
+              </button>
+            </div>
+          </div>
+
+          <!-- Top Row: General Efficiency Speedometer + Quality Speedometer + KPI Cards -->
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-12">
+
+            <!-- General Efficiency Speedometer Card (4 cols) -->
+            <div class="lg:col-span-4 flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-950/80 p-5 shadow">
+              <div class="text-center">
+                <span class="text-[11px] font-bold uppercase tracking-wider text-purple-400">Indicador Clave</span>
+                <h4 class="text-base font-bold text-white">Eficiencia General de Cadencia</h4>
+                <p class="text-[11px] text-slate-400 mt-0.5">Cadencia real vs. estándar ponderada en todas las órdenes</p>
+              </div>
+
+              <div class="my-3 flex flex-col items-center">
+                <div class="w-full max-w-[240px]">
+                  <svg viewBox="0 0 200 125" class="w-full overflow-visible">
+                    <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
+                    <path id="globalEffGaugeArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
+                    <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
+                    <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
+                    <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+                    <g id="globalEffGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
+                      <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
+                      <circle cx="100" cy="100" r="8" fill="#a855f7" stroke="#0f172a" stroke-width="3" />
+                    </g>
+                  </svg>
+                  <div class="text-center">
+                    <div id="globalEffPctText" class="text-3xl font-extrabold text-white">0.0%</div>
+                    <p id="globalEffSubText" class="text-xs text-slate-400 mt-0.5">0 u/h real vs. 0 u/h estándar</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="border-t border-slate-800 pt-3 text-center">
+                <span id="globalEffStatusBadge" class="inline-block rounded-lg px-3 py-1 text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                  Calculando
+                </span>
+              </div>
+            </div>
+
+            <!-- General Summary Metrics (8 cols) -->
+            <div class="lg:col-span-8 flex flex-col justify-between space-y-4">
+              <!-- 4 Big Metric Cards -->
+              <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5">
+                  <span class="block text-xs text-slate-400">Total Órdenes</span>
+                  <span id="repTotalOrdersCount" class="mt-1 block text-2xl font-extrabold text-white">0</span>
+                  <span id="repOrdersStatusBreakdown" class="text-[11px] text-slate-400">0 en proceso · 0 completas</span>
+                </div>
+
+                <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5">
+                  <span class="block text-xs text-emerald-400">Piezas OK Inyectadas</span>
+                  <span id="repTotalOkPcs" class="mt-1 block text-2xl font-extrabold text-emerald-400">0</span>
+                  <span id="repTargetPcsProgress" class="text-[11px] text-slate-400">De 0 u. objetivo (0%)</span>
+                </div>
+
+                <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5">
+                  <span class="block text-xs text-rose-400">Scrap Total + Arranque</span>
+                  <span id="repTotalScrapPcs" class="mt-1 block text-2xl font-extrabold text-rose-400">0</span>
+                  <span id="repGlobalQualityPct" class="text-[11px] text-emerald-300 font-semibold">Calidad: 100% OK</span>
+                </div>
+
+                <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5">
+                  <span class="block text-xs text-cyan-400">Horas Invertidas</span>
+                  <span id="repTotalWorkedHours" class="mt-1 block text-2xl font-extrabold text-cyan-400">0.0 h</span>
+                  <span id="repStdHoursDiff" class="text-[11px] text-slate-400">Vs. 0.0h estándar</span>
+                </div>
+              </div>
+
+              <!-- General Progress Bar across all orders -->
+              <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-4 space-y-2">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="font-bold text-white">Avance Global de Fabricación de Órdenes</span>
+                  <span id="repGlobalProgressBarLabel" class="font-extrabold text-purple-300">0 / 0 u. (0.0%)</span>
+                </div>
+                <div class="h-3 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div id="repGlobalProgressBar" class="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400 transition-all duration-500" style="width: 0%"></div>
+                </div>
+              </div>
+
+              <!-- Executive Insights Box -->
+              <div class="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3.5 text-xs text-slate-300 space-y-1">
+                <span class="font-bold text-purple-300">Diagnóstico Rápido de Fabricación:</span>
+                <p id="repExecutiveInsightText" class="text-slate-300">Cargando análisis de órdenes de producción...</p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Section: Eficiencia por Máquina Inyectora -->
+          <div class="space-y-3 border-t border-slate-800 pt-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-sm font-bold text-white">Eficiencia de Órdenes por Máquina Inyectora</h4>
+                <p class="text-xs text-slate-400">Desempeño de cadencia real, piezas inyectadas, horas trabajadas y scrap por cada máquina</p>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="border-b border-slate-800 text-slate-400 uppercase">
+                    <th class="py-2.5 px-3">Máquina Inyectora</th>
+                    <th class="py-2.5 px-3 text-center">Órdenes</th>
+                    <th class="py-2.5 px-3 text-right text-emerald-400">Piezas OK</th>
+                    <th class="py-2.5 px-3 text-right text-rose-400">Scrap Total</th>
+                    <th class="py-2.5 px-3 text-right text-emerald-300">% Calidad</th>
+                    <th class="py-2.5 px-3 text-right text-slate-300">Hs Estándar</th>
+                    <th class="py-2.5 px-3 text-right text-cyan-400">Hs Reales</th>
+                    <th class="py-2.5 px-3 text-right text-white">Cadencia Real</th>
+                    <th class="py-2.5 px-3 text-right text-purple-300">% Eficiencia</th>
+                    <th class="py-2.5 px-3 text-center">Estado</th>
+                  </tr>
+                </thead>
+                <tbody id="machineOrdersEfficiencyTableBody" class="divide-y divide-slate-800/60">
+                  <!-- Populated dynamically by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Section: Detalle de Todas las Órdenes de Producción -->
+          <div class="space-y-3 border-t border-slate-800 pt-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-sm font-bold text-white">Detalle Individual de Todas las Órdenes</h4>
+                <p class="text-xs text-slate-400">Seguimiento orden por orden: avance, cadencia real vs. estándar y calidad</p>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto custom-scrollbar">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="border-b border-slate-800 text-slate-400 uppercase">
+                    <th class="py-2.5 px-3">ORD. PROD</th>
+                    <th class="py-2.5 px-3">Pieza</th>
+                    <th class="py-2.5 px-3">Molde</th>
+                    <th class="py-2.5 px-3">Máquina</th>
+                    <th class="py-2.5 px-3 text-right">Cant. Objetivo</th>
+                    <th class="py-2.5 px-3 text-right text-emerald-400">Piezas OK</th>
+                    <th class="py-2.5 px-3 text-right font-bold">% Avance</th>
+                    <th class="py-2.5 px-3 text-right text-slate-400">Hs Estándar</th>
+                    <th class="py-2.5 px-3 text-right text-cyan-400">Hs Reales</th>
+                    <th class="py-2.5 px-3 text-right text-purple-300">% Eficiencia</th>
+                    <th class="py-2.5 px-3 text-right text-rose-400">% Scrap</th>
+                    <th class="py-2.5 px-3 text-center">Estado</th>
+                    <th class="py-2.5 px-3 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="allOrdersSummaryTableBody" class="divide-y divide-slate-800/60">
+                  <!-- Populated dynamically by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+
+    <!-- VIEW 6: GANTT PRODUCTION PLAN (SEMANA A SEMANA Y MES A MES INOFER) -->
+    <div id="viewGantt" class="hidden space-y-6">
+
+      <!-- Top Gantt Control Bar -->
+      <div class="rounded-2xl border border-emerald-500/30 bg-slate-900/90 p-5 shadow-xl space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <span class="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-300">Planificación de Inyección INOFER</span>
+            <h2 class="mt-1 text-lg font-bold text-white">Cronograma Gantt de Producción (Semana a Semana y Mes a Mes)</h2>
+            <p class="text-xs text-slate-400">Programación detallada por inyectora ligada a las Órdenes de Producción, con archivo histórico de semanas y meses anteriores.</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="toggleAutoGanttPanelBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-orange-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow-lg shadow-amber-500/20 hover:from-amber-300 hover:to-orange-400 transition">
+              ⚡ Auto-Armar Mes desde Excel
+            </button>
+            <button id="openGanttCatalogBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/25 transition">
+              🗄️ Base de Datos Gantt (Máquinas por Pieza)
+            </button>
+            <button id="assignOrderToGanttBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 shadow hover:bg-emerald-400">
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              + Pieza Manual
+            </button>
+            <button id="createNewGanttWeekBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">
+              ➕ Nueva Semana
+            </button>
+            <button id="duplicateGanttWeekBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">
+              📋 Duplicar Semana
+            </button>
+            <button id="openGanttPrintModalBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3.5 py-2 text-xs font-bold text-cyan-300 hover:bg-cyan-500/20 shadow transition">
+              🖨️ Imprimir Selección Personalizada
+            </button>
+            <button id="toggleGanttThemeBtn" type="button" class="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition">
+              🎨 <span id="ganttThemeBtnLabel">Modo Planilla Excel (Luminoso)</span>
+            </button>
+            <button id="exportGanttCsvBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700">
+              Exportar CSV
+            </button>
+            <button id="saveGanttBtn" type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 shadow">
+              💾 Guardar Cambios
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter Machines Pills inside Gantt -->
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-3 text-xs">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-slate-400 font-semibold mr-1">Filtrar Máquina:</span>
+            <button type="button" data-gantt-mach-filter="ALL" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-bold bg-emerald-500 text-slate-950 shadow">
+              Todas (5)
+            </button>
+            <button type="button" data-gantt-mach-filter="200V" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 hover:text-white">
+              200V
+            </button>
+            <button type="button" data-gantt-mach-filter="200N" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 hover:text-white">
+              200N
+            </button>
+            <button type="button" data-gantt-mach-filter="180" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 hover:text-white">
+              180
+            </button>
+            <button type="button" data-gantt-mach-filter="H50" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 hover:text-white">
+              H50
+            </button>
+            <button type="button" data-gantt-mach-filter="Z30" class="gantt-mach-pill rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 hover:text-white">
+              Z30
+            </button>
+          </div>
+          <div class="text-[11px] text-slate-400 flex items-center gap-3">
+            <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-cyan-400"></span> Hs = Horas de inyección</span>
+            <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-emerald-400"></span> Unid. = Cantidad de piezas</span>
+          </div>
+        </div>
+
+        <!-- Week / Month Selector & View Toggle -->
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <label for="ganttWeekSelect" class="text-xs font-bold text-slate-300">Semana a Visualizar / Programar:</label>
+            <select id="ganttWeekSelect" class="min-w-[280px] rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-bold text-emerald-400 focus:border-emerald-400 focus:outline-none">
+              <!-- Populated by JS -->
+            </select>
+            <span id="ganttPeriodDatesBadge" class="rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-300 bg-slate-800 border border-slate-700">
+              07/09/2026 - 12/09/2026
+            </span>
+          </div>
+
+          <!-- View Mode: Semanal Detallada vs Mensual Visual -->
+          <div class="flex flex-wrap gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
+            <button id="ganttModeWeekBtn" type="button" class="rounded-lg px-3 py-1.5 text-xs font-bold bg-emerald-500 text-slate-950 shadow">
+              Vista Semanal Detallada (INOFER)
+            </button>
+            <button id="ganttModeMonthBtn" type="button" class="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white">
+              Gantt Visual Mes a Mes
+            </button>
+          </div>
+        </div>
+
+        <!-- Materials & Utilization Summary Banner for the Selected Week -->
+        <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="font-extrabold text-white text-sm" id="ganttBannerSemTitle">PLANTA INOFER, SEM 38</div>
+            <div class="flex items-center gap-3 border-l border-slate-800 pl-4">
+              <span class="text-slate-400">Materiales Sem.:</span>
+              <span class="font-bold text-sky-300" id="ganttAlsiKgBadge">ALSI: 1,719.5 kg C/Colada | 764.7 kg Rec.</span>
+              <span class="text-slate-600">|</span>
+              <span class="font-bold text-amber-300" id="ganttZamacKgBadge">ZAMAC: 0.0 kg C/Colada | 0.0 kg Rec.</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-slate-400">Total Hs Programadas: <strong id="ganttTotalHoursBadge" class="text-white">79.4 h</strong></span>
+            <span class="rounded-lg px-2.5 py-1 text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" id="ganttUtilPctBadge">Utilización: 30.9%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PANEL: ANALIZADOR DE PLANILLA M1..M12 (ALCANCE ESTANTERÍA + ALCANCE C/OC + CONSUMO → GANTT) -->
+      <div id="autoGanttMonthPanel" class="rounded-2xl border-2 border-amber-500/40 bg-slate-900/95 p-5 shadow-2xl space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div>
+            <span class="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-bold text-amber-300">Analizador de Planificación M1 a M12 · Alcances en MESES</span>
+            <h3 class="mt-1 text-base font-bold text-white">Analizador Automático de Planilla (Alcance en Estantería, Alcance c/OC y Pedidos M1 a M12)</h3>
+            <p class="text-xs text-slate-400">
+              Semáforo en <strong>MESES</strong>:
+              <span class="text-rose-400 font-bold">🔴 Rojo Urgente (&lt; 3 meses)</span> ·
+              <span class="text-amber-300 font-bold">🟡 Amarillo Media (3 a 6 meses)</span> ·
+              <span class="text-emerald-400 font-bold">🟢 Verde Holgado (6 a 12+ meses)</span>.
+              Ya tenés precargada tu planilla <strong>Analisis para gantt.xlsx (295 piezas)</strong> o podés subir una nueva versión en cualquier momento.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input type="file" id="autoGanttExcelInput" accept=".xlsx,.xls,.csv,.txt" class="sr-only" />
+            <label for="autoGanttExcelInput" id="uploadAutoGanttExcelBtn" class="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 shadow-lg shadow-cyan-500/20 transition">
+              📂 Subir Planilla Excel (.xlsx / .xls / .csv)
+            </label>
+            <span id="uploadedExcelStatusBadge" class="rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-1.5 text-[11px] font-bold text-emerald-300">
+              ✅ Activa: Analisis para gantt.xlsx (295 piezas)
+            </span>
+            <button id="loadPreloadedAnalisisExcelBtn" type="button" class="rounded-xl border border-amber-500/40 bg-amber-500/15 px-3 py-2 text-xs font-bold text-amber-300 hover:bg-amber-500/25">
+              📋 Restaurar Planilla Adjunta (295 Piezas M1-M12)
+            </button>
+            <button id="downloadTemplateExcelGanttBtn" type="button" class="rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">
+              📥 Bajar CSV de Análisis
+            </button>
+          </div>
+        </div>
+
+        <!-- Top Controls: Select M1..M12, Reach Basis (Estantería vs Con OC), Schedule Parameters -->
+        <div class="grid grid-cols-1 gap-5 lg:grid-cols-12 text-xs">
+          <!-- Left: Controls for M1..M12 Selection + Optional Paste Area (7 cols) -->
+          <div class="lg:col-span-7 space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 rounded-xl border border-slate-800 bg-slate-950/90 p-3.5">
+              <div>
+                <label class="block text-[11px] font-bold text-amber-300 mb-1">1. Columna de Mes a Cargar al Gantt:</label>
+                <select id="autoGanttTargetMCol" class="w-full rounded-lg border border-amber-500/50 bg-slate-900 px-2.5 py-1.5 text-xs font-extrabold text-white focus:border-amber-400 focus:outline-none">
+                  <option value="M1" selected>Pedido M1 (Mes 1 — 17 lotes / 13.130 u.)</option>
+                  <option value="M2">Pedido M2 (Mes 2 — 5 lotes / 3.770 u.)</option>
+                  <option value="M3">Pedido M3 (Mes 3 — 10 lotes / 9.380 u.)</option>
+                  <option value="M4">Pedido M4 (Mes 4 — 18 lotes / 18.920 u.)</option>
+                  <option value="M5">Pedido M5 (Mes 5 — 20 lotes / 23.185 u.)</option>
+                  <option value="M6">Pedido M6 (Mes 6 — 24 lotes / 27.705 u.)</option>
+                  <option value="M7">Pedido M7 (Mes 7 — 36 lotes / 49.960 u.)</option>
+                  <option value="M8">Pedido M8 (Mes 8 — 27 lotes / 32.540 u.)</option>
+                  <option value="M9">Pedido M9 (Mes 9 — 40 lotes / 50.110 u.)</option>
+                  <option value="M10">Pedido M10 (Mes 10 — 30 lotes / 38.145 u.)</option>
+                  <option value="M11">Pedido M11 (Mes 11 — 28 lotes / 35.790 u.)</option>
+                  <option value="M12">Pedido M12 (Mes 12 — 39 lotes / 62.330 u.)</option>
+                  <option value="ALL_M1_M3">Trimestre M1 + M2 + M3 (12 Semanas)</option>
+                  <option value="ALL_M1_M6">Semestre M1 a M6 (24 Semanas)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-bold text-cyan-300 mb-1">2. Alcance p/ Semáforo y Prioridad:</label>
+                <select id="autoGanttReachBasis" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-cyan-300">
+                  <option value="disp" selected>Alc. Disp. (Stock Actual en Estantería)</option>
+                  <option value="oc">Alc. C/OC en curso o Devolución</option>
+                  <option value="min">El menor de ambos (Más conservador)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-bold text-emerald-300 mb-1">3. Filtro de Tabla de Análisis:</label>
+                <select id="autoGanttTableFilter" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white">
+                  <option value="with_order" selected>Con Pedido &gt; 0 en el Mes elegido</option>
+                  <option value="all">Todas las piezas de la planilla (295)</option>
+                  <option value="red">Solo 🔴 Rojo Urgente (&lt; 3 meses)</option>
+                  <option value="yellow">Solo 🟡 Amarillo Media (3 a 6 meses)</option>
+                  <option value="green">Solo 🟢 Verde Holgado (6 a 12+ meses)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Collapsible Raw Paste / Edit Box -->
+            <details class="group rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+              <summary class="cursor-pointer font-semibold text-slate-300 hover:text-white flex items-center justify-between">
+                <span>📝 Ver / Editar datos crudos o pegar filas manualmente desde Excel (Codigo, Cons. Mens., M1..M12, Alc. Disp., Alc. C/OC)</span>
+                <span class="text-[11px] text-amber-300 group-open:rotate-180 transition">▼</span>
+              </summary>
+              <div class="mt-2.5 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] text-slate-400">Podés pegar el formato completo de 16 columnas de <strong>Analisis para gantt.xlsx</strong> o formato corto (Pieza, Alcance Meses, Consumo, Cantidad):</span>
+                  <button id="clearAutoGanttPasteBtn" type="button" class="text-[11px] text-rose-400 hover:underline">Vaciar texto</button>
+                </div>
+                <textarea
+                  id="autoGanttPasteArea"
+                  rows="6"
+                  class="w-full rounded-xl border border-slate-700 bg-slate-950 p-2.5 font-mono text-[11px] text-emerald-300 focus:border-amber-400 focus:outline-none custom-scrollbar"
+                ></textarea>
+              </div>
+            </details>
+          </div>
+
+          <!-- Right: Monthly Scheduling Parameters & Execute Button (5 cols) -->
+          <div class="lg:col-span-5 flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-950/90 p-4 space-y-3">
+            <div class="space-y-3">
+              <span class="font-bold text-amber-300 block text-sm">4. Parámetros de Inyección para Armar el Gantt</span>
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1">Mes Calendario Base para M1</label>
+                  <select id="autoGanttMonthSelect" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white">
+                    <option value="2026-10|40|Octubre 2026">M1 = Octubre 2026 (Sem 40+)</option>
+                    <option value="2026-11|44|Noviembre 2026" selected>M1 = Noviembre 2026 (Sem 44+)</option>
+                    <option value="2026-12|48|Diciembre 2026">M1 = Diciembre 2026 (Sem 48+)</option>
+                    <option value="2027-01|1|Enero 2027">M1 = Enero 2027 (Sem 1+)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1">Horas Disp. por Día / Máq.</label>
+                  <select id="autoGanttDailyHours" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-cyan-300">
+                    <option value="24">24 hs / día (3 Turnos)</option>
+                    <option value="16" selected>16 hs / día (2 Turnos)</option>
+                    <option value="12">12 hs / día</option>
+                    <option value="8">8 hs / día (1 Turno)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1">Días Laborables por Semana</label>
+                  <select id="autoGanttWorkDays" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+                    <option value="6" selected>Lunes a Sábado (6 días)</option>
+                    <option value="5">Lunes a Viernes (5 días)</option>
+                    <option value="7">Domingo a Sábado (7 días)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1">Asignación Multi-Máquina</label>
+                  <select id="autoGanttBalanceMode" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-emerald-300 font-semibold">
+                    <option value="balance" selected>Balancear carga (Menor hs acum.)</option>
+                    <option value="primary">Priorizar 1° Máq. Compatible</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="space-y-1 pt-0.5">
+                <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input type="checkbox" id="autoGanttSortByReach" checked class="rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-0" />
+                  <span>Ordenar por <strong>Menor Alcance en Meses</strong> (<span class="text-rose-400 font-bold">&lt;3m Urgente</span> primero)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input type="checkbox" id="autoGanttIncludeSetup" checked class="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0" />
+                  <span>Sumar automático <strong>CMO (Cambio Molde)</strong> y <strong>ALIS (Alistamiento)</strong></span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input type="checkbox" id="autoGanttCreateOrders" checked class="rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                  <span>Generar y vincular automáticamente las <strong>Órdenes de Producción (OP)</strong></span>
+                </label>
+              </div>
+            </div>
+
+            <button id="runAutoGanttMonthBtn" type="button" class="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 py-2.5 px-4 text-xs font-extrabold text-slate-950 shadow-lg shadow-emerald-500/20 hover:from-emerald-400 hover:to-cyan-400 transition">
+              ⚡ Analizar Planilla y Armar Gantt Automáticamente
+            </button>
+          </div>
+        </div>
+
+        <!-- Interactive Stock Reach (Estantería vs C/OC) & M1..M12 Analysis Table -->
+        <div id="stockAnalysisSection" class="space-y-3 border-t border-slate-800 pt-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                <span>📊 Análisis de Alcance en Estantería, Alcance c/OC y Pedidos Mensuales (M1 a M12)</span>
+              </h4>
+              <p class="text-[11px] text-slate-400">
+                Semáforo en meses:
+                <strong class="text-rose-400">🔴 Urgente (&lt; 3 meses)</strong> ·
+                <strong class="text-amber-300">🟡 Media (3 a 6 meses)</strong> ·
+                <strong class="text-emerald-400">🟢 Holgado (6 a 12 meses / &gt;12m)</strong>.
+              </p>
+            </div>
+            <div id="stockAnalysisKpiPills" class="flex flex-wrap items-center gap-2 text-xs">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <div class="overflow-x-auto custom-scrollbar max-h-80 rounded-xl border border-slate-800 bg-slate-950/80">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-slate-800 bg-slate-900 text-[11px] text-slate-400 uppercase sticky top-0 z-10">
+                  <th class="py-2 px-2.5 text-center">Prioridad / Semáforo</th>
+                  <th class="py-2 px-2.5">Código / Pieza</th>
+                  <th class="py-2 px-2.5 text-right text-slate-300">Cons. Mens.</th>
+                  <th class="py-2 px-2.5 text-right text-cyan-300" title="Alcance actual disponible en estantería (meses)">Alc. Disp. (Estantería)</th>
+                  <th class="py-2 px-2.5 text-right text-amber-300" title="Alcance más pedido/OC en curso o devolución (meses)">Alc. C/OC (En Curso)</th>
+                  <th id="thSelectedMOrder" class="py-2 px-2.5 text-right text-emerald-400">Pedido M1 (A Inyectar)</th>
+                  <th class="py-2 px-2.5 text-left text-slate-400">Cronograma Anual (M1 a M12)</th>
+                  <th class="py-2 px-2.5 text-right text-sky-300">Hs Máq. (STD)</th>
+                  <th class="py-2 px-2.5 text-center">Máq. Compatibles</th>
+                  <th class="py-2 px-2.5 text-right text-purple-300">Alcance Post-Iny.</th>
+                </tr>
+              </thead>
+              <tbody id="stockAnalysisTableBody" class="divide-y divide-slate-800/60">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Auto-Generation Result Summary Box -->
+        <div id="autoGanttResultBanner" class="hidden rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-xs text-emerald-200">
+          <!-- Populated dynamically after auto-building the month -->
+        </div>
+      </div>
+
+      <!-- VIEW 6.A: DETAILED WEEKLY GRID (IDENTICAL TO PLANTILLA DE PLAN INOFER INYECCIÓN.XLSX) -->
+      <div id="ganttWeeklyContainer" class="space-y-6">
+        <!-- Rendered dynamically by JS with tables for 200N, 200V, 180, H50, Z30 -->
+      </div>
+
+      <!-- VIEW 6.B: MONTHLY VISUAL GANTT TIMELINE (MES A MES) -->
+      <div id="ganttMonthlyContainer" class="hidden rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-white">Cronograma Visual Mes a Mes (Todas las Inyectoras)</h3>
+            <p class="text-xs text-slate-400">Línea de tiempo gráfica de semanas y órdenes programadas por máquina.</p>
+          </div>
+          <span class="text-xs text-emerald-400 font-semibold" id="ganttMonthlyMonthLabel">Septiembre - Octubre 2026</span>
+        </div>
+        <div id="ganttMonthlyTimeline" class="space-y-4">
+          <!-- Populated dynamically by JS -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- MODAL: INSTALAR APLICACIÓN (PWA / WINDOWS / ANDROID) & BACKUP MAESTRO DEL SISTEMA -->
+    <div id="systemAppModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
+      <div class="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar space-y-5 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <span class="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[10px] font-bold text-amber-300">Transformación en Sistema de Planta (MES)</span>
+            <h3 class="mt-1 text-base font-bold text-white">📲 Centro de Instalación de Aplicación y Respaldo Maestro — INOFER</h3>
+          </div>
+          <button id="closeSystemAppModalBtn" type="button" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Master Backup & Restore Section (All 5 Modules in 1 File) -->
+        <div class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-bold text-emerald-300">💾 Respaldo Maestro Unificado del Sistema (.JSON)</h4>
+              <p class="text-[11px] text-slate-300">Descargá o restaurá en 1 solo clic <strong>absolutamente todo el sistema</strong>: Partes de Utilización, Órdenes de Producción, Base de Datos de Piezas (con moldes compartidos y multi-máquina), Semanas del Gantt y Memoria de INOFER.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="downloadFullSystemBackupBtn" type="button" class="rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 hover:bg-emerald-400 shadow">
+                📥 Descargar Backup Completo (.json)
+              </button>
+              <input type="file" id="restoreFullSystemBackupInput" accept=".json" class="sr-only" />
+              <label for="restoreFullSystemBackupInput" class="cursor-pointer rounded-xl border border-emerald-400/50 bg-slate-900 px-3.5 py-2 text-xs font-bold text-emerald-300 hover:bg-slate-800">
+                📂 Restaurar Backup (.json)
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- INSTALACIÓN DIRECTA EN PC WINDOWS Y EN CELULAR -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Card 1: PC Windows -->
+          <div class="rounded-xl border-2 border-cyan-500/40 bg-slate-950/90 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="rounded bg-cyan-500/20 px-2.5 py-0.5 text-[11px] font-extrabold text-cyan-300">💻 OPCIÓN A: INSTALAR EN TU PC (WINDOWS)</span>
+            </div>
+            <h5 class="font-bold text-white text-sm">Cómo tenerlo como Programa en el Escritorio de tu PC</h5>
+            <p class="text-[11px] text-slate-300 leading-relaxed">
+              Como ahora lo estás viendo adentro del panel de vista previa, hacé clic en estos <strong>2 botones de descarga</strong> y guardá ambos archivos en una misma carpeta (por ejemplo en tu <strong>Escritorio</strong>):
+            </p>
+            <div class="space-y-2 pt-1">
+              <button id="downloadStandaloneHtmlBtn" type="button" class="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-500 py-2.5 px-3 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 shadow">
+                📥 Paso 1: Descargar Sistema (INOFER_MES.html)
+              </button>
+              <button id="downloadWindowsLauncherBatBtn" type="button" class="w-full flex items-center justify-center gap-2 rounded-xl border border-cyan-400/60 bg-cyan-500/15 py-2 px-3 text-xs font-bold text-cyan-200 hover:bg-cyan-500/25">
+                🖥️ Paso 2: Descargar Lanzador Ventana App (Abrir_INOFER_App.bat)
+              </button>
+            </div>
+            <p class="text-[11px] text-slate-400 bg-slate-900/90 rounded-lg p-2.5 border border-slate-800">
+              💡 <strong>¿Cómo se abre?</strong> Al hacerle doble clic a <code>Abrir_INOFER_App.bat</code> (o directamente a <code>INOFER_MES.html</code>), se abre en una <strong>ventana de aplicación exclusiva de Windows</strong> sin pestañas ni barras de navegador.
+            </p>
+          </div>
+
+          <!-- Card 2: Mobile (Android / iPhone) -->
+          <div class="rounded-xl border-2 border-violet-500/40 bg-slate-950/90 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="rounded bg-violet-500/20 px-2.5 py-0.5 text-[11px] font-extrabold text-violet-300">📱 OPCIÓN B: INSTALAR EN EL CELULAR (ANDROID / IPHONE)</span>
+            </div>
+            <h5 class="font-bold text-white text-sm">Cómo tener el Ícono de la App en tu Teléfono</h5>
+            <p class="text-[11px] text-slate-300 leading-relaxed">
+              Para que los celulares abran el sistema con un ícono en la pantalla principal (igual que cualquier App):
+            </p>
+            <ol class="list-decimal list-inside space-y-1.5 text-[11px] text-slate-300 bg-slate-900/90 rounded-lg p-3 border border-slate-800">
+              <li>Tocá el botón violeta de abajo para bajar el archivo con el nombre <strong><code>index.html</code></strong>.</li>
+              <li>Entrá desde tu PC a <strong>tiiny.host</strong> o <strong>app.netlify.com/drop</strong> (son gratuitos) y arrastrá ese archivo <code>index.html</code>.</li>
+              <li>Te va a dar un <strong>link web corto y un código QR</strong> al instante.</li>
+              <li>Abrí ese link en el celular y en el menú de Chrome/Safari tocá <strong>"Agregar a pantalla principal / Instalar aplicación"</strong>.</li>
+            </ol>
+            <button id="downloadMobileIndexHtmlBtn" type="button" class="w-full flex items-center justify-center gap-2 rounded-xl bg-violet-500 py-2.5 px-3 text-xs font-extrabold text-slate-950 hover:bg-violet-400 shadow">
+              📱 Descargar "index.html" Listo para Subir y Usar en Celular
+            </button>
+          </div>
+        </div>
+
+        <div class="flex justify-end border-t border-slate-800 pt-3">
+          <button id="okSystemAppModalBtn" type="button" class="rounded-lg bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL FOR CUSTOM GANTT PRINTING WITH SELECTIONS -->
+    <div id="ganttPrintModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm">
+      <div class="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar space-y-4 text-xs">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-white flex items-center gap-2">
+              <span>🖨️ Impresión Personalizada del Plan Gantt INOFER</span>
+            </h3>
+            <p class="text-slate-400">Elegí qué máquinas, qué días y qué información querés incluir en la impresión en hoja A4 horizontal.</p>
+          </div>
+          <button id="closeGanttPrintModalBtn" type="button" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Selection Controls Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <!-- 1. Machines Selection -->
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-emerald-400">1. Máquinas a Imprimir:</span>
+              <button id="ganttPrintToggleAllMachsBtn" type="button" class="text-[10px] text-cyan-400 hover:underline">Alternar todas</button>
+            </div>
+            <div class="space-y-1.5 pt-1 text-slate-200">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_mach_200V" checked class="gprint-mach-cb rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                <span>Italpresse 200 Tn (V)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_mach_200N" checked class="gprint-mach-cb rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                <span>Italpresse 200 Tn (N)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_mach_180" checked class="gprint-mach-cb rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                <span>Italpresse 180 Tn</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_mach_H50" checked class="gprint-mach-cb rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                <span>H-50</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_mach_Z30" checked class="gprint-mach-cb rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0" />
+                <span>Italpresse 30 Tn (Z-30)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 2. Days Selection -->
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 space-y-2">
+            <span class="font-bold text-cyan-400 block">2. Días de la Semana:</span>
+            <div class="space-y-1.5 text-slate-200">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="gprint_days_mode" value="all" checked class="text-cyan-500 focus:ring-0" />
+                <span>Semana Completa (Dom a Sáb)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="gprint_days_mode" value="workdays" class="text-cyan-500 focus:ring-0" />
+                <span>Solo Días Hábiles (Lun a Vie)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="gprint_days_mode" value="weekend" class="text-cyan-500 focus:ring-0" />
+                <span>Solo Fin de Semana (Sáb y Dom)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 3. Sections to Include -->
+          <div class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 space-y-2">
+            <span class="font-bold text-amber-300 block">3. Secciones y Contenido:</span>
+            <div class="space-y-1.5 text-slate-200">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_inc_util" checked class="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0" />
+                <span>Filas de Utilización y Horas Totales</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_inc_aux" checked class="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0" />
+                <span>Tareas Auxiliares (CMA, CMO, etc.)</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_inc_pieces" checked class="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0" />
+                <span>Piezas de Inyección Programadas</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="gprint_inc_materials" checked class="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0" />
+                <span>Bloque de Materiales (ALSI / ZAMAC)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Print Preview Box -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span class="font-semibold text-white">Vista Previa de Impresión (Estilo Planilla Excel INOFER):</span>
+            <span class="text-[11px]">Formato A4 Horizontal (Landscape)</span>
+          </div>
+          <div id="ganttPrintModalPreviewArea" class="rounded-xl border border-slate-700 bg-white p-3 max-h-64 overflow-y-auto custom-scrollbar text-black text-[11px]">
+            <!-- Dynamically populated preview -->
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-3">
+          <span class="text-[11px] text-slate-400">💡 Al tocar imprimir, se enviará a la impresora únicamente la selección que marcaste arriba.</span>
+          <div class="flex items-center gap-2">
+            <button id="cancelGanttPrintBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700">
+              Cancelar
+            </button>
+            <button id="executeGanttPrintBtn" type="button" class="rounded-lg bg-emerald-500 px-5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 shadow">
+              🖨️ Imprimir Selección Ahora
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL TO ASSIGN PRODUCTION ORDER OR PART TO GANTT -->
+    <div id="ganttAssignModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+      <div class="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-base font-bold text-white">Programar Orden de Producción en el Gantt</h3>
+            <p class="text-xs text-slate-400">Seleccioná una Orden existente o una pieza del catálogo y asigná las cantidades por día.</p>
+          </div>
+          <button id="closeGanttAssignModalBtn" type="button" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form id="ganttAssignForm" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Vincular con Orden de Producción existente (Opcional):</label>
+            <select id="ganttModalOrderSelect" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-amber-300">
+              <option value="">-- Cargar manualmente o desde Base de Datos --</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-800/40 p-3 rounded-xl border border-slate-800">
+            <div>
+              <label class="block text-slate-400 mb-1">Máquina Inyectora *</label>
+              <select id="ganttModalMachine" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+                <option value="200V">Italpresse 200 Tn (V)</option>
+                <option value="200N">Italpresse 200 Tn (N)</option>
+                <option value="180">Italpresse 180 Tn</option>
+                <option value="H50">H-50</option>
+                <option value="Z30">Italpresse 30 Tn (Z-30)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">N° Pieza / Código *</label>
+              <input type="text" id="ganttModalPart" placeholder="Ej: 07944/1" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white font-bold" />
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Descripción de la Pieza</label>
+              <input type="text" id="ganttModalDesc" placeholder="Ej: PB PISTON CN10 D.125" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Material *</label>
+              <select id="ganttModalMaterial" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+                <option value="alsi">ALSI (Aluminio)</option>
+                <option value="zamac">ZAMAC</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">STD Cadencia [Unid./h] *</label>
+              <input type="number" id="ganttModalStdRate" min="1" value="60" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-emerald-400" />
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Unidades Totales del Lote *</label>
+              <input type="number" id="ganttModalTotalQty" min="1" value="850" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white" />
+            </div>
+          </div>
+
+          <!-- Daily distribution inputs -->
+          <div>
+            <label class="block text-slate-300 font-bold mb-1.5">Distribución de Unidades a Inyectar por Día (o dejá en 0 para asignar en la grilla):</label>
+            <div class="grid grid-cols-7 gap-1.5 text-center">
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Dom</span>
+                <input type="number" id="ganttDayQty_0" value="0" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Lun</span>
+                <input type="number" id="ganttDayQty_1" value="650" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white font-bold" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Mar</span>
+                <input type="number" id="ganttDayQty_2" value="200" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white font-bold" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Mié</span>
+                <input type="number" id="ganttDayQty_3" value="0" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Jue</span>
+                <input type="number" id="ganttDayQty_4" value="0" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Vie</span>
+                <input type="number" id="ganttDayQty_5" value="0" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white" />
+              </div>
+              <div>
+                <span class="block text-[10px] text-slate-400 mb-0.5">Sáb</span>
+                <input type="number" id="ganttDayQty_6" value="0" min="0" class="w-full rounded border border-slate-700 bg-slate-950 p-1 text-xs text-center text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+            <button id="cancelGanttAssignBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700">
+              Cancelar
+            </button>
+            <button type="submit" class="rounded-lg bg-emerald-500 px-5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+              Insertar en la Semana
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MODAL FOR NEW DATA ENTRY -->
+  <div id="entryModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+    <div class="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div>
+          <h3 id="entryModalTitle" class="text-base font-bold text-white">Cargar Parte de Horas de Inyectora</h3>
+          <p id="entryModalSubtitle" class="text-xs text-slate-400">Ingresá las horas disponibles y las horas de parada. El % de utilización se calcula automáticamente.</p>
+        </div>
+        <button id="closeEntryModalBtn" type="button" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <form id="newEntryForm" class="mt-4 space-y-4" novalidate>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-4 bg-slate-800/50 p-3 rounded-xl border border-slate-700">
+          <div>
+            <label for="modalDate" class="block text-xs font-medium text-slate-300 mb-1">Fecha</label>
+            <input type="date" id="modalDate" required class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modalMachine" class="block text-xs font-medium text-slate-300 mb-1">Inyectora</label>
+            <select id="modalMachine" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+              <option value="Italpresse 200 Tn (N)">Italpresse 200 Tn (N)</option>
+              <option value="Italpresse 200 Tn (V)">Italpresse 200 Tn (V)</option>
+              <option value="Italpresse 180 Tn">Italpresse 180 Tn</option>
+              <option value="H-50">H-50</option>
+              <option value="Italpresse 30 Tn (Z-30)">Italpresse 30 Tn (Z-30)</option>
+            </select>
+          </div>
+          <div>
+            <label for="modalShift" class="block text-xs font-medium text-slate-300 mb-1">Turno</label>
+            <select id="modalShift" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white">
+              <option value="Mañana">Mañana</option>
+              <option value="Tarde">Tarde</option>
+              <option value="Noche">Noche</option>
+              <option value="Día Completo">Día Completo</option>
+              <option value="Semana Completa">Semana Completa</option>
+            </select>
+          </div>
+          <div>
+            <label for="modalAvailableHours" class="block text-xs font-bold text-cyan-400 mb-1">Hs Disponibles</label>
+            <input type="number" id="modalAvailableHours" min="0" step="any" value="8" required class="w-full rounded-lg border-2 border-cyan-500 bg-slate-950 px-2.5 py-1 text-sm font-bold text-white" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label for="modal_parada_maquina" class="block text-xs text-slate-300 mb-1">Paradas de máquina (rotura, inyectora, etc.)</label>
+            <input type="number" id="modal_parada_maquina" min="0" step="any" value="0.5" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_setup_molde" class="block text-xs text-slate-300 mb-1">Setup / Cambio de molde</label>
+            <input type="number" id="modal_setup_molde" min="0" step="any" value="0.75" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_puesta_punto" class="block text-xs text-slate-300 mb-1">Puesta a punto / Arranque</label>
+            <input type="number" id="modal_puesta_punto" min="0" step="any" value="0.25" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_mant_preventivo" class="block text-xs text-slate-300 mb-1">Mantenimiento preventivo</label>
+            <input type="number" id="modal_mant_preventivo" min="0" step="any" value="0" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_mant_correctivo" class="block text-xs text-slate-300 mb-1">Mantenimiento correctivo</label>
+            <input type="number" id="modal_mant_correctivo" min="0" step="any" value="0" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_falta_material" class="block text-xs text-slate-300 mb-1">Falta de material</label>
+            <input type="number" id="modal_falta_material" min="0" step="any" value="0" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_falta_operario" class="block text-xs text-slate-300 mb-1">Falta de operario</label>
+            <input type="number" id="modal_falta_operario" min="0" step="any" value="0" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label for="modal_otros" class="block text-xs text-slate-300 mb-1">Otros</label>
+            <input type="number" id="modal_otros" min="0" step="any" value="0" class="modal-stop-input w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-white" />
+          </div>
+        </div>
+
+        <!-- Live Modal Preview Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-800 p-3 border border-slate-700">
+          <div class="text-xs">
+            <span class="text-slate-400">Horas Utilización Calculadas: </span>
+            <strong id="modalPreviewProdHrs" class="text-emerald-400">6.50 h</strong>
+            <span class="mx-2 text-slate-600">|</span>
+            <span class="text-slate-400">Total Paradas: </span>
+            <strong id="modalPreviewStopHrs" class="text-rose-400">1.50 h</strong>
+          </div>
+          <div class="text-sm font-extrabold text-cyan-400" id="modalPreviewPct">
+            Utilización: 81.3%
+          </div>
+        </div>
+
+        <div id="modalErrorMsg" class="hidden rounded-lg bg-rose-500/20 border border-rose-500/40 p-2.5 text-xs text-rose-300">
+          La suma de horas de parada no puede superar las horas disponibles.
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button id="cancelModalBtn" type="button" class="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700">
+            Cancelar
+          </button>
+          <button id="modalSubmitBtn" type="submit" class="rounded-lg bg-emerald-500 px-5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+            Guardar Registro
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL FOR CLOUD / APPS SCRIPT SETUP -->
+  <div id="cloudSetupModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+    <div class="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div>
+          <h3 class="text-base font-bold text-white">Sincronización en Tiempo Real (Multidispositivo)</h3>
+          <p class="text-xs text-slate-400">Conectá la web con tu Google Sheets para que los cambios se actualicen solos cada 8 segundos en todos los dispositivos</p>
+        </div>
+        <button id="closeCloudModalBtn" type="button" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs text-slate-300">
+        <!-- Optional Web App URL input for external/local HTML users -->
+        <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 space-y-2">
+          <div class="font-bold text-emerald-300 text-sm">Si abrís este archivo fuera de Apps Script: Pegá tu URL de Web App</div>
+          <p class="text-slate-300">Si ya implementaste el script en Google Sheets, pegá acá la URL terminada en <code class="text-white">/exec</code> para sincronizar este dispositivo en vivo (si lo abrís directo desde el link de Google Apps Script, se conecta solo sin pegar nada):</p>
+          <div class="flex flex-wrap gap-2">
+            <input type="url" id="cloudEndpointInput" placeholder="https://script.google.com/macros/s/.../exec" class="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-emerald-400 focus:outline-none" />
+            <button id="saveCloudEndpointBtn" type="button" class="rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400">
+              Conectar URL
+            </button>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-cyan-500/30 bg-slate-800/70 p-3.5 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="font-bold text-cyan-300 text-sm">Paso 1: Pegar este código en <code class="text-amber-300">Código.gs</code> (en Extensiones &rarr; Apps Script)</span>
+            <button id="copyGsCodeBtn" type="button" class="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400">
+              Copiar Código.gs Completo
+            </button>
+          </div>
+          <p>Este código guarda cada carga en tu planilla de Google Sheets y envía las actualizaciones en vivo a todos los celulares y PCs conectados:</p>
+          <pre id="appsScriptSnippet" class="rounded-lg bg-slate-950 p-3 text-[11px] text-cyan-300 overflow-x-auto border border-slate-800 max-h-56 custom-scrollbar">/**
+ * INOFER — CARGADOR DEL SERVIDOR (Google Apps Script)
+ * ----------------------------------------------------
+ * Este archivo se pega UNA SOLA VEZ en Apps Script y no hace falta volver a tocarlo.
+ * La lógica del servidor (usuarios, permisos, partes, órdenes, Gantt...) se descarga sola
+ * desde la app publicada en GitHub, así que cada mejora se aplica automáticamente.
+ * Si GitHub no responde, se usa la última versión guardada en la hoja "BD_Servidor".
+ * Para autorizar o probar: elegí "doGet" en el menú de funciones y tocá Ejecutar.
+ */
+const INOFER_SERVIDOR_URLS = [
+  'https://raw.githubusercontent.com/Inofer-admin/INOFER/main/inofer/servidor.js',
+  'https://inofer-admin.github.io/INOFER/inofer/servidor.js'
+];
+const INOFER_CACHE_SEGUNDOS = 120;
+
+function inoferServidor_() {
+  if (globalThis.__inoferSrv) return globalThis.__inoferSrv;
+  const cache = CacheService.getScriptCache();
+  let code = cache.get('inofer_srv');
+  const errores = [];
+  if (!code) {
+    for (let i = 0; i &lt; INOFER_SERVIDOR_URLS.length &amp;&amp; !code; i++) {
+      try {
+        const r = UrlFetchApp.fetch(INOFER_SERVIDOR_URLS[i] + '?t=' + Date.now(), { muteHttpExceptions: true, followRedirects: true });
+        const txt = r.getResponseCode() === 200 ? r.getContentText() : '';
+        if (txt.indexOf('INOFER_SERVIDOR_OK') !== -1) code = txt;
+        else errores.push(INOFER_SERVIDOR_URLS[i] + ' -&gt; HTTP ' + r.getResponseCode());
+      } catch (e) {
+        errores.push(INOFER_SERVIDOR_URLS[i] + ' -&gt; ' + e.message);
+      }
+    }
+    if (code) {
+      try { cache.put('inofer_srv', code, INOFER_CACHE_SEGUNDOS); } catch (e) {}
+      inoferGuardarCopia_(code);
+    } else {
+      code = inoferLeerCopia_();
+    }
+  }
+  if (!code) throw new Error('No se pudo cargar el servidor de INOFER. Detalle: ' + errores.join(' | '));
+  globalThis.__inoferSrv = new Function(code)();
+  return globalThis.__inoferSrv;
+}
+
+function inoferHojaCopia_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return ss.getSheetByName('BD_Servidor') || ss.insertSheet('BD_Servidor');
+}
+function inoferGuardarCopia_(code) {
+  try {
+    const sh = inoferHojaCopia_();
+    const partes = [];
+    for (let i = 0; i &lt; code.length; i += 45000) partes.push(code.substring(i, i + 45000));
+    const actual = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].join('');
+    if (actual === code) return;
+    sh.clearContents();
+    sh.getRange(1, 1, 1, partes.length).setNumberFormat('@').setValues([partes]);
+  } catch (e) {}
+}
+function inoferLeerCopia_() {
+  try {
+    const sh = inoferHojaCopia_();
+    if (sh.getLastColumn() &lt; 1) return '';
+    return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].join('');
+  } catch (e) { return ''; }
+}
+
+function doGet(e) { return inoferServidor_().doGet(e); }
+function doPost(e) { return inoferServidor_().doPost(e); }
+
+/**
+ * EMERGENCIA: si te olvidás la clave del administrador, elegí esta función en el menú
+ * de arriba y tocá "Ejecutar". La clave del primer administrador pasa a ser: inofer1234
+ */
+function restablecerClaveAdmin() { return inoferServidor_().restablecerClaveAdmin(); }
+</pre>
+          <div class="space-y-1 text-slate-200 pt-1">
+            <p><strong>Paso 2:</strong> En Apps Script, creá o abrí el archivo HTML llamado <code class="text-amber-300">Index</code> y pegá el código HTML actualizado de este tablero.</p>
+            <p><strong>Paso 3:</strong> Tocá <strong>Implementar &rarr; Nueva implementación</strong> (o <strong>Administrar implementaciones &rarr; Editar &rarr; Nueva versión</strong>), elegí <strong>Ejecutar como: Yo</strong> y <strong>Quién tiene acceso: Cualquier usuario</strong>. Todos los que abran ese link verán los cambios en tiempo real.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <button id="okCloudModalBtn" type="button" class="rounded-lg bg-slate-800 border border-slate-700 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toastNotification" class="fixed bottom-5 right-5 z-50 hidden rounded-xl border border-emerald-500/30 bg-slate-900/95 px-4 py-3 text-xs font-semibold text-emerald-300 shadow-2xl">
+    Registro guardado correctamente
+  </div>
+

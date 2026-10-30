@@ -1,0 +1,370 @@
+  <script>
+    // ===== Mensajería: chats privados, grupos y solicitudes al administrador =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const st = { abierto: false, pestana: 'chats', chats: [], dir: [], chatId: '', mensajes: [], solicitudes: [], solAviso: 0, solPend: 0, vista: 'lista', ultimoNoLeido: 0, cargando: false, bloqueado: false, sup: { chats: [], nombres: {}, chatId: '', mensajes: [] } };
+      const AVISO_LABORAL = '<div class="border-b border-slate-800 bg-slate-950/60 px-4 py-2 text-[11px] text-slate-400">💼 Los chats de INOFER son de uso laboral. El administrador puede revisarlos.</div>';
+      const TIPOS_SOL = ['Aumentar la facturación de la semana', 'Cambio en el Gantt / programación', 'Material o insumos', 'Mantenimiento / herramental', 'Personal / turnos', 'Otro'];
+      const ESTADOS = { 'pendiente': ['⏳ Pendiente', 'bg-amber-500/20 text-amber-300'], 'en curso': ['🔧 En curso', 'bg-sky-500/20 text-sky-300'], 'resuelta': ['✅ Resuelta', 'bg-emerald-500/20 text-emerald-300'], 'rechazada': ['✖ Rechazada', 'bg-rose-500/20 text-rose-300'] };
+      const yo = () => (typeof inoferSession !== 'undefined' && inoferSession ? inoferSession.usuario : '');
+      const esAdmin = () => typeof inoferIsAdmin === 'function' && inoferIsAdmin();
+      const enNube = () => typeof inoferAuthMode !== 'undefined' && inoferAuthMode === 'nube' && typeof inoferAuthToken === 'function' && inoferAuthToken();
+      const nombreDe = u => { const d = st.dir.find(x => x.usuario === u); return d ? d.nombre : u; };
+      const fecha = iso => { try { const d = new Date(iso); const hoy = new Date(); const mismo = d.toDateString() === hoy.toDateString(); return mismo ? d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
+      const tituloChat = c => c.tipo === 'grupo' ? ('👥 ' + (c.nombre || 'Grupo')) : ('👤 ' + c.miembros.filter(m => m !== yo()).map(nombreDe).join(', '));
+      async function api(body) {
+        if (!enNube()) throw new Error('Los mensajes necesitan la conexión a la nube.');
+        const d = await inoferCloudPost(Object.assign({ token: inoferAuthToken() }, body));
+        if (!d || d.status !== 'ok') throw new Error((d && d.error) || 'Sin respuesta de la nube');
+        return d;
+      }
+
+      // ---------- botones del encabezado ----------
+      function montarBotones() {
+        if ($('inoferMsgBtn')) return true;
+        const chip = $('inoferUserChip');
+        if (!chip) return false;
+        const wrap = chip.parentElement;
+        const cont = document.createElement('div');
+        cont.className = 'flex items-center gap-1.5';
+        cont.innerHTML = `
+          <button id="inoferMsgBtn" type="button" title="Mensajes" class="relative inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/20">💬<span class="hidden sm:inline">Mensajes</span><span id="inoferMsgBadge" class="hidden absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-black text-white"></span></button>
+          <button id="inoferSolBtn" type="button" title="Solicitudes" class="relative inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/20">📨<span id="inoferSolBtnTxt" class="hidden sm:inline">Solicitud</span><span id="inoferSolBadge" class="hidden absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-black text-white"></span></button>`;
+        wrap.parentElement.insertBefore(cont, wrap);
+        $('inoferMsgBtn').addEventListener('click', () => abrir('chats'));
+        $('inoferSolBtn').addEventListener('click', () => abrir('solicitudes'));
+        return true;
+      }
+      function badges() {
+        const n = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
+        const b = $('inoferMsgBadge'); if (b) { b.textContent = n > 99 ? '99+' : n; b.classList.toggle('hidden', !n); }
+        const s = $('inoferSolBadge'); if (s) { const k = st.solAviso; s.textContent = k; s.classList.toggle('hidden', !k); }
+        const t = $('inoferSolBtnTxt'); if (t) t.textContent = esAdmin() ? `Solicitudes${st.solPend ? ' (' + st.solPend + ')' : ''}` : 'Pedir al administrador';
+        const tc = $('msgTabChats'); if (tc) tc.innerHTML = `💬 Chats${n ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">${n}</span>` : ''}`;
+        const ts = $('msgTabSol'); if (ts) ts.innerHTML = `📨 ${esAdmin() ? 'Solicitudes' : 'Mis solicitudes'}${st.solAviso ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">${st.solAviso}</span>` : ''}`;
+      }
+
+      // ---------- panel ----------
+      function montarPanel() {
+        if ($('inoferMsgPanel')) return;
+        const p = document.createElement('div');
+        p.id = 'inoferMsgPanel';
+        p.className = 'fixed inset-0 z-[9980] hidden';
+        p.innerHTML = `<div class="absolute inset-0 bg-slate-950/60" data-cerrar="1"></div>
+          <div class="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-slate-700 bg-slate-900 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div class="flex gap-1">
+                <button type="button" id="msgTabChats" class="msg-tab rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="chats">💬 Chats</button>
+                <button type="button" id="msgTabSol" class="msg-tab rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="solicitudes">📨 Solicitudes</button>
+                <button type="button" id="msgTabSup" class="msg-tab hidden rounded-lg px-3 py-1.5 text-xs font-bold" data-tab="supervision">🛡️ Supervisión</button>
+              </div>
+              <button type="button" data-cerrar="1" class="rounded-lg px-2 py-1 text-xl leading-none text-slate-400 hover:bg-slate-800 hover:text-white">×</button>
+            </div>
+            <div id="msgCuerpo" class="flex min-h-0 flex-1 flex-col"></div>
+          </div>`;
+        document.body.appendChild(p);
+        p.addEventListener('click', onClick);
+        p.addEventListener('submit', onSubmit);
+        p.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'msgTexto') { e.preventDefault(); enviar(); } });
+      }
+      function abrir(tab) {
+        montarPanel();
+        st.abierto = true; st.pestana = tab || st.pestana;
+        if (st.pestana === 'chats') st.vista = st.chatId ? 'chat' : 'lista';
+        else st.vista = 'lista';
+        $('inoferMsgPanel').classList.remove('hidden');
+        render();
+        if (st.pestana === 'solicitudes') cargarSolicitudes(true); else if (st.pestana === 'supervision') cargarSupervision(); else if (st.chatId) leerChat(); else refrescar();
+      }
+      function cerrar() { st.abierto = false; const p = $('inoferMsgPanel'); if (p) p.classList.add('hidden'); }
+
+      function render() {
+        const c = $('msgCuerpo'); if (!c) return;
+        document.querySelectorAll('#inoferMsgPanel .msg-tab').forEach(b => { b.className = 'msg-tab rounded-lg px-3 py-1.5 text-xs font-bold ' + (b.dataset.tab === st.pestana ? 'bg-violet-500 text-white' : 'text-slate-300 hover:bg-slate-800'); });
+        badges();
+        const ts = $('msgTabSup'); if (ts) ts.classList.toggle('hidden', !esAdmin());
+        const tc = $('msgTabChats'); if (tc) tc.classList.toggle('hidden', st.bloqueado);
+        if (st.bloqueado && st.pestana === 'chats') st.pestana = 'solicitudes';
+        if (!enNube()) { c.innerHTML = '<p class="p-6 text-center text-sm text-slate-400">Los mensajes y solicitudes necesitan la conexión a la nube.</p>'; return; }
+        if (st.pestana === 'solicitudes') return renderSolicitudes(c);
+        if (st.pestana === 'supervision') return renderSupervision(c);
+        if (st.vista === 'chat') return renderChat(c);
+        if (st.vista === 'nuevo' || st.vista === 'grupo' || st.vista === 'editarGrupo') return renderNuevo(c);
+        c.innerHTML = AVISO_LABORAL + `<div class="flex gap-2 border-b border-slate-800 p-3">
+            <button type="button" data-acc="nuevo" class="flex-1 rounded-lg bg-violet-500 px-3 py-2 text-xs font-bold text-white hover:bg-violet-400">+ Chat privado</button>
+            <button type="button" data-acc="grupo" class="flex-1 rounded-lg border border-violet-500/50 px-3 py-2 text-xs font-bold text-violet-200 hover:bg-violet-500/10">+ Grupo</button>
+          </div>
+          <div class="flex-1 overflow-y-auto">${st.chats.length ? st.chats.map(ch => `
+            <button type="button" data-chat="${esc(ch.id)}" class="flex w-full items-start gap-2 border-b border-slate-800/70 px-4 py-3 text-left hover:bg-slate-800/60">
+              <div class="min-w-0 flex-1"><div class="flex items-center justify-between gap-2"><span class="truncate text-sm font-bold text-white">${esc(tituloChat(ch))}</span><span class="shrink-0 text-[10px] text-slate-500">${ch.ultimo ? esc(fecha(ch.ultimo.fecha)) : ''}</span></div>
+                <div class="truncate text-xs text-slate-400">${ch.ultimo ? (ch.ultimo.autor === yo() ? 'Vos: ' : (ch.tipo === 'grupo' ? esc(ch.ultimo.nombre.split(' ')[0]) + ': ' : '')) + esc(ch.ultimo.texto) : '<i>Sin mensajes</i>'}</div></div>
+              ${ch.noLeidos ? `<span class="mt-1 rounded-full bg-rose-500 px-1.5 text-[10px] font-black text-white">${ch.noLeidos}</span>` : ''}
+            </button>`).join('') : '<p class="p-6 text-center text-sm text-slate-400">Todavía no tenés chats. Empezá uno con el botón de arriba.</p>'}</div>`;
+      }
+      function renderNuevo(c) {
+        const grupo = st.vista !== 'nuevo';
+        const ch = st.vista === 'editarGrupo' ? st.chats.find(x => x.id === st.chatId) : null;
+        const otros = st.dir.filter(d => d.usuario !== yo());
+        c.innerHTML = `<form id="msgNuevoForm" class="flex min-h-0 flex-1 flex-col">
+          <div class="border-b border-slate-800 p-3"><button type="button" data-acc="volver" class="text-xs font-bold text-slate-400 hover:text-white">← Volver</button>
+            <div class="mt-1 text-sm font-black text-white">${ch ? 'Editar grupo' : (grupo ? 'Nuevo grupo' : 'Nuevo chat privado')}</div></div>
+          <div class="flex-1 space-y-2 overflow-y-auto p-3">
+            ${grupo ? `<input id="msgGrupoNombre" required maxlength="60" value="${ch ? esc(ch.nombre) : ''}" placeholder="Nombre del grupo (ej: Turno mañana)" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-violet-400 focus:outline-none">` : ''}
+            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500">${grupo ? 'Integrantes' : 'Elegí con quién'}</div>
+            ${otros.map(d => `<label class="flex items-center gap-2 rounded-lg border border-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800/60">
+              <input type="${grupo ? 'checkbox' : 'radio'}" name="msgMiembro" value="${esc(d.usuario)}" class="accent-violet-500" ${ch && ch.miembros.includes(d.usuario) ? 'checked' : ''}> ${esc(d.nombre)} <span class="text-[11px] text-slate-500">@${esc(d.usuario)}${d.rol === 'admin' ? ' · admin' : ''}</span></label>`).join('') || '<p class="text-xs text-slate-400">No hay otros usuarios.</p>'}
+          </div>
+          <div class="border-t border-slate-800 p-3"><button type="submit" class="w-full rounded-lg bg-violet-500 px-3 py-2.5 text-sm font-bold text-white hover:bg-violet-400">${ch ? 'Guardar' : (grupo ? 'Crear grupo' : 'Abrir chat')}</button></div>
+        </form>`;
+      }
+      function renderChat(c) {
+        const ch = st.chats.find(x => x.id === st.chatId);
+        if (!ch) { st.vista = 'lista'; st.chatId = ''; return render(); }
+        const puedeBorrarTodo = ch.tipo === 'privado' || ch.creadoPor === yo() || esAdmin();
+        c.innerHTML = `<div class="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+            <button type="button" data-acc="volver" class="text-xs font-bold text-slate-400 hover:text-white">←</button>
+            <div class="min-w-0 flex-1"><div class="truncate text-sm font-black text-white">${esc(tituloChat(ch))}</div>
+              ${ch.tipo === 'grupo' ? `<div class="truncate text-[11px] text-slate-400">${ch.miembros.map(nombreDe).map(esc).join(', ')}</div>` : ''}</div>
+            ${ch.tipo === 'grupo' && (ch.creadoPor === yo() || esAdmin()) ? '<button type="button" data-acc="editarGrupo" class="rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300">✏️</button>' : ''}
+            <button type="button" data-acc="borrarChat" class="rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold text-rose-300">${puedeBorrarTodo ? '🗑️ Borrar chat' : 'Salir'}</button>
+          </div>
+          <div id="msgLista" class="flex-1 space-y-1.5 overflow-y-auto p-3">${st.mensajes.length ? st.mensajes.map(m => {
+            const mio = m.autor === yo();
+            return `<div class="group flex ${mio ? 'justify-end' : ''}"><div class="max-w-[85%] rounded-2xl ${mio ? 'rounded-br-sm bg-violet-600 text-white' : 'rounded-bl-sm bg-slate-800 text-slate-100'} px-3 py-1.5">
+              ${!mio && ch.tipo === 'grupo' ? `<div class="text-[10px] font-bold text-violet-300">${esc(m.nombre)}</div>` : ''}
+              <div class="whitespace-pre-wrap break-words text-sm">${esc(m.texto)}</div>
+              <div class="mt-0.5 flex items-center justify-end gap-2 text-[10px] ${mio ? 'text-violet-200' : 'text-slate-400'}">${esc(fecha(m.fecha))}${mio || esAdmin() ? ` <button type="button" data-borrar-msg="${esc(m.id)}" class="opacity-60 hover:opacity-100" title="Borrar mensaje">🗑️</button>` : ''}</div>
+            </div></div>`; }).join('') : '<p class="py-6 text-center text-xs text-slate-500">Escribí el primer mensaje.</p>'}</div>
+          <form id="msgForm" class="flex gap-2 border-t border-slate-800 p-3">
+            <textarea id="msgTexto" rows="1" maxlength="2000" placeholder="Escribí un mensaje…" class="max-h-28 flex-1 resize-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-violet-400 focus:outline-none"></textarea>
+            <button type="submit" class="rounded-xl bg-violet-500 px-4 text-sm font-bold text-white hover:bg-violet-400">➤</button>
+          </form>`;
+        const l = $('msgLista'); if (l) l.scrollTop = l.scrollHeight;
+      }
+      function renderSupervision(c) {
+        const S = st.sup; const nom = u => S.nombres[u] || u;
+        if (S.chatId) {
+          const ch = S.chats.find(x => x.id === S.chatId) || {};
+          c.innerHTML = `<div class="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+              <button type="button" data-acc="supVolver" class="text-xs font-bold text-slate-400 hover:text-white">←</button>
+              <div class="min-w-0 flex-1"><div class="truncate text-sm font-black text-white">${ch.tipo === 'grupo' ? '👥 ' + esc(ch.nombre || 'Grupo') : '👤 ' + (ch.miembros || []).map(nom).map(esc).join(' ↔ ')}</div>
+                <div class="text-[11px] text-amber-300">Solo lectura · supervisión del administrador</div></div>
+              <button type="button" data-acc="supBorrar" class="rounded-lg border border-rose-500/40 px-2 py-1 text-[11px] font-bold text-rose-300">🗑️ Borrar chat</button></div>
+            <div class="flex-1 space-y-1.5 overflow-y-auto p-3">${S.mensajes.length ? S.mensajes.map(m => `<div class="rounded-xl bg-slate-800 px-3 py-1.5"><div class="flex justify-between gap-2 text-[11px]"><b class="text-violet-300">${esc(m.nombre || nom(m.autor))}</b><span class="text-slate-500">${esc(fecha(m.fecha))} <button type="button" data-sup-borrar-msg="${esc(m.id)}" class="ml-1 opacity-60 hover:opacity-100">🗑️</button></span></div><div class="whitespace-pre-wrap break-words text-sm text-slate-100">${esc(m.texto)}</div></div>`).join('') : '<p class="py-6 text-center text-xs text-slate-500">Sin mensajes.</p>'}</div>`;
+          return;
+        }
+        c.innerHTML = `<div class="border-b border-slate-800 px-4 py-2 text-[11px] text-slate-400">Todos los chats entre usuarios (solo lectura). No se marcan como leídos.</div>
+          <div class="flex-1 overflow-y-auto">${S.chats.length ? S.chats.map(ch => `<button type="button" data-sup-chat="${esc(ch.id)}" class="block w-full border-b border-slate-800/70 px-4 py-3 text-left hover:bg-slate-800/60">
+            <div class="flex justify-between gap-2"><span class="truncate text-sm font-bold text-white">${ch.tipo === 'grupo' ? '👥 ' + esc(ch.nombre || 'Grupo') : '👤 ' + ch.miembros.map(nom).map(esc).join(' ↔ ')}</span><span class="shrink-0 text-[10px] text-slate-500">${ch.ultimo ? esc(fecha(ch.ultimo.fecha)) : ''}</span></div>
+            <div class="truncate text-xs text-slate-400">${ch.ultimo ? esc(ch.ultimo.nombre) + ': ' + esc(ch.ultimo.texto) : '<i>Sin mensajes</i>'} · ${ch.cantidad} mensajes</div></button>`).join('') : '<p class="p-6 text-center text-sm text-slate-400">No hay chats.</p>'}</div>`;
+      }
+      async function cargarSupervision() {
+        try { const d = await api({ action: 'msgAdminListar' }); st.sup.chats = d.chats || []; st.sup.nombres = d.nombres || {}; } catch (e) { showToast(e.message); }
+        if (st.abierto && st.pestana === 'supervision') render();
+      }
+      async function leerSupervision(id) {
+        try { const d = await api({ action: 'msgAdminLeer', chatId: id }); st.sup.chatId = id; st.sup.mensajes = d.mensajes || []; st.sup.nombres = d.nombres || st.sup.nombres; } catch (e) { showToast(e.message); }
+        render();
+      }
+
+      function renderSolicitudes(c) {
+        const adm = esAdmin();
+        const form = st.vista === 'nuevaSol';
+        if (form) {
+          c.innerHTML = `<form id="solForm" class="flex min-h-0 flex-1 flex-col">
+            <div class="border-b border-slate-800 p-3"><button type="button" data-acc="volver" class="text-xs font-bold text-slate-400 hover:text-white">← Volver</button>
+              <div class="mt-1 text-sm font-black text-white">Nueva solicitud al administrador</div></div>
+            <div class="flex-1 space-y-2.5 overflow-y-auto p-3">
+              <label class="block text-xs font-bold text-slate-300">Tipo
+                <select id="solTipo" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">${TIPOS_SOL.map(t => `<option>${esc(t)}</option>`).join('')}</select></label>
+              <label class="block text-xs font-bold text-slate-300">Título
+                <input id="solTitulo" required maxlength="120" placeholder="Ej: Subir la facturación de la SEM-45 a 40 millones" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></label>
+              <label class="block text-xs font-bold text-slate-300">Detalle
+                <textarea id="solDetalle" rows="5" maxlength="3000" placeholder="Contá qué necesitás y para cuándo" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></textarea></label>
+            </div>
+            <div class="border-t border-slate-800 p-3"><button type="submit" class="w-full rounded-lg bg-amber-500 px-3 py-2.5 text-sm font-black text-slate-950 hover:bg-amber-400">📨 Enviar solicitud</button></div>
+          </form>`;
+          return;
+        }
+        const lista = st.solicitudes;
+        c.innerHTML = `<div class="flex items-center justify-between gap-2 border-b border-slate-800 p-3">
+            <span class="text-xs text-slate-400">${adm ? 'Todo lo que te piden los usuarios' : 'Lo que le pediste al administrador'}</span>
+            <button type="button" data-acc="nuevaSol" class="rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 hover:bg-amber-400">+ Nueva solicitud</button>
+          </div>
+          <div class="flex-1 space-y-2 overflow-y-auto p-3">${st.cargando && !lista.length ? '<p class="text-center text-xs text-slate-500">Cargando…</p>' : (lista.length ? lista.map(s => {
+            const e = ESTADOS[s.estado] || ESTADOS.pendiente;
+            return `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-1.5">
+              <div class="flex items-start justify-between gap-2"><div class="min-w-0"><div class="text-sm font-bold text-white">${esc(s.titulo)}</div>
+                <div class="text-[11px] text-slate-400">${esc(s.tipo)} · ${adm ? esc(s.nombre) + ' · ' : ''}${esc(fecha(s.fecha))}</div></div>
+                <span class="shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${e[1]}">${e[0]}</span></div>
+              ${s.detalle ? `<div class="whitespace-pre-wrap text-xs text-slate-300">${esc(s.detalle)}</div>` : ''}
+              ${s.respuesta ? `<div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 text-xs text-emerald-100"><b>Respuesta${s.respondidoPor ? ' de ' + esc(s.respondidoPor) : ''}:</b> ${esc(s.respuesta)}</div>` : ''}
+              ${adm ? `<div class="flex flex-wrap items-center gap-1.5 pt-1">
+                <select data-sol-estado="${esc(s.id)}" class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white">${Object.keys(ESTADOS).map(k => `<option value="${k}" ${k === s.estado ? 'selected' : ''}>${ESTADOS[k][0]}</option>`).join('')}</select>
+                <input data-sol-resp="${esc(s.id)}" placeholder="Responder…" class="min-w-[120px] flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white">
+                <button type="button" data-sol-guardar="${esc(s.id)}" class="rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-bold text-slate-950">Guardar</button>
+              </div>` : ''}
+              <div class="flex justify-end"><button type="button" data-sol-borrar="${esc(s.id)}" class="text-[11px] font-bold text-rose-300 hover:text-rose-200">🗑️ Borrar</button></div>
+            </div>`; }).join('') : '<p class="py-6 text-center text-sm text-slate-400">No hay solicitudes.</p>')}</div>`;
+      }
+
+      // ---------- acciones ----------
+      async function onClick(e) {
+        const t = e.target.closest('button, [data-cerrar]');
+        if (!t) return;
+        if (t.dataset.cerrar) return cerrar();
+        if (t.dataset.tab) { st.pestana = t.dataset.tab; st.vista = st.pestana === 'chats' && st.chatId ? 'chat' : 'lista'; render(); if (st.pestana === 'solicitudes') cargarSolicitudes(true); if (st.pestana === 'supervision') { st.sup.chatId = ''; cargarSupervision(); } return; }
+        if (t.dataset.supChat) { await leerSupervision(t.dataset.supChat); return; }
+        if (t.dataset.acc === 'supVolver') { st.sup.chatId = ''; render(); cargarSupervision(); return; }
+        if (t.dataset.acc === 'supBorrar') { if (!confirm('¿Borrar este chat y todos sus mensajes? No se puede deshacer.')) return; try { await api({ action: 'msgBorrarChat', chatId: st.sup.chatId }); st.sup.chatId = ''; showToast('Chat borrado'); cargarSupervision(); refrescar(true); } catch (e) { showToast(e.message); } return; }
+        if (t.dataset.supBorrarMsg) { if (!confirm('¿Borrar este mensaje?')) return; try { await api({ action: 'msgBorrarMensaje', id: t.dataset.supBorrarMsg }); await leerSupervision(st.sup.chatId); } catch (e) { showToast(e.message); } return; }
+        const acc = t.dataset.acc;
+        try {
+          if (acc === 'nuevo' || acc === 'grupo') { st.vista = acc; render(); return; }
+          if (acc === 'editarGrupo') { st.vista = 'editarGrupo'; render(); return; }
+          if (acc === 'volver') { if (st.vista === 'editarGrupo') st.vista = 'chat'; else { st.vista = 'lista'; st.chatId = ''; } render(); if (st.vista === 'lista' && st.pestana === 'chats') refrescar(); return; }
+          if (acc === 'nuevaSol') { st.vista = 'nuevaSol'; render(); return; }
+          if (t.dataset.chat) { st.chatId = t.dataset.chat; st.vista = 'chat'; st.mensajes = []; render(); await leerChat(); return; }
+          if (acc === 'borrarChat') {
+            const ch = st.chats.find(x => x.id === st.chatId);
+            const todo = ch && (ch.tipo === 'privado' || ch.creadoPor === yo() || esAdmin());
+            if (!confirm(todo ? '¿Borrar este chat y todos sus mensajes? No se puede deshacer.' : '¿Salir de este grupo?')) return;
+            await api({ action: 'msgBorrarChat', chatId: st.chatId });
+            st.chatId = ''; st.vista = 'lista'; await refrescar(); showToast(todo ? 'Chat borrado' : 'Saliste del grupo'); return;
+          }
+          if (t.dataset.borrarMsg) { if (!confirm('¿Borrar este mensaje?')) return; await api({ action: 'msgBorrarMensaje', id: t.dataset.borrarMsg }); await leerChat(); return; }
+          if (t.dataset.solGuardar) {
+            const id = t.dataset.solGuardar;
+            const est = document.querySelector(`[data-sol-estado="${CSS.escape(id)}"]`).value;
+            const resp = document.querySelector(`[data-sol-resp="${CSS.escape(id)}"]`).value;
+            const body = { action: 'solActualizar', id, estado: est };
+            if (resp.trim()) body.respuesta = resp.trim();
+            const d = await api(body); st.solicitudes = d.solicitudes || []; render(); showToast('Solicitud actualizada'); return;
+          }
+          if (t.dataset.solBorrar) { if (!confirm('¿Borrar esta solicitud?')) return; const d = await api({ action: 'solBorrar', id: t.dataset.solBorrar }); st.solicitudes = d.solicitudes || []; render(); refrescar(); return; }
+        } catch (err) { showToast(err.message); }
+      }
+      async function onSubmit(e) {
+        e.preventDefault();
+        try {
+          if (e.target.id === 'msgForm') return enviar();
+          if (e.target.id === 'msgNuevoForm') {
+            const miembros = [...document.querySelectorAll('#msgNuevoForm [name="msgMiembro"]:checked')].map(x => x.value);
+            if (!miembros.length) { showToast('Elegí al menos una persona'); return; }
+            if (st.vista === 'editarGrupo') {
+              await api({ action: 'msgEditarGrupo', chatId: st.chatId, nombre: $('msgGrupoNombre').value, miembros: [yo()].concat(miembros) });
+              st.vista = 'chat'; await refrescar(); render(); await leerChat(); return;
+            }
+            const d = await api({ action: 'msgCrearChat', tipo: st.vista === 'grupo' ? 'grupo' : 'privado', miembros, nombre: ($('msgGrupoNombre') || {}).value || '' });
+            st.chatId = d.chatId; st.vista = 'chat'; st.mensajes = [];
+            await refrescar(); render(); await leerChat(); return;
+          }
+          if (e.target.id === 'solForm') {
+            const d = await api({ action: 'solCrear', tipo: $('solTipo').value, titulo: $('solTitulo').value, detalle: $('solDetalle').value });
+            st.solicitudes = d.solicitudes || []; st.vista = 'lista'; render(); showToast('Solicitud enviada al administrador'); refrescar(); return;
+          }
+        } catch (err) { showToast(err.message); }
+      }
+      let enviando = false;
+      async function enviar() {
+        const ta = $('msgTexto'); if (!ta || enviando) return;
+        const tx = ta.value.trim(); if (!tx) return;
+        enviando = true;
+        try {
+          const d = await api({ action: 'msgEnviar', chatId: st.chatId, texto: tx });
+          ta.value = ''; st.mensajes = d.mensajes || []; render(); refrescar(true);
+          setTimeout(() => { const t2 = $('msgTexto'); if (t2) t2.focus(); }, 30);
+        } catch (err) { showToast(err.message); } finally { enviando = false; }
+      }
+      async function leerChat() {
+        if (!st.chatId) return;
+        try {
+          const d = await api({ action: 'msgLeer', chatId: st.chatId });
+          const cambio = JSON.stringify(d.mensajes) !== JSON.stringify(st.mensajes);
+          st.mensajes = d.mensajes || [];
+          const ch = st.chats.find(x => x.id === st.chatId); if (ch) ch.noLeidos = 0;
+          if (cambio && st.abierto && st.vista === 'chat') { const ta = $('msgTexto'); const borr = ta ? ta.value : ''; const foco = document.activeElement === ta; render(); const t2 = $('msgTexto'); if (t2) { t2.value = borr; if (foco) t2.focus(); } }
+          badges();
+        } catch (err) { if (/inexistente/.test(err.message)) { st.chatId = ''; st.vista = 'lista'; render(); } }
+      }
+      async function cargarSolicitudes(marcar) {
+        st.cargando = true;
+        try {
+          const d = await api({ action: 'solListar' });
+          st.solicitudes = d.solicitudes || [];
+          if (marcar && st.solAviso) { await api({ action: 'solVisto' }); st.solAviso = 0; }
+        } catch (err) { showToast(err.message); }
+        st.cargando = false;
+        if (st.abierto && st.pestana === 'solicitudes' && st.vista === 'lista') render();
+        badges();
+      }
+      async function refrescar(silencioso) {
+        if (!enNube()) return;
+        try {
+          const d = await api({ action: 'msgEstado' });
+          const antes = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
+          st.chats = d.chats || []; st.dir = d.directorio || []; st.solAviso = d.solicitudesAviso || 0; st.solPend = d.solPendientes || 0; st.bloqueado = !!d.chatBloqueado;
+          const mb = $('inoferMsgBtn'); if (mb) mb.classList.toggle('hidden', st.bloqueado);
+          if (st.abierto && st.chatId) { const ch = st.chats.find(x => x.id === st.chatId); if (ch) ch.noLeidos = 0; }
+          const ahora = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
+          if (ahora > antes && antes >= 0 && st.ultimoNoLeido !== null && !silencioso && !(st.abierto && st.pestana === 'chats')) showToast('💬 Tenés mensajes nuevos');
+          st.ultimoNoLeido = ahora;
+          if (st.abierto && st.pestana === 'chats' && st.vista === 'lista') render();
+          badges();
+        } catch (e) { }
+      }
+
+      // ---------- arranque y consultas periódicas ----------
+      let t1 = null, t2 = null;
+      function iniciar() {
+        if (!montarBotones()) return;
+        montarPanel();
+        const visible = typeof inoferSession !== 'undefined' && !!inoferSession && enNube();
+        ['inoferMsgBtn', 'inoferSolBtn'].forEach(id => { const b = $(id); if (b) b.classList.toggle('hidden', !visible); });
+        if (!visible) return;
+        if (!t1) { refrescar(true); t1 = setInterval(() => { if (document.visibilityState === 'visible') refrescar(); }, 30000); }
+        if (!t2) t2 = setInterval(() => { if (st.abierto && st.pestana === 'chats' && st.vista === 'chat' && document.visibilityState === 'visible') leerChat(); }, 6000);
+      }
+      if (typeof window.inoferApplyPermissions === 'function') {
+        const ap = window.inoferApplyPermissions;
+        window.inoferApplyPermissions = function () { const r = ap.apply(this, arguments); try { iniciar(); } catch (e) { } return r; };
+      }
+      const espera = setInterval(() => { try { iniciar(); } catch (e) { } if ($('inoferMsgBtn') && t1) clearInterval(espera); }, 2000);
+      window.inoferMensajes = { abrir, refrescar, estado: st };
+
+      // ---------- permisos de chat por usuario (Usuarios y permisos) ----------
+      if (typeof window.inoferNormPerms === 'function') {
+        const np = window.inoferNormPerms;
+        window.inoferNormPerms = function (rol, p) {
+          const out = np.apply(this, arguments);
+          if (p && p.detalle) ['chat_usar', 'chat_recibir'].forEach(k => { if (p.detalle[k] === false) { out.detalle = Object.assign({}, out.detalle || {}); out.detalle[k] = false; } });
+          return out;
+        };
+      }
+      function casillasChat() {
+        const act = $('inoferUfActivo'); if (!act) return;
+        if (!$('inoferUfChatBox')) {
+          act.closest('label').parentElement.insertBefore(Object.assign(document.createElement('div'), { id: 'inoferUfChatBox', className: 'rounded-lg border border-violet-500/30 bg-violet-500/5 p-2.5 space-y-1',
+            innerHTML: '<div class="text-[10px] font-bold uppercase tracking-wider text-violet-300">💬 Mensajería</div><label class="flex items-center gap-2 text-xs text-slate-300"><input id="inoferUfChatUsar" type="checkbox" class="accent-violet-500"> Puede usar el chat</label><label class="flex items-center gap-2 text-xs text-slate-300"><input id="inoferUfChatRecibir" type="checkbox" class="accent-violet-500"> Los demás le pueden mandar mensajes</label>' }), $('inoferUfPermsBox'));
+        }
+        const det = (inoferFormPerms && inoferFormPerms.detalle) || {};
+        const rol = ($('inoferUfRol') || {}).value;
+        $('inoferUfChatBox').classList.toggle('hidden', rol === 'admin');
+        $('inoferUfChatUsar').checked = det.chat_usar !== false;
+        $('inoferUfChatRecibir').checked = det.chat_usar !== false && det.chat_recibir !== false;
+        $('inoferUfChatRecibir').disabled = det.chat_usar === false;
+      }
+      document.addEventListener('change', e => {
+        if (e.target.id !== 'inoferUfChatUsar' && e.target.id !== 'inoferUfChatRecibir') return;
+        inoferFormPerms.detalle = Object.assign({}, inoferFormPerms.detalle || {});
+        const k = e.target.id === 'inoferUfChatUsar' ? 'chat_usar' : 'chat_recibir';
+        if (e.target.checked) delete inoferFormPerms.detalle[k]; else inoferFormPerms.detalle[k] = false;
+        casillasChat();
+      });
+      if (typeof window.inoferRefreshPermUi === 'function') {
+        const rp = window.inoferRefreshPermUi;
+        window.inoferRefreshPermUi = function () { const r = rp.apply(this, arguments); try { casillasChat(); } catch (e) { } return r; };
+      }
+    })();
+  </script>

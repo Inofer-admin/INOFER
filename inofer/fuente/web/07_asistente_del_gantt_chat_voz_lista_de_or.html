@@ -1,0 +1,944 @@
+  <script>
+    // ===== Asistente del Gantt (chat / voz) + Lista de órdenes =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      // Índices tal como se ven en el Gantt (0 = Dom, 1 = Lun ... 6 = Sáb)
+      const DIAS = { domingo: 0, dom: 0, lunes: 1, lun: 1, martes: 2, mar: 2, miercoles: 3, mie: 3, jueves: 4, jue: 4, viernes: 5, vie: 5, sabado: 6, sab: 6 };
+      const DIA_NOMBRE = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+      const AUX = { CMA: ['cambio de material', 'material'], CMO: ['cambio de molde', 'molde'], ALIS: ['alistamiento', 'alistar'], DESG: ['desgacificado', 'desgasificado', 'desgasificar'],
+        LING: ['lingoteo', 'lingote'], LIMP: ['limpieza', 'limpiar'], CPIS: ['cambio de piston', 'piston'] };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      let historial = []; // copias para deshacer
+      let ultimoDetalle = '';
+      let chatLog = [];
+
+      // ---------- búsqueda de piezas / máquinas / días ----------
+      function itemsDe(week) {
+        const out = [];
+        Object.keys(week.machines || {}).forEach(m => ((week.machines[m] || {}).items || []).forEach((it, idx) => out.push({ m, it, idx })));
+        return out;
+      }
+      function resolverPieza(token, week) {
+        const t = norm(token);
+        const todas = new Set();
+        itemsDe(week).forEach(x => todas.add(x.it.part));
+        (typeof partsCatalog !== 'undefined' ? partsCatalog : []).forEach(c => c && c.part && todas.add(c.part));
+        const lista = [...todas];
+        const exacta = lista.find(p => norm(p) === t);
+        if (exacta) return { part: exacta };
+        const enSemana = [...new Set(itemsDe(week).map(x => x.it.part))].filter(p => norm(p).startsWith(t));
+        if (enSemana.length === 1) return { part: enSemana[0] };
+        if (enSemana.length > 1) return { ambigua: enSemana };
+        const enCat = lista.filter(p => norm(p).startsWith(t));
+        if (enCat.length === 1) return { part: enCat[0] };
+        if (enCat.length > 1) return { ambigua: enCat.slice(0, 8) };
+        return { part: token.toUpperCase(), nueva: true };
+      }
+      function extraer(texto, week) {
+        let t = ' ' + norm(texto).replace(/[,;:!?¿¡()]/g, ' ') + ' ';
+        const r = { maquinas: [], dias: [], piezas: [], numeros: [], aux: null, todosDias: false };
+        // máquinas (con o sin "maquina"/"la")
+        MAQS().forEach(id => {
+          const re = new RegExp('(?:maquina\\s+|la\\s+|en\\s+|a\\s+)' + (/^\d+$/.test(id) ? '' : '?') + '\\b' + norm(id).replace('-', '-?') + '\\b', 'g');
+          t = t.replace(re, (m0, off) => { r.maquinas.push({ id, pos: off }); return ' '.repeat(m0.length); });
+        });
+        // horas auxiliares
+        Object.keys(AUX).forEach(code => {
+          if (r.aux) return;
+          const sin = [code.toLowerCase()].concat(AUX[code]);
+          const conHoras = /\bhoras?\b|\bhs\b|\bh\b/.test(t);
+          for (const s of sin) {
+            const largo = s.includes(' ') || s === code.toLowerCase();
+            if (new RegExp('\\b' + s + '\\b').test(t) && (conHoras || largo || /\b(unidad|unidades|un|una|cambios?)\b/.test(t))) { r.aux = code; r.auxHoras = conHoras; break; }
+          }
+        });
+        if (/todos los dias|toda la semana|cada dia/.test(t)) r.todosDias = true;
+        // piezas: códigos con guion o números de 4+ cifras seguidos de "de la/pieza" etc.
+        t = t.replace(/\b(?:pieza\s+|la\s+|el\s+)?(\d{3,6}(?:-[a-z0-9]+)+|[a-z]{1,4}-?\d{2,6}(?:-[a-z0-9]+)*)\b/g, (m0, code, off) => { r.piezas.push({ token: code, pos: off }); return ' '.repeat(m0.length); });
+        t = t.replace(/\b(?:pieza|la|el|de la|del)\s+(\d{4,6})\b(?!\s*(?:piezas|unidades|u\b|un\b|uds|hs|horas))/g, (m0, code, off) => { r.piezas.push({ token: code, pos: off + m0.indexOf(code) }); return ' '.repeat(m0.length); });
+        Object.keys(DIAS).forEach(d => {
+          const re = new RegExp('\\b' + d + '\\b', 'g');
+          t = t.replace(re, (m0, off) => { r.dias.push({ idx: DIAS[d], pos: off }); return ' '.repeat(m0.length); });
+        });
+        const nums = [...t.matchAll(/(\d+(?:[.,]\d+)?)/g)].map(m => ({ n: Number(m[1].replace(',', '.')), pos: m.index }));
+        r.numeros = nums;
+        // si no hubo pieza explícita, usar un número de 4+ cifras que coincida con una pieza existente
+        if (!r.piezas.length) {
+          for (const n of nums) {
+            const s = String(n.n);
+            if (s.length >= 4 && resolverPieza(s, week).part && !resolverPieza(s, week).nueva) { r.piezas.push({ token: s, pos: n.pos }); r.numeros = nums.filter(x => x !== n); break; }
+          }
+        }
+        r.maquinas.sort((a, b) => a.pos - b.pos); r.dias.sort((a, b) => a.pos - b.pos); r.piezas.sort((a, b) => a.pos - b.pos);
+        r.t = t;
+        return r;
+      }
+
+      // ---------- interpretar una frase ----------
+      function interpretar(frase, week) {
+        const f = norm(frase).trim();
+        if (!f) return [];
+        if (/^(deshace|deshacer|volve atras|volver atras|anula|anular|undo)/.test(f)) return [{ op: 'undo' }];
+        if (/^(ayuda|que podes hacer|que puedo decir|comandos)/.test(f)) return [{ op: 'help' }];
+        if (!/factur|plata/.test(f) && /^(que hiciste|que cambiaste|que modificaste|detall|dame (el )?detalle|mostrame (el |los )?(detalle|cambios)|explicame|explica|contame que)/.test(f)) return [{ op: 'detalle' }];
+        if (/factur|cuanto (se )?(vende|vendemos|sale el programa|genera)|cuanta plata|\bingres|\bplata\b/.test(f)) {
+          const pre = [];
+          const sm = f.match(/\bsem(?:ana)?[\s-]*(\d{1,2})\b/);
+          if (sm) pre.push({ op: 'week', code: 'SEM-' + sm[1] });
+          const sinSem = sm ? frase.replace(new RegExp(sm[0].replace(/[-\s]/g, '.?'), 'i'), ' ') : frase;
+          const quiere = /(aument|subi|llev|necesito|objetivo|meta|quiero|lleg|arma|alcanz|sum|increment|mejor)/.test(f);
+          const pct = norm(sinSem).match(/(\d+(?:[.,]\d+)?)\s*(%|por ?ciento)/);
+          const monto = !pct && typeof inoferParseMonto === 'function' ? inoferParseMonto(sinSem) : null;
+          if (!quiere) return pre.concat([{ op: 'facturacion' }]);
+          if (!pct && !monto) return pre.concat([{ op: 'error', msg: '¿A cuánta plata querés llegar? Ej: "necesito facturar 40 millones esta semana" o "aumentá la facturación en 5 millones" o "subí la facturación un 10%".' }]);
+          const xx = extraer(sinSem, week);
+          const dias = xx.dias.map(d => d.idx);
+          let ds = null;
+          if (/sabado/.test(f)) ds = [1, 2, 3, 4, 5, 6];
+          if (/domingo/.test(f)) ds = (ds || [1, 2, 3, 4, 5]).concat([0]);
+          if (!ds && dias.length && /\b(solo|solamente|nada mas)\b/.test(f)) ds = dias;
+          const incremental = !!pct || /(aument|subi|sum|increment)\w*.*\ben\s+\$?\s*\d/.test(f) || /\d[\d.,]*\s*(millones|millon|mil|m|palos)?\s*(mas|extra|adicionales?)\b/.test(f);
+          return pre.concat([{ op: 'meta', monto, pct: pct ? Number(pct[1].replace(',', '.')) : null, incremental, dias: ds, maquinas: xx.maquinas.map(m => m.id), sinLimite: /sin limite|aunque no haya (pedido|demanda)|sin importar (la )?demanda|sin tope/.test(f) }]);
+        }
+        const sem = f.match(/\bsem(?:ana)?[\s-]*(\d{1,2})\b/);
+        if (sem && /(cambia|pasa|anda|abri|ir|mostra|ver|selecciona|semana)/.test(f) && !/\b\d{4,}/.test(f.replace(sem[0], ''))) return [{ op: 'week', code: 'SEM-' + sem[1] }];
+        const x = extraer(frase, week);
+        const pz = x.piezas[0] ? resolverPieza(x.piezas[0].token, week) : null;
+        if (pz && pz.ambigua) return [{ op: 'error', msg: `"${x.piezas[0].token}" coincide con varias piezas: ${pz.ambigua.join(', ')}. Decime cuál.` }];
+        const part = pz ? pz.part : null;
+        const maq = x.maquinas.map(m => m.id);
+        const dias = x.dias.map(d => d.idx);
+        const num = x.numeros.length ? x.numeros[0].n : null;
+        const verbo = f.split(/\s+/)[0];
+
+        if (/^(que hay|mostra|mostrame|ver|resumen|como esta|como quedo|lista)/.test(f)) return [{ op: 'show', mach: maq[0] || null }];
+
+        // Horas auxiliares: "poné 2 horas de limpieza en la 180 el lunes"
+        if (x.aux && num != null && maq.length) {
+          const ds = x.todosDias ? [1, 2, 3, 4, 5] : (dias.length ? dias : null);
+          if (!ds) return [{ op: 'error', msg: 'Decime qué día van esas horas (o "todos los días").' }];
+          const stdX = typeof inoferStdAux === 'function' ? Number(inoferStdAux(maq[0], x.aux)) || 0 : 1;
+          if (!x.auxHoras && !stdX) return [{ op: 'error', msg: `La ${maq[0]} no tiene tiempo estándar para esa tarea.` }];
+          const horasX = x.auxHoras ? num : num * stdX;
+          return ds.map(d => ({ op: 'aux', mach: maq[0], code: x.aux, day: d, hours: /sac|borr|elimin|quit/.test(f) ? 0 : horasX, add: /^sum|agreg|añad|anad/.test(f) }));
+        }
+        if (!part) return [{ op: 'error', msg: 'No encontré qué pieza querés modificar. Nombrala con su código, ej: "34111-PB" o "26608".' }];
+
+        // Borrar / sacar
+        if (/^(saca|sacá|borra|elimina|quita|remove|saque|sacar|borrar|eliminar|quitar)/.test(verbo) || /\b(sacala|borrala|eliminala|quitala)\b/.test(f)) {
+          if (dias.length) return dias.map(d => ({ op: 'set', part, mach: maq[0] || null, day: d, qty: 0 }));
+          return [{ op: 'remove', part, mach: maq[0] || null }];
+        }
+        // Intercambio de días: "intercambiá la X del lunes con el martes"
+        if (/intercambi|invert/.test(f) && dias.length >= 2) return [{ op: 'swap', part, mach: null, a: dias[0], b: dias[1] }];
+        // Mover / pasar
+        if (/^(pasa|move|mueve|lleva|corre|cambia|manda|traslada|pasar|mover|llevar|correr|mandar|trasladar|cambiar)/.test(verbo) || /\bpasala|movela|llevala|correla\b/.test(f)) {
+          if (dias.length >= 2) return [{ op: 'move_day', part, mach: maq.length > 1 ? maq[0] : (maq[0] || null), from: dias[0], to: dias[1], qty: num, toMach: maq.length > 1 ? maq[1] : null }];
+          if (maq.length >= 1 && !dias.length) {
+            const desde = maq.length > 1 ? maq[0] : null;
+            return [{ op: 'move_mach', part, from: desde, to: maq[maq.length - 1] }];
+          }
+          if (maq.length >= 1 && dias.length === 1) return [{ op: 'move_mach', part, from: maq.length > 1 ? maq[0] : null, to: maq[maq.length - 1], days: [dias[0]] }];
+          if (dias.length === 1 && num != null) return [{ op: 'set', part, mach: maq[0] || null, day: dias[0], qty: num }];
+          return [{ op: 'error', msg: 'Decime a qué día o a qué máquina la paso. Ej: "pasá la 26608 del lunes al martes" o "mové la 26608 a la 200N".' }];
+        }
+        // Sumar / restar
+        if (/^(suma|sumale|agrega|agregale|añadi|anadi|sumar|agregar)/.test(verbo) && num != null) {
+          const ds = x.todosDias ? [1, 2, 3, 4, 5] : dias;
+          if (!ds.length) return [{ op: 'error', msg: '¿Qué día le sumo esas piezas?' }];
+          return ds.map(d => ({ op: 'add', part, mach: maq[0] || null, day: d, qty: num }));
+        }
+        if (/^(resta|restale|descontale|descuenta|baja|bajale|restar)/.test(verbo) && num != null) {
+          const ds = x.todosDias ? [1, 2, 3, 4, 5] : dias;
+          if (!ds.length) return [{ op: 'error', msg: '¿Qué día le resto esas piezas?' }];
+          return ds.map(d => ({ op: 'add', part, mach: maq[0] || null, day: d, qty: -num }));
+        }
+        // Poner / fijar cantidad: "poné 500 de la 26608 en la 200N el miércoles"
+        if (num != null) {
+          const ds = x.todosDias ? [1, 2, 3, 4, 5] : dias;
+          if (!ds.length) return [{ op: 'error', msg: `¿Qué día van las ${num} piezas de la ${part}?` }];
+          return ds.map(d => ({ op: 'set', part, mach: maq[0] || null, day: d, qty: num }));
+        }
+        return [{ op: 'error', msg: 'No entendí el pedido. Escribí "ayuda" para ver ejemplos.' }];
+      }
+
+      // ---------- aplicar operaciones ----------
+      function buscar(week, part, mach) {
+        const p = norm(part);
+        return itemsDe(week).filter(x => !x.it.isSharedCompanion && norm(x.it.part) === p && (!mach || x.m === mach));
+      }
+      function compañeras(week, m, part) {
+        return (((week.machines[m] || {}).items) || []).filter(it => it.isSharedCompanion && norm(it.sharedWithPart) === norm(part));
+      }
+      function asegurarMaquina(week, m) {
+        if (!week.machines[m]) week.machines[m] = { aux: {}, items: [] };
+        if (!week.machines[m].items) week.machines[m].items = [];
+        if (!week.machines[m].aux) week.machines[m].aux = {};
+        return week.machines[m];
+      }
+      function nuevoItem(part, m) {
+        const cat = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+        const def = (MAQS().indexOf(m) >= 2) ? 'zamac' : 'alsi';
+        const mat = cat ? String(cat.material || def).toLowerCase().includes('zam') ? 'zamac' : 'alsi' : def;
+        return { id: 'gi-chat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6), part, desc: cat ? (cat.desc || ('Pieza ' + part)) : ('Pieza ' + part),
+          totalQty: 0, mat, stdRate: cat ? (Number(cat.unitsPerHour) || 60) : 60, weightKg: cat ? Number(cat.weightWithSprueKg) || 0 : (mat === 'alsi' ? 0.45 : 0.065),
+          recuperoKg: cat ? (Number(cat.weightWithSprueKg) || 0) * 0.3 : 0.02, dailyQty: [0, 0, 0, 0, 0, 0, 0], orderId: '', sharedWithPart: '', isSharedCompanion: false };
+      }
+      function maquinaPorDefecto(part) {
+        const cat = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+        const ms = cat && Array.isArray(cat.machines) ? cat.machines : [];
+        return ms.find(m => MAQS().includes(m) && !(typeof inoferMaquinaFueraTotal === 'function' && inoferMaquinaFueraTotal(m))) || ms.find(m => MAQS().includes(m)) || null;
+      }
+      function validarUbicacion(week, part, m, dias, origen) {
+        if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(part)) return `La ${part} termina en -R: no se inyecta, no la pongo en el Gantt.`;
+        if (typeof inoferMaquinaDisponibleDia === 'function') {
+          const fuera = (dias || []).filter(d => !inoferMaquinaDisponibleDia(m, week, d));
+          if (fuera.length) { const e = inoferMaquinaEstado(m); return `La ${m} está fuera de servicio${e.motivo ? ' (' + e.motivo + ')' : ''} el ${fuera.map(d => DIA_NOMBRE[d]).join(', ')}.`; }
+        }
+        if (typeof inoferChoqueManual === 'function') {
+          // al mover desde otra máquina, el molde sale de la de origen: esa no cuenta como choque
+          const wv = origen ? Object.assign({}, week, { machines: Object.fromEntries(Object.entries(week.machines || {}).filter(([k]) => k !== origen)) }) : week;
+          const c = inoferChoqueManual(wv, part, m, dias);
+          if (c) return `La ${part} comparte portamolde ${c.pm} con la ${c.otra}, que ya está en la ${c.mach} el ${DIA_NOMBRE[c.dia]}. No pueden estar en máquina al mismo tiempo.`;
+        }
+        if (typeof inoferMaquinaAdmitePiston === 'function' && typeof inoferPistonDe === 'function') {
+          const mm = inoferPistonDe(part);
+          if (mm && !inoferMaquinaAdmitePiston(m, mm)) return `La ${m} no tiene pistón de ${mm} mm para la ${part}.`;
+        }
+        return null;
+      }
+      function horasDia(week, m, d) {
+        const md = week.machines[m] || {};
+        let h = 0;
+        (md.items || []).forEach(it => { if (!it.isSharedCompanion) h += (Number((it.dailyQty || [])[d]) || 0) / (Number(it.stdRate) || 60); });
+        Object.keys(md.aux || {}).forEach(k => { h += Number((md.aux[k] || [])[d]) || 0; });
+        return h;
+      }
+      function sincronizarCompañeras(week, m, it) {
+        compañeras(week, m, it.part).forEach(c => { c.dailyQty = [...it.dailyQty]; });
+      }
+      function limpiarVacios(week) {
+        Object.keys(week.machines || {}).forEach(m => {
+          const md = week.machines[m];
+          if (!md || !md.items) return;
+          const vacias = md.items.filter(it => !it.isSharedCompanion && !(it.dailyQty || []).some(q => Number(q) > 0)).map(it => norm(it.part));
+          md.items = md.items.filter(it => {
+            if (it.isSharedCompanion) return !vacias.includes(norm(it.sharedWithPart));
+            return !vacias.includes(norm(it.part));
+          });
+        });
+      }
+
+      function aplicar(op, week, avisos) {
+        const unico = (lst, part) => {
+          if (!lst.length) throw `No encontré la ${part} en ${op.mach ? 'la ' + op.mach : 'esta semana'} (${week.code}).`;
+          if (lst.length > 1) throw `La ${part} está en varias máquinas (${lst.map(x => x.m).join(', ')}). Decime en cuál.`;
+          return lst[0];
+        };
+        switch (op.op) {
+          case 'set': case 'add': {
+            let lst = buscar(week, op.part, op.mach);
+            let x;
+            if (!lst.length) {
+              if (op.qty <= 0) throw `La ${op.part} no está ${op.mach ? 'en la ' + op.mach : 'en esta semana'}.`;
+              const m = op.mach || maquinaPorDefecto(op.part);
+              if (!m) throw `La ${op.part} no está en el Gantt. Decime en qué máquina la pongo (ej: "en la 200N").`;
+              const err = validarUbicacion(week, op.part, m, [op.day]);
+              if (err) throw err;
+              const it = nuevoItem(op.part, m);
+              asegurarMaquina(week, m).items.push(it);
+              x = { m, it, nuevo: true };
+              const hsu = typeof inoferAgregarSetup === 'function' ? inoferAgregarSetup(week, m, op.day) : 0;
+              avisos.push(`Agregué la ${op.part} a la ${m}${hsu ? ` (con ${hsu} h de cambio de molde y puesta a punto el ${DIA_NOMBRE[op.day]})` : ''}.`);
+            } else x = unico(lst, op.part);
+            const antes = Number(x.it.dailyQty[op.day]) || 0;
+            const nuevo = Math.max(0, Math.round(op.op === 'add' ? antes + op.qty : op.qty));
+            if (nuevo > 0 && antes === 0) { const err = validarUbicacion(week, x.it.part, x.m, [op.day]); if (err) throw err; }
+            x.it.dailyQty[op.day] = nuevo;
+            if (x.nuevo) x.it.totalQty = (x.it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0);
+            sincronizarCompañeras(week, x.m, x.it);
+            const h = horasDia(week, x.m, op.day);
+            if (h > 24) avisos.push(`⚠️ La ${x.m} el ${DIA_NOMBRE[op.day]} queda con ${h.toFixed(1)} h cargadas (más de 24 h).`);
+            const lmC = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(x.it.part, x.m) : 0;
+            const totC = (x.it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0);
+            if (lmC && totC > 0 && totC < lmC) avisos.push(`⚠️ La ${x.it.part} queda con ${totC.toLocaleString('es-AR')} u en la semana, por debajo del lote mínimo de ${lmC.toLocaleString('es-AR')} u.`);
+            return `${x.it.part} · ${x.m} · ${DIA_NOMBRE[op.day]}: ${antes} → ${nuevo} piezas`;
+          }
+          case 'move_day': {
+            const x = unico(buscar(week, op.part, op.mach), op.part);
+            const disp = Number(x.it.dailyQty[op.from]) || 0;
+            if (!disp) throw `La ${x.it.part} no tiene piezas el ${DIA_NOMBRE[op.from]} en la ${x.m}.`;
+            const cant = op.qty && op.qty < disp ? op.qty : disp;
+            const destM = op.toMach || x.m;
+            let destIt = x.it;
+            if (destM !== x.m) {
+              const err = validarUbicacion(week, x.it.part, destM, [op.to]); if (err) throw err;
+              destIt = (buscar(week, x.it.part, destM)[0] || {}).it;
+              if (!destIt) { destIt = JSON.parse(JSON.stringify(x.it)); destIt.id = 'gi-chat-' + Date.now(); destIt.dailyQty = [0, 0, 0, 0, 0, 0, 0]; asegurarMaquina(week, destM).items.push(destIt); }
+            } else if (!(Number(x.it.dailyQty[op.to]) > 0)) {
+              const err = validarUbicacion(week, x.it.part, x.m, [op.to]); if (err) throw err;
+            }
+            x.it.dailyQty[op.from] = disp - cant;
+            destIt.dailyQty[op.to] = (Number(destIt.dailyQty[op.to]) || 0) + cant;
+            sincronizarCompañeras(week, x.m, x.it);
+            if (destIt !== x.it) {
+              compañeras(week, x.m, x.it.part).forEach(c => { if (!compañeras(week, destM, x.it.part).length) { const cc = JSON.parse(JSON.stringify(c)); cc.id = 'gi-chat-sis-' + Date.now(); asegurarMaquina(week, destM).items.push(cc); } });
+              sincronizarCompañeras(week, destM, destIt);
+            }
+            const h = horasDia(week, destM, op.to);
+            if (h > 24) avisos.push(`⚠️ La ${destM} el ${DIA_NOMBRE[op.to]} queda con ${h.toFixed(1)} h cargadas (más de 24 h).`);
+            return `${x.it.part}: ${cant} piezas del ${DIA_NOMBRE[op.from]} (${x.m}) → ${DIA_NOMBRE[op.to]} (${destM})`;
+          }
+          case 'swap': {
+            const x = unico(buscar(week, op.part, op.mach), op.part);
+            const a = x.it.dailyQty[op.a]; x.it.dailyQty[op.a] = x.it.dailyQty[op.b]; x.it.dailyQty[op.b] = a;
+            sincronizarCompañeras(week, x.m, x.it);
+            return `${x.it.part}: intercambié ${DIA_NOMBRE[op.a]} y ${DIA_NOMBRE[op.b]}`;
+          }
+          case 'move_mach': {
+            const x = unico(buscar(week, op.part, op.from), op.part);
+            if (x.m === op.to) throw `La ${x.it.part} ya está en la ${op.to}.`;
+            const dias = op.days || [0, 1, 2, 3, 4, 5, 6].filter(d => Number(x.it.dailyQty[d]) > 0);
+            const err = validarUbicacion(week, x.it.part, op.to, dias, x.m); if (err) throw err;
+            const destino = asegurarMaquina(week, op.to);
+            const sis = compañeras(week, x.m, x.it.part);
+            if (op.days) {
+              let dest = (buscar(week, x.it.part, op.to)[0] || {}).it;
+              if (!dest) { dest = JSON.parse(JSON.stringify(x.it)); dest.id = 'gi-chat-' + Date.now(); dest.dailyQty = [0, 0, 0, 0, 0, 0, 0]; destino.items.push(dest); }
+              op.days.forEach(d => { dest.dailyQty[d] = (Number(dest.dailyQty[d]) || 0) + (Number(x.it.dailyQty[d]) || 0); x.it.dailyQty[d] = 0; });
+              sincronizarCompañeras(week, x.m, x.it);
+              return `${x.it.part}: el ${op.days.map(d => DIA_NOMBRE[d]).join(', ')} pasa de la ${x.m} a la ${op.to}`;
+            }
+            const origen = week.machines[x.m];
+            origen.items = origen.items.filter(it => it !== x.it && !sis.includes(it));
+            destino.items.push(x.it, ...sis);
+            return `${x.it.part}: movida completa de la ${x.m} a la ${op.to}`;
+          }
+          case 'remove': {
+            const x = unico(buscar(week, op.part, op.mach), op.part);
+            const sis = compañeras(week, x.m, x.it.part);
+            week.machines[x.m].items = week.machines[x.m].items.filter(it => it !== x.it && !sis.includes(it));
+            return `${x.it.part}: la saqué de la ${x.m}`;
+          }
+          case 'aux': {
+            const md = asegurarMaquina(week, op.mach);
+            if (!md.aux[op.code]) md.aux[op.code] = [0, 0, 0, 0, 0, 0, 0];
+            const antes = Number(md.aux[op.code][op.day]) || 0;
+            md.aux[op.code][op.day] = Math.max(0, op.add ? antes + op.hours : op.hours);
+            const nom = (typeof GANTT_AUX_TASKS !== 'undefined' ? (GANTT_AUX_TASKS.find(a => a.code === op.code) || {}).name : op.code) || op.code;
+            return `${op.mach} · ${nom} · ${DIA_NOMBRE[op.day]}: ${antes} → ${md.aux[op.code][op.day]} h`;
+          }
+          default: throw 'Operación desconocida: ' + op.op;
+        }
+      }
+
+      function resumen(week, mach) {
+        const ms = mach ? [mach] : MAQS();
+        const lineas = [];
+        ms.forEach(m => {
+          const its = ((week.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion);
+          if (!its.length) { if (mach) lineas.push(`<b>${m}</b>: sin piezas`); return; }
+          lineas.push(`<b>${m}</b>: ` + its.map(it => {
+            const ds = [1, 2, 3, 4, 5, 6, 0].filter(d => Number(it.dailyQty[d]) > 0).map(d => DIA_NOMBRE[d].slice(0, 3) + ' ' + it.dailyQty[d]);
+            return `${esc(it.part)} (${ds.join(', ') || 'sin cantidades'})`;
+          }).join(' · '));
+        });
+        return lineas.join('<br>') || 'La semana está vacía.';
+      }
+      const AYUDA = 'Podés pedirme, por ejemplo:<br>• <i>pasá la 26608 del lunes al martes</i><br>• <i>pasá 200 de la 34111-PB del miércoles al jueves</i><br>• <i>mové la 26608 a la 200N</i><br>• <i>poné 500 de la 34548-PB en la 180 el miércoles</i><br>• <i>sumale 100 a la 26608 el viernes</i> / <i>restale 50…</i><br>• <i>sacá la 26608</i> / <i>sacá la 26608 del viernes</i><br>• <i>intercambiá la 26608 del lunes con el martes</i><br>• <i>poné 2 horas de limpieza en la 200V el lunes</i><br>• <i>qué hay en la 200V</i> · <i>cambiá a la semana 45</i> · <i>deshacer</i><br>• <i>cuánto factura el programa</i> (agregá "con detalle" para ver máquina por máquina)<br>• <i>qué hiciste</i> → te muestro el detalle del último cambio<br>• <i>necesito facturar 40 millones esta semana</i> · <i>aumentá la facturación en 5 millones</i> · <i>subí la facturación un 10% incluyendo el sábado</i><br>Podés encadenar pedidos separándolos con punto, punto y coma o renglón.';
+
+      // ---------- Gemini (opcional) para frases que no entiendo ----------
+      async function pedirAGemini(frase, week) {
+        const key = typeof geminiApiKey !== 'undefined' ? geminiApiKey : '';
+        if (!key) return null;
+        const semana = {};
+        MAQS().forEach(m => { semana[m] = ((week.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion).map(it => ({ part: it.part, dailyQty: it.dailyQty })); });
+        const prompt = `Sos el asistente del Gantt de inyección de INOFER. Convertí el pedido del usuario en operaciones JSON.
+Índices de día: 0=domingo,1=lunes,2=martes,3=miércoles,4=jueves,5=viernes,6=sábado. Máquinas: ${MAQS().join(', ')}.
+Códigos de horas auxiliares: ${Object.keys(AUX).join(', ')}.
+Operaciones válidas:
+{"op":"set","part","mach"|null,"day","qty"} fija la cantidad de un día
+{"op":"add","part","mach"|null,"day","qty"} suma (qty negativa resta)
+{"op":"move_day","part","mach"|null,"from","to","qty"|null,"toMach"|null}
+{"op":"move_mach","part","from"|null,"to","days"|null}
+{"op":"swap","part","mach"|null,"a","b"}
+{"op":"remove","part","mach"|null}
+{"op":"aux","mach","code","day","hours"}
+{"op":"week","code":"SEM-NN"}
+{"op":"facturacion"} cuánto factura el programa
+{"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":[índices]|null,"maquinas":[ids]|null,"sinLimite":false} armar el Gantt para llegar a un objetivo de facturación (monto en pesos)
+Semana actual ${week.code}: ${JSON.stringify(semana)}
+Respondé SOLO JSON: {"ops":[...],"nota":"texto corto o vacío"}. Si no se puede, ops vacío y explicá en nota.
+Pedido: ${frase}`;
+        for (const model of (typeof GEMINI_MODELS !== 'undefined' ? GEMINI_MODELS : ['gemini-2.5-flash'])) {
+          try {
+            const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json' } })
+            });
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            const txt = (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+            const j = JSON.parse(txt.replace(/^```json|```$/g, '').trim());
+            if (j && Array.isArray(j.ops)) return j;
+          } catch (e) { }
+        }
+        return null;
+      }
+
+      // ---------- flujo principal ----------
+      async function procesar(texto, opciones) {
+        opciones = opciones || {};
+        texto = String(texto || '').trim();
+        if (!texto) return '';
+        const salida = html => { if (opciones.devolver) return html; agregarMsg('bot', html); return html; };
+        if (!opciones.devolver) agregarMsg('user', esc(texto));
+        const puedeEditar = (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('gantt_asistente'));
+        const puedePrecios = typeof inoferPuede !== 'function' || inoferPuede('precios_ver');
+        const sel = semanasElegidas();
+        if (sel.length && !sel.includes(activeGanttWeekCode)) activeGanttWeekCode = sel[0];
+        let week = getActiveGanttWeek();
+        if (!week) return salida('No hay ninguna semana abierta en el Gantt.');
+        let ops = [];
+        let respuestaIA = '';
+        const fn = norm(texto);
+        const local = /^(deshace|deshacer|volve atras|anula|undo|ayuda|que podes hacer|comandos|que hiciste|que cambiaste|detall|dame (el )?detalle)/.test(fn);
+        if (!local && typeof inoferIaDisponible === 'function' && inoferIaDisponible()) {
+          if (!opciones.devolver) mostrarEscribiendo(true);
+          try {
+            const r = await pedirIA(texto, sel, { puedeEditar, puedePrecios });
+            ops = Array.isArray(r.ops) ? r.ops : [];
+            respuestaIA = String(r.respuesta || '').trim();
+            historialIA.push({ role: 'user', text: texto }, { role: 'model', text: JSON.stringify({ respuesta: respuestaIA, ops }) });
+            if (historialIA.length > 16) historialIA = historialIA.slice(-16);
+          } catch (e) { ops = []; respuestaIA = ''; console.warn('IA:', e.message); }
+          if (!opciones.devolver) mostrarEscribiendo(false);
+        }
+        if (!ops.length && !respuestaIA) {
+          const frases = texto.split(/\n|;|\.(?=\s|$)|\by despues\b|\by luego\b/i).map(s => s.trim()).filter(Boolean);
+          for (const fr of frases) ops = ops.concat(interpretar(fr, week));
+          // pedidos de "aumentar N piezas" sin día: se reparten en la semana
+          ops = ops.map(o => o.op === 'error' && /(aument|sub[ií]|agreg|sum)/.test(fn) ? (aumentoLocal(texto, week) || o) : o);
+        }
+        const respuestas = [], avisos = [], errores = [], detalles = [];
+        let cambio = false, nCambios = 0;
+        const quiereDetalle = /detall|explic|que hiciste|que cambiaste|mostra(me)? (los )?cambios|paso a paso|desglos|por maquina|por dia|completo/.test(norm(texto));
+        const copia = JSON.stringify(ganttWeeksData);
+        const semanaAntes = activeGanttWeekCode;
+        const tocadas = new Set([activeGanttWeekCode]);
+        for (const op of ops) {
+          if (op && op.semana && op.op !== 'week') {
+            const cs = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.semana) || norm(c) === norm('SEM-' + String(op.semana).replace(/\D/g, '')));
+            if (!cs) { errores.push(`No existe la semana ${op.semana}.`); continue; }
+            week = ganttWeeksData[cs]; tocadas.add(cs);
+          } else if (op && op.op !== 'week') { week = getActiveGanttWeek(); }
+          if (op.op === 'help') { respuestas.push(AYUDA); continue; }
+          if (op.op === 'aumentar' || op.op === 'reducir') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            const semanas = op.semana ? [week.code] : (sel.length ? sel : [week.code]);
+            try {
+              const r = op.op === 'aumentar' ? aumentarPiezas(op, semanas, avisos) : reducirPiezas(op, semanas);
+              semanas.forEach(c => tocadas.add(c));
+              if (r.cant) { cambio = true; nCambios++; detalles.push('✓ ' + esc(r.texto)); if (quiereDetalle) respuestas.push('✓ ' + esc(r.texto)); }
+              if (r.falta) errores.push(r.faltaTexto);
+            } catch (e) { errores.push(typeof e === 'string' ? e : e.message); }
+            continue;
+          }
+          if (op.op === 'detalle') { respuestas.push(ultimoDetalle || 'Todavía no hice cambios en esta sesión.'); continue; }
+          if (op.op === 'error') { errores.push(op.msg); continue; }
+          if (op.op === 'show') { respuestas.push(resumen(week, op.mach)); continue; }
+          if ((op.op === 'facturacion' || op.op === 'meta') && !puedePrecios) { errores.push('Tu usuario no tiene permiso para ver precios y facturación.'); continue; }
+          if (op.op === 'facturacion') {
+            if (typeof inoferFacturacion !== 'function') { respuestas.push('No hay precios cargados.'); continue; }
+            if (quiereDetalle) { respuestas.push(inoferResumenFacturacion(week)); continue; }
+            const ff = inoferFacturacion(week), sp = Object.keys(ff.sinPrecio).length;
+            respuestas.push(`💲 El programa ${esc(week.code)} factura <b>${inoferPlata(ff.total)}</b> sin IVA${sp ? ` <span class="text-slate-400">(${sp} pieza${sp > 1 ? 's' : ''} sin precio)</span>` : ''}.`);
+            continue;
+          }
+          if (op.op === 'meta') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            if (typeof inoferPlanMeta !== 'function') { errores.push('Falta el módulo de precios.'); continue; }
+            const semMeta = op.semana ? [week.code] : (sel.length ? sel : [week.code]);
+            const weeksM = semMeta.map(c => ganttWeeksData[c]).filter(Boolean);
+            const base = weeksM.reduce((a, w) => a + inoferFacturacion(w).total, 0);
+            const obj = op.pct != null ? base * (1 + op.pct / 100) : (op.incremental ? base + op.monto : op.monto);
+            if (!base && !Object.values(partsCatalog || []).some(c => Number(c.precio) > 0)) { errores.push('Todavía no hay precios cargados en la base de datos.'); continue; }
+            // varias semanas: se completa en orden hasta llegar al objetivo total
+            let r = null, faltaTot = obj - base;
+            const agg = { antes: base, objetivo: obj, cambios: [], despues: base, faltante: 0, avisos: [], capHoras: 24 };
+            for (const w of weeksM) {
+              if (faltaTot <= 0) break;
+              const actual = inoferFacturacion(w).total;
+              const rr = inoferPlanMeta(w, actual + faltaTot, { dias: op.dias, maquinas: op.maquinas, sinLimite: op.sinLimite });
+              tocadas.add(w.code);
+              faltaTot -= (rr.despues - rr.antes);
+              rr.cambios.forEach(c => agg.cambios.push(Object.assign({}, c, { detalle: (weeksM.length > 1 ? w.code + ': ' : '') + c.detalle })));
+              rr.avisos.forEach(a => { if (!agg.avisos.includes(a)) agg.avisos.push(a); });
+              agg.capHoras = rr.capHoras;
+            }
+            agg.despues = weeksM.reduce((a, w) => a + inoferFacturacion(w).total, 0);
+            agg.faltante = Math.max(0, obj - agg.despues); agg.yaCumple = base >= obj;
+            r = agg;
+            if (r.cambios.length) { cambio = true; nCambios += r.cambios.length; }
+            const full = inoferTextoPlanMeta(r);
+            detalles.push(full);
+            if (quiereDetalle) respuestas.push(full);
+            else if (r.yaCumple) respuestas.push(`✓ El programa ya factura ${inoferPlata(r.antes)}, alcanza el objetivo.`);
+            else if (r.faltante > 0) respuestas.push(`🎯 Llegué a <b>${inoferPlata(r.despues)}</b>; faltan ${inoferPlata(r.faltante)} para el objetivo de ${inoferPlata(r.objetivo)} (no hay más capacidad o demanda).${r.avisos.length ? '<br><span class="text-slate-400">' + r.avisos.map(esc).join(' ') + '</span>' : ''}`);
+            else respuestas.push(`🎯 Listo: el programa ahora factura <b>${inoferPlata(r.despues)}</b>.`);
+            continue;
+          }
+          if (op.op === 'week') {
+            const code = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.code));
+            if (!code) { errores.push(`No existe la semana ${op.code}. Semanas cargadas: ${Object.keys(ganttWeeksData).join(', ')}.`); continue; }
+            activeGanttWeekCode = code; week = getActiveGanttWeek();
+            respuestas.push(`Abrí la ${week.name || code}.`); continue;
+          }
+          if (op.op === 'undo') {
+            const prev = historial.pop();
+            if (!prev) { errores.push('No hay cambios míos para deshacer.'); continue; }
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt.'); continue; }
+            ganttWeeksData = JSON.parse(prev.datos); activeGanttWeekCode = prev.semana; week = getActiveGanttWeek();
+            respuestas.push('↩️ Deshice el último cambio.'); cambio = true; continue;
+          }
+          if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo. Pedile permiso de edición al administrador.'); break; }
+          try { const linea = '✓ ' + esc(aplicar(op, week, avisos)); detalles.push(linea); if (quiereDetalle) respuestas.push(linea); cambio = true; nCambios++; }
+          catch (e) { errores.push(typeof e === 'string' ? e : ('Error: ' + (e && e.message))); }
+        }
+        if (cambio) {
+          const ultimaEsUndo = ops.some(o => o.op === 'undo');
+          if (!ultimaEsUndo) historial.push({ datos: copia, semana: semanaAntes });
+          if (historial.length > 30) historial.shift();
+          tocadas.forEach(c => { if (ganttWeeksData[c]) limpiarVacios(ganttWeeksData[c]); });
+          saveGanttWeeks();
+        }
+        if (cambio || activeGanttWeekCode !== semanaAntes) renderGanttView();
+        const avisosImp = avisos.filter(a => /^⚠️/.test(a));
+        const avisosInfo = avisos.filter(a => !/^⚠️/.test(a));
+        if (detalles.length) ultimoDetalle = detalles.concat(avisos.map(esc)).join('<br>');
+        if (respuestaIA && errores.length && ops.length) { if (nCambios) respuestas.unshift('⚠️ Lo hice en parte:', ...(quiereDetalle ? [] : detalles.map(d => d.replace(/\(.*\)$/, '')))); }
+        else if (respuestaIA) respuestas.unshift(esc(respuestaIA).replace(/\n/g, '<br>'));
+        else if (!quiereDetalle && nCambios && !respuestas.some(r => /^🎯|^✓ El programa/.test(r))) respuestas.unshift('✓ Listo.');
+        let html = respuestas.filter(Boolean).join('<br>');
+        if (quiereDetalle && avisosInfo.length) html += (html ? '<br>' : '') + avisosInfo.map(esc).join('<br>');
+        if (avisosImp.length) html += (html ? '<br>' : '') + avisosImp.map(esc).join('<br>');
+        if (errores.length) html += (html ? '<br>' : '') + errores.map(e => '✗ ' + esc(e)).join('<br>');
+        return salida(html || 'Listo.');
+      }
+      window.inoferGanttChat = procesar;
+      window.inoferGanttEjecutar = t => procesar(t, { devolver: true });
+
+      // Pasa a otra máquina compatible y disponible lo programado en una máquina fuera de servicio
+      window.inoferReubicarMaquina = function (m) {
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) { showToast('Tu usuario no puede modificar el Gantt'); return; }
+        const copia = JSON.stringify(ganttWeeksData);
+        let movidas = 0; const sinLugar = [];
+        Object.values(ganttWeeksData).forEach(w => {
+          const dias = [0, 1, 2, 3, 4, 5, 6].filter(d => !inoferMaquinaDisponibleDia(m, w, d));
+          if (!dias.length) return;
+          ((w.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion && dias.some(d => Number(it.dailyQty[d]) > 0)).slice().forEach(it => {
+            const c = (partsCatalog || []).find(x => norm(x.part) === norm(it.part));
+            const opciones = (c && c.machines ? c.machines : []).filter(x => x !== m && MAQS().includes(x));
+            const conDias = dias.filter(d => Number(it.dailyQty[d]) > 0);
+            const motivos = opciones.map(x => validarUbicacion(w, it.part, x, conDias, m));
+            const destino = opciones.find((x, i) => !motivos[i]);
+            if (!destino) { sinLugar.push(it.part + ' (' + w.code + ')' + (motivos.length ? ': ' + motivos[0] : ': solo se hace en la ' + m)); return; }
+            const yaEstaba = ((w.machines[destino] || {}).items || []).some(x => norm(x.part) === norm(it.part));
+            try { aplicar({ op: 'move_mach', part: it.part, from: m, to: destino, days: conDias }, w, []); movidas++; if (!yaEstaba && typeof inoferAgregarSetup === 'function') inoferAgregarSetup(w, destino, conDias[0]); } catch (e) { sinLugar.push(it.part + ' (' + w.code + '): ' + e); }
+          });
+          limpiarVacios(w);
+        });
+        if (movidas) { historial.push({ datos: copia, semana: activeGanttWeekCode }); saveGanttWeeks(); renderGanttView(); }
+        showToast(movidas ? `✓ ${movidas} pieza${movidas > 1 ? 's' : ''} pasada${movidas > 1 ? 's' : ''} a otra máquina` + (sinLugar.length ? ` · sin máquina compatible: ${sinLugar.join(', ')}` : '') : (sinLugar.length ? 'No hay otra máquina compatible para: ' + sinLugar.join(', ') : 'No había piezas para mover'));
+      };
+      document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('.inofer-reubicar'); if (b) window.inoferReubicarMaquina(b.dataset.m); });
+
+      // ---------- semanas que planifica el asistente ----------
+      const SEM_KEY = 'tablero_inyectoras_asistente_semanas_v1';
+      function semanasElegidas() {
+        let a = [];
+        try { a = JSON.parse(localStorage.getItem(SEM_KEY) || '[]'); } catch (e) { }
+        a = (Array.isArray(a) ? a : []).filter(c => ganttWeeksData[c]).sort((x, y) => (parseInt(x.replace(/\D/g, ''), 10) || 0) - (parseInt(y.replace(/\D/g, ''), 10) || 0));
+        return a.length ? a : (activeGanttWeekCode && ganttWeeksData[activeGanttWeekCode] ? [activeGanttWeekCode] : []);
+      }
+      function guardarSemanas(a) { try { localStorage.setItem(SEM_KEY, JSON.stringify(a)); } catch (e) { } }
+      function renderSemanas() {
+        const box = $('inoferGanttSemanas'); if (!box) return;
+        const sel = semanasElegidas();
+        const codes = Object.keys(ganttWeeksData).sort((a, b) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b.replace(/\D/g, ''), 10) || 0));
+        box.innerHTML = '<span class="text-[11px] font-bold text-slate-400">Semanas a planificar:</span>' + codes.map(c => `<button type="button" data-sem="${esc(c)}" class="inofer-sem-chip rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${sel.includes(c) ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200' : 'border-slate-700 text-slate-400 hover:text-white'}">${esc(c)}</button>`).join('');
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-sem-chip'); if (!b) return;
+        let sel = semanasElegidas(); const c = b.dataset.sem;
+        sel = sel.includes(c) ? sel.filter(x => x !== c) : sel.concat([c]);
+        if (!sel.length) sel = [c];
+        sel.sort((a, b2) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b2.replace(/\D/g, ''), 10) || 0));
+        guardarSemanas(sel);
+        if (!sel.includes(activeGanttWeekCode)) { activeGanttWeekCode = sel[0]; renderGanttView(); }
+        renderSemanas();
+      });
+      window.inoferSemanasAsistente = semanasElegidas;
+
+      // ---------- aumentar / reducir cantidades repartiendo en los días con capacidad ----------
+      function capDia() {
+        try { const c = inoferTurnosConfig(); const e = c.esquemas.find(x => x.id === c.activo) || c.esquemas[0];
+          const aMin = h => { const [a, b] = String(h).split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+          return Math.min(24, e.turnos.reduce((s2, t) => s2 + ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440), 0) / 60) || 24; } catch (e) { return 24; }
+      }
+      function aumentarPiezas(op, semanas, avisos) {
+        let resto = Math.round(Number(op.qty) || 0);
+        if (resto <= 0) throw 'Decime cuántas piezas querés sumar.';
+        const pz = resolverPieza(String(op.part || ''), getActiveGanttWeek() || { machines: {} });
+        if (pz.ambigua) throw `"${op.part}" coincide con varias piezas: ${pz.ambigua.join(', ')}.`;
+        const part = pz.part;
+        const cap = capDia();
+        const dias = Array.isArray(op.dias) && op.dias.length ? op.dias.map(Number) : [1, 2, 3, 4, 5].concat(op.sabado ? [6] : []);
+        let puesto = 0; const detalle = [];
+        for (const code of semanas) {
+          if (resto <= 0) break;
+          const w = ganttWeeksData[code]; if (!w) continue;
+          let x = buscar(w, part, op.mach || null)[0];
+          let m = x ? x.m : (op.mach || maquinaPorDefecto(part));
+          if (!m) throw `La ${part} no está programada. Decime en qué máquina la pongo.`;
+          let it = x ? x.it : null;
+          const orden = dias.slice().sort((a, b) => ((it && Number(it.dailyQty[b]) > 0) - (it && Number(it.dailyQty[a]) > 0)) || (horasDia(w, m, a) - horasDia(w, m, b)) || (a - b));
+          for (const d of orden) {
+            if (resto <= 0) break;
+            const err = validarUbicacion(w, part, m, [d]);
+            if (err) { if (!it) throw err; continue; }
+            let libre = cap - horasDia(w, m, d);
+            if (!it) {
+              it = nuevoItem(part, m); asegurarMaquina(w, m).items.push(it);
+              const hs = typeof inoferAgregarSetup === 'function' ? inoferAgregarSetup(w, m, d) : 0; libre -= hs;
+              const lm = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(part, m) : 0;
+              if (lm && Number(op.qty) < lm) avisos.push(`⚠️ La ${part} queda por debajo del lote mínimo de ${lm.toLocaleString('es-AR')} u.`);
+            }
+            const rate = Number(it.stdRate) || 60;
+            const q = Math.min(resto, Math.floor(Math.max(0, libre) * rate));
+            if (q <= 0) continue;
+            it.dailyQty[d] = (Number(it.dailyQty[d]) || 0) + q;
+            sincronizarCompañeras(w, m, it);
+            resto -= q; puesto += q; detalle.push(`${code} ${DIA_NOMBRE[d].slice(0, 3)} +${q}`);
+          }
+        }
+        const r = { cant: puesto, texto: `${part}: +${puesto.toLocaleString('es-AR')} u (${detalle.join(', ')})` };
+        if (resto > 0) { r.falta = resto; r.faltaTexto = `No entraron ${resto.toLocaleString('es-AR')} u de la ${part}: no queda capacidad en ${semanas.join(', ')}. Elegí otra semana más para seguir.`; }
+        return r;
+      }
+      function reducirPiezas(op, semanas) {
+        let resto = Math.round(Number(op.qty) || 0);
+        const pz = resolverPieza(String(op.part || ''), getActiveGanttWeek() || { machines: {} });
+        const part = pz.part; let quitado = 0;
+        for (const code of semanas.slice().reverse()) {
+          const w = ganttWeeksData[code]; if (!w || resto <= 0) continue;
+          for (const x of buscar(w, part, op.mach || null)) {
+            for (const d of [6, 5, 4, 3, 2, 1, 0]) {
+              if (resto <= 0) break;
+              const q = Math.min(resto, Number(x.it.dailyQty[d]) || 0);
+              if (q > 0) { x.it.dailyQty[d] -= q; resto -= q; quitado += q; }
+            }
+            sincronizarCompañeras(w, x.m, x.it);
+          }
+        }
+        if (!quitado) throw `No encontré la ${part} en ${semanas.join(', ')}.`;
+        return { cant: quitado, texto: `${part}: -${quitado.toLocaleString('es-AR')} u` };
+      }
+      function aumentoLocal(texto, week) {
+        const x = extraer(texto, week);
+        if (!x.piezas.length || !x.numeros.length) return null;
+        const pz = resolverPieza(x.piezas[0].token, week);
+        if (pz.ambigua) return null;
+        return { op: /(baj|rest|reduc|sac)/.test(norm(texto)) ? 'reducir' : 'aumentar', part: pz.part, qty: x.numeros[0].n, mach: x.maquinas[0] ? x.maquinas[0].id : null, sabado: /sabado/.test(norm(texto)) };
+      }
+
+      // ---------- IA: entender pedidos escritos como a una persona ----------
+      let historialIA = [];
+      function contextoIA(sel, perm) {
+        const cap = capDia();
+        const semanas = sel.map(c => ganttWeeksData[c]).filter(Boolean).map(w => {
+          const maquinas = {};
+          MAQS().forEach(m => {
+            const md = w.machines[m] || {};
+            maquinas[m] = { piezas: (md.items || []).filter(it => !it.isSharedCompanion).map(it => ({ pieza: it.part, porDia: it.dailyQty, uh: it.stdRate })),
+              horasUsadasPorDia: [0, 1, 2, 3, 4, 5, 6].map(d => Math.round(horasDia(w, m, d) * 10) / 10) };
+          });
+          const out = { semana: w.code, nombre: w.name, maquinas };
+          if (perm.puedePrecios && typeof inoferFacturacion === 'function') out.facturacionSinIVA = Math.round(inoferFacturacion(w).total);
+          return out;
+        });
+        const catalogo = (typeof partsCatalog !== 'undefined' ? partsCatalog : []).filter(c => c && c.part && !(typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(c.part))).map(c => {
+          const o = { p: c.part, maq: (c.machines || []).join('/'), uh: Number(c.unitsPerHour) || 0 };
+          const lm = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(c.part) : 0; if (lm) o.lote = lm;
+          if (perm.puedePrecios && Number(c.precio) > 0) o.precio = Number(c.precio);
+          if (c.portamolde) o.pm = c.portamolde;
+          if (Number(c.pistonMm)) o.pis = Number(c.pistonMm);
+          return o;
+        });
+        return { semanasSeleccionadas: semanas, semanaActiva: activeGanttWeekCode, semanasExistentes: Object.keys(ganttWeeksData), capacidadHorasPorDia: cap,
+          diasIndice: '0=domingo,1=lunes,2=martes,3=miércoles,4=jueves,5=viernes,6=sábado (se trabaja lunes a viernes salvo que pidan sábado)',
+          setupPorMaquinaHoras: Object.fromEntries(MAQS().map(m => [m, typeof inoferSetupDe === 'function' ? inoferSetupDe(m).total : 0])),
+          maquinasFueraDeServicio: MAQS().map(m => ({ m, e: typeof inoferMaquinaEstado === 'function' ? inoferMaquinaEstado(m) : { activa: true } })).filter(x => !x.e.activa).map(x => ({ maquina: x.m, motivo: x.e.motivo, desde: x.e.desde || null, hasta: x.e.hasta || null })),
+          puedeModificar: perm.puedeEditar, puedeVerPrecios: perm.puedePrecios, catalogo };
+      }
+      const SISTEMA_IA = `Sos el asistente de programación (Gantt) de la planta de inyección INOFER, en Argentina. Hablás en español rioplatense, como un compañero de planta: claro y BREVE (una o dos oraciones), sin detallar lo que hacés salvo que te lo pidan.
+Entendé el pedido aunque esté mal escrito, con abreviaturas o códigos incompletos (ej: "la 26608" = pieza que empieza con 26608). Usá el catálogo y el plan que te paso.
+Si el usuario pide CAMBIOS en el plan, devolvé operaciones. Si solo pregunta, contestá con los datos (sin operaciones).
+Respondé SIEMPRE solo con JSON: {"respuesta":"texto breve","ops":[...]}
+Operaciones (agregá "semana":"SEM-NN" si corresponde a una semana específica; si no, se usan las semanas seleccionadas):
+{"op":"aumentar","part","qty","mach"|null,"dias":[índices]|null,"sabado":false}  sumar piezas repartiéndolas en los días con capacidad (si no entra pasa a la próxima semana seleccionada)
+{"op":"reducir","part","qty","mach"|null}
+{"op":"set","part","mach"|null,"day","qty"}  fijar la cantidad de un día
+{"op":"add","part","mach"|null,"day","qty"}  sumar/restar en un día puntual
+{"op":"move_day","part","mach"|null,"from","to","qty"|null,"toMach"|null}
+{"op":"move_mach","part","from"|null,"to","days"|null}
+{"op":"swap","part","mach"|null,"a","b"}
+{"op":"remove","part","mach"|null}
+{"op":"aux","mach","code":"CMA|CMO|ALIS|DESG|LING|LIMP|CPIS","day","hours"}
+{"op":"week","code":"SEM-NN"}  abrir otra semana
+{"op":"facturacion"}  cuánto factura (solo si puedeVerPrecios)
+{"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":null,"maquinas":null,"sinLimite":false}  llegar a un objetivo de facturación en pesos
+{"op":"show","mach"|null}
+Reglas de planta que respeta la app (no hace falta que las verifiques, pero tenelas en cuenta al proponer): piezas terminadas en -R no se inyectan; piezas del mismo portamolde (pm) no pueden estar en máquina el mismo día; cada pieza solo en sus máquinas compatibles (maq) y con su pistón (pis); no se programa nada en maquinasFueraDeServicio en esas fechas; no se programa menos que el lote mínimo (lote) salvo pedido explícito; cada pieza nueva en una máquina suma su set-up; capacidad por día según capacidadHorasPorDia.
+Si puedeModificar es false, no devuelvas operaciones de cambio y explicá que no tiene permiso.
+Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta" sin operaciones.`;
+      async function pedirIA(texto, sel, perm) {
+        const ctx = contextoIA(sel, perm);
+        const cuerpo = {
+          systemInstruction: { parts: [{ text: SISTEMA_IA }] },
+          contents: historialIA.slice(-12).map(m => ({ role: m.role, parts: [{ text: m.text }] }))
+            .concat([{ role: 'user', parts: [{ text: 'PLAN Y DATOS (JSON):\n' + JSON.stringify(ctx) + '\n\nPEDIDO: ' + texto }] }]),
+          generationConfig: { temperature: 0.15, responseMimeType: 'application/json', maxOutputTokens: 4096 }
+        };
+        const txt = await inoferLLM(cuerpo);
+        const limpio = String(txt).replace(/^```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+        let j; try { j = JSON.parse(limpio); } catch (e) { const m = limpio.match(/\{[\s\S]*\}/); j = m ? JSON.parse(m[0]) : null; }
+        if (!j || typeof j !== 'object') throw new Error('respuesta de IA ilegible');
+        return j;
+      }
+      function mostrarEscribiendo(on) {
+        const box = $('inoferGanttChatLog'); if (!box) return;
+        let t = $('inoferGanttTyping');
+        if (on && !t) { box.insertAdjacentHTML('beforeend', '<div id="inoferGanttTyping" class="flex"><div class="rounded-xl bg-slate-800 px-3 py-1.5 text-xs text-slate-400">Pensando…</div></div>'); box.scrollTop = box.scrollHeight; }
+        if (!on && t) t.remove();
+      }
+      window.inoferGanttInterpretar = frase => interpretar(frase, getActiveGanttWeek() || { machines: {} });
+
+      // ---------- interfaz ----------
+      function agregarMsg(quien, html) {
+        chatLog.push({ quien, html });
+        if (chatLog.length > 60) chatLog.shift();
+        const box = $('inoferGanttChatLog');
+        if (!box) return;
+        box.innerHTML = chatLog.map(m => m.quien === 'user'
+          ? `<div class="flex justify-end"><div class="max-w-[85%] rounded-xl rounded-br-sm bg-emerald-600/80 px-3 py-1.5 text-xs text-white">${m.html}</div></div>`
+          : `<div class="flex"><div class="max-w-[90%] rounded-xl rounded-bl-sm bg-slate-800 px-3 py-1.5 text-xs text-slate-200 leading-relaxed">${m.html}</div></div>`).join('');
+        box.scrollTop = box.scrollHeight;
+      }
+      function montar() {
+        const vg = $('viewGantt');
+        if (!vg || $('inoferGanttChat')) return;
+        const panel = document.createElement('div');
+        panel.id = 'inoferGanttChat';
+        panel.className = 'rounded-2xl border border-emerald-500/30 bg-slate-900/90 p-4 shadow-xl';
+        panel.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <button type="button" id="inoferGanttChatToggle" class="flex items-center gap-2 text-sm font-bold text-emerald-300">💬 Asistente del Gantt <span class="text-[11px] font-normal text-slate-400">— pedile cambios escribiendo o hablando</span></button>
+            <div class="flex gap-2">
+              <button type="button" id="inoferGanttChatUndo" class="rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:text-white">↩️ Deshacer</button>
+              <button type="button" id="inoferGanttChatHelp" class="rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:text-white">❔ Ejemplos</button>
+            </div>
+          </div>
+          <div id="inoferGanttChatBody" class="mt-3 space-y-2">
+            <div id="inoferGanttSemanas" class="flex flex-wrap items-center gap-1.5"></div>
+            <div id="inoferGanttChatLog" class="max-h-60 min-h-[60px] space-y-1.5 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2"></div>
+            <form id="inoferGanttChatForm" class="flex gap-2">
+              <input id="inoferGanttChatInput" autocomplete="off" placeholder='Ej: pasá la 26608 del lunes al martes · mové la 34111-PB a la 200N' class="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-emerald-400 focus:outline-none">
+              <button type="button" id="inoferGanttChatMic" title="Hablar" class="rounded-xl border border-slate-700 bg-slate-950 px-3 text-base">🎤</button>
+              <button type="submit" id="inoferGanttChatSend" class="rounded-xl bg-emerald-500 px-4 text-xs font-bold text-slate-950 hover:bg-emerald-400">Enviar</button>
+            </form>
+          </div>`;
+        const barra = vg.firstElementChild;
+        if (barra && barra.nextSibling) vg.insertBefore(panel, barra.nextSibling); else vg.prepend(panel);
+        $('inoferGanttChatForm').addEventListener('submit', e => { e.preventDefault(); const i = $('inoferGanttChatInput'); const v = i.value; i.value = ''; procesar(v); });
+        $('inoferGanttChatUndo').addEventListener('click', () => procesar('deshacer'));
+        $('inoferGanttChatHelp').addEventListener('click', () => agregarMsg('bot', AYUDA));
+        $('inoferGanttChatToggle').addEventListener('click', () => $('inoferGanttChatBody').classList.toggle('hidden'));
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const mic = $('inoferGanttChatMic');
+        if (!SR) mic.addEventListener('click', () => showToast('Este equipo no permite dictado por voz. En el celular podés usar el micrófono del teclado.'));
+        else {
+          let rec = null;
+          mic.addEventListener('click', () => {
+            if (rec) { try { rec.stop(); } catch (e) { } return; }
+            rec = new SR(); rec.lang = 'es-AR'; rec.interimResults = true; rec.continuous = false;
+            const inp = $('inoferGanttChatInput');
+            mic.classList.add('bg-red-600'); mic.textContent = '⏺';
+            rec.onresult = ev => { let t = ''; for (const r of ev.results) t += r[0].transcript; inp.value = t; if (ev.results[ev.results.length - 1].isFinal) { const v = inp.value; inp.value = ''; procesar(v); } };
+            rec.onerror = ev => { if (ev.error === 'not-allowed') showToast('Permití el uso del micrófono para dictar'); };
+            rec.onend = () => { rec = null; mic.classList.remove('bg-red-600'); mic.textContent = '🎤'; };
+            try { rec.start(); } catch (e) { rec = null; }
+          });
+        }
+        renderSemanas();
+        if (typeof window.renderGanttView === 'function' && !window.__inoferSemHook) {
+          window.__inoferSemHook = true;
+          const rgS = window.renderGanttView;
+          window.renderGanttView = function () { const r = rgS.apply(this, arguments); try { renderSemanas(); } catch (e) { } return r; };
+        }
+        agregarMsg('bot', 'Hola 👋 Escribime como le hablarías a un compañero y lo cambio en el Gantt, en las semanas que marques arriba. Respeto portamoldes, piezas -R, pistones, set-up y lotes mínimos. Te contesto corto; si querés el detalle preguntame <b>qué hiciste</b>. Escribí <b>ayuda</b> para ver ejemplos.');
+      }
+
+      // ===================== LISTA DE ÓRDENES =====================
+      let filtro = { q: '', estado: 'todas', maq: 'todas' };
+      function estadoDe(o) {
+        let pct = 0;
+        try { const m = computeOrderMetrics(o); pct = m ? Math.round(m.progressPct || 0) : 0; } catch (e) { }
+        const st = (pct >= 100 || o.status === 'Completada') ? 'Completada' : (o.status || 'En Proceso');
+        return { pct: Math.min(100, Math.max(0, pct)), st };
+      }
+      function renderLista() {
+        const cont = $('inoferOrdenesLista');
+        if (!cont) return;
+        const puede = typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit');
+        const q = norm(filtro.q);
+        const ords = (typeof productionOrders !== 'undefined' ? productionOrders : []).slice()
+          .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.ordNumber || '').localeCompare(String(a.ordNumber || ''), undefined, { numeric: true }));
+        const maqs = [...new Set(ords.map(o => o.machine).filter(Boolean))].sort();
+        const selM = $('inoferOrdFiltroMaq');
+        if (selM) selM.innerHTML = '<option value="todas">Todas las máquinas</option>' + maqs.map(m => `<option ${filtro.maq === m ? 'selected' : ''}>${esc(m)}</option>`).join('');
+        const vis = ords.filter(o => {
+          const e = estadoDe(o);
+          if (filtro.estado === 'abiertas' && e.st === 'Completada') return false;
+          if (filtro.estado === 'completadas' && e.st !== 'Completada') return false;
+          if (filtro.maq !== 'todas' && o.machine !== filtro.maq) return false;
+          if (q && !norm([o.ordNumber, o.part, o.mold, o.machine, o.material, o.date].join(' ')).includes(q)) return false;
+          return true;
+        });
+        $('inoferOrdContador').textContent = `${vis.length} de ${ords.length} órdenes`;
+        if (!vis.length) { cont.innerHTML = '<div class="col-span-full rounded-xl border border-dashed border-slate-700 p-8 text-center text-xs text-slate-400">No hay órdenes que coincidan con la búsqueda.</div>'; return; }
+        cont.innerHTML = vis.map(o => {
+          const e = estadoDe(o);
+          const activa = o.id === selectedOrderId;
+          const color = e.st === 'Completada' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-cyan-500/20 text-cyan-300';
+          const barra = e.pct >= 100 ? 'bg-emerald-400' : 'bg-amber-400';
+          return `<div class="rounded-xl border ${activa ? 'border-amber-400 ring-1 ring-amber-400/40' : 'border-slate-800'} bg-slate-950/70 p-3.5 space-y-2.5">
+            <div class="flex items-start justify-between gap-2">
+              <button type="button" class="inofer-ord-abrir text-left" data-id="${esc(o.id)}">
+                <div class="text-sm font-black text-amber-300">OP ${esc(o.ordNumber || '—')}</div>
+                <div class="text-xs font-bold text-white">${esc(o.part || 'Sin pieza')}</div>
+              </button>
+              <span class="shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${color}">${esc(e.st)}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
+              <span>📅 ${esc(o.date || '—')}</span><span>🏭 ${esc(o.machine || '—')}</span>
+              <span>🧩 Molde ${esc(o.mold || '—')}</span><span>🎯 ${Number(o.qtyTarget || 0).toLocaleString('es-AR')} u</span>
+            </div>
+            <div>
+              <div class="flex justify-between text-[10px] text-slate-400"><span>Avance</span><span class="font-bold text-slate-200">${e.pct}%</span></div>
+              <div class="mt-0.5 h-1.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full ${barra}" style="width:${e.pct}%"></div></div>
+            </div>
+            <div class="flex gap-1.5 pt-0.5">
+              <button type="button" class="inofer-ord-abrir flex-1 rounded-lg bg-amber-500 px-2 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400" data-id="${esc(o.id)}">📂 Abrir</button>
+              ${puede ? `<button type="button" class="inofer-ord-editar flex-1 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-semibold text-slate-200 hover:text-white" data-id="${esc(o.id)}">✏️ Editar</button>
+              <button type="button" class="inofer-ord-borrar rounded-lg border border-red-500/40 px-2 py-1.5 text-[11px] font-semibold text-red-300 hover:bg-red-500/10" data-id="${esc(o.id)}">🗑️</button>` : ''}
+            </div>
+          </div>`;
+        }).join('');
+      }
+      function abrirOrden(id, sub) {
+        if (!productionOrders.some(o => o.id === id)) return;
+        selectedOrderId = id;
+        renderProductionOrdersView();
+        switchOrderSubTab(sub);
+        try { $('viewOrders').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
+      }
+      function borrarOrden(id) {
+        if (typeof inoferCan === 'function' && !inoferCan('ordenes', 'edit')) { showToast('Tu usuario no puede borrar órdenes'); return; }
+        const o = productionOrders.find(x => x.id === id);
+        if (!o) return;
+        if (productionOrders.length <= 1) { showToast('Debe quedar al menos una orden en el sistema'); return; }
+        if (!confirm(`¿Borrar la orden OP ${o.ordNumber || ''} (${o.part || ''})?\n\nEl administrador la puede recuperar desde la Papelera.`)) return;
+        productionOrders = productionOrders.filter(x => x.id !== id);
+        if (!productionOrders.some(x => x.id === selectedOrderId)) selectedOrderId = productionOrders.length ? productionOrders[0].id : null;
+        saveProductionOrders();
+        renderProductionOrdersView();
+        renderLista();
+        showToast('Orden borrada (queda en la papelera)');
+      }
+      function montarLista() {
+        const vo = $('viewOrders');
+        const eff = $('orderSubViewEfficiency');
+        if (!vo || !eff || $('orderSubViewList')) return;
+        const barra = document.querySelector('.order-subtab-btn[data-order-subtab="efficiency"]');
+        if (barra) {
+          const b = document.createElement('button');
+          b.type = 'button'; b.dataset.orderSubtab = 'list';
+          b.className = 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+          b.textContent = '📂 Lista de órdenes';
+          barra.parentElement.insertBefore(b, barra);
+          b.addEventListener('click', () => switchOrderSubTab('list'));
+        }
+        const v = document.createElement('div');
+        v.id = 'orderSubViewList'; v.className = 'hidden space-y-4';
+        v.innerHTML = `
+          <div class="rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div><h3 class="text-sm font-black text-amber-300">📂 Órdenes de producción</h3><p id="inoferOrdContador" class="text-[11px] text-slate-400"></p></div>
+              <button type="button" id="inoferOrdNuevaBtn" class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400">+ Nueva orden</button>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <input id="inoferOrdBuscar" placeholder="Buscar por N° de orden, pieza, molde…" class="min-w-[200px] flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-amber-400 focus:outline-none">
+              <select id="inoferOrdFiltroEstado" class="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200">
+                <option value="todas">Todas</option><option value="abiertas">En proceso</option><option value="completadas">Completadas</option>
+              </select>
+              <select id="inoferOrdFiltroMaq" class="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200"></select>
+            </div>
+            <div id="inoferOrdenesLista" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+          </div>`;
+        eff.parentElement.insertBefore(v, eff);
+        $('inoferOrdBuscar').addEventListener('input', e => { filtro.q = e.target.value; renderLista(); });
+        $('inoferOrdFiltroEstado').addEventListener('change', e => { filtro.estado = e.target.value; renderLista(); });
+        $('inoferOrdFiltroMaq').addEventListener('change', e => { filtro.maq = e.target.value; renderLista(); });
+        $('inoferOrdNuevaBtn').addEventListener('click', () => { const nb = $('newOrderBtn'); if (nb) { nb.click(); switchOrderSubTab('front'); } });
+        v.addEventListener('click', e => {
+          const a = e.target.closest('.inofer-ord-abrir'), ed = e.target.closest('.inofer-ord-editar'), del = e.target.closest('.inofer-ord-borrar');
+          if (a) abrirOrden(a.dataset.id, 'efficiency');
+          else if (ed) abrirOrden(ed.dataset.id, 'front');
+          else if (del) borrarOrden(del.dataset.id);
+        });
+        if (typeof INOFER_EDIT_CONTROLS !== 'undefined') {
+          INOFER_EDIT_CONTROLS.ordenes.push('#inoferOrdNuevaBtn', '.inofer-ord-editar', '.inofer-ord-borrar');
+        }
+        // switchOrderSubTab conoce la nueva pestaña
+        const orig = switchOrderSubTab;
+        switchOrderSubTab = function (sub) {
+          const lv = $('orderSubViewList');
+          if (sub === 'list') {
+            orig('efficiency');
+            currentOrderSubTab = 'list';
+            ['orderSubViewEfficiency', 'orderSubViewFront', 'orderSubViewBack', 'orderSubViewSheet', 'orderSubViewCatalog', 'orderSubViewGlobalReport'].forEach(i => $(i) && $(i).classList.add('hidden'));
+            lv.classList.remove('hidden');
+            document.querySelectorAll('.order-subtab-btn').forEach(btn => {
+              const hid = btn.classList.contains('hidden');
+              btn.className = btn.dataset.orderSubtab === 'list' ? 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-500 text-slate-950 shadow' : 'order-subtab-btn rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white';
+              if (hid) btn.classList.add('hidden');
+            });
+            renderLista();
+          } else {
+            lv.classList.add('hidden');
+            orig(sub);
+          }
+        };
+        const origRender = renderProductionOrdersView;
+        renderProductionOrdersView = function () { const r = origRender.apply(this, arguments); try { renderLista(); } catch (e) { } return r; };
+        switchOrderSubTab('list');
+      }
+      window.inoferRenderListaOrdenes = renderLista;
+
+      function iniciar() { try { montar(); } catch (e) { console.error(e); } try { montarLista(); } catch (e) { console.error(e); } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
+    })();
+  </script>

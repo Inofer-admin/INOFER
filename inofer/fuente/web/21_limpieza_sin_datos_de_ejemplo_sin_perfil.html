@@ -1,0 +1,80 @@
+  <script>
+    // ===== Limpieza: sin datos de ejemplo, sin perfiles de vista, Calculadora oculta, "Vaciar todo" protegido y Órdenes en 3 partes =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const esAdmin = () => !!(typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol === 'admin');
+      const st = document.createElement('style');
+      st.textContent = '#restoreDemoDataBtn,#plantRoleSelect,#tabSimulatorBtn{display:none!important}';
+      document.head.appendChild(st);
+      // "Vaciar todo": solo el administrador y escribiendo BORRAR
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('#clearAllRecordsBtn'); if (!b) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        if (!esAdmin()) { showToast('Solo el administrador puede vaciar el historial'); return; }
+        const n = (typeof records !== 'undefined' ? records.length : 0);
+        const t = prompt(`Esto borra los ${n} partes de horas cargados a mano, en todos los equipos.\n(Los turnos de las órdenes no se tocan y lo borrado queda en la Papelera.)\n\nPara confirmar escribí BORRAR:`, '');
+        if (t === null) return;
+        if (String(t).trim().toUpperCase() !== 'BORRAR') { showToast('No se borró nada (no escribiste BORRAR)'); return; }
+        records = []; saveState(); refreshAll();
+        pushCloudAction('replace', { records: [], todo: true });
+        showToast('Se vaciaron los partes de horas');
+      }, true);
+      // si alguien estaba en la Calculadora, va al tablero
+      setTimeout(() => { const v = $('viewSimulator'); if (v && !v.classList.contains('hidden')) { try { switchTab('dashboard'); } catch (e) { } } }, 1500);
+
+      // ---------- Órdenes en 3 partes: Carga rápida · Órdenes · Detalle de la orden (+ Base de datos e Informe) ----------
+      const DETALLE = [['efficiency', 'Seguimiento'], ['front', 'Frente'], ['back', 'Dorso'], ['sheet', 'Planilla oficial']];
+      const PRINC = [['rapida', '⚡ Carga rápida'], ['list', '📂 Órdenes'], ['detalle', '📄 Detalle de la orden'], ['catalog', '🧩 Base de datos'], ['globalReport', '📊 Informe general']];
+      const sub = () => (typeof currentOrderSubTab !== 'undefined' ? currentOrderSubTab : '');
+      const btnOrig = k => document.querySelector(`.order-subtab-btn[data-order-subtab="${k}"]`);
+      const visible = k => { if (k === 'detalle') return !!btnOrig('efficiency') && !btnOrig('efficiency').classList.contains('hidden'); const b = btnOrig(k); return !!b && !b.classList.contains('hidden'); };
+      function montar() {
+        const v = $('viewOrders'); if (!v || $('ordNav')) return !!$('ordNav');
+        const card = v.firstElementChild; if (!card) return false;
+        const nav = document.createElement('div');
+        nav.id = 'ordNav';
+        nav.className = 'flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-800 bg-slate-900/80 p-1.5';
+        v.insertBefore(nav, card);
+        card.id = card.id || 'ordCard';
+        // el título largo y la barra vieja de sub-pestañas no hacen falta
+        const tit = card.querySelector('h2'); if (tit && tit.parentElement) tit.parentElement.classList.add('hidden');
+        const barraVieja = card.querySelector('.order-subtab-btn') && card.querySelector('.order-subtab-btn').parentElement;
+        if (barraVieja) barraVieja.classList.add('hidden');
+        const sec = document.createElement('div'); sec.id = 'ordDetNav'; sec.className = 'flex flex-wrap gap-1 rounded-xl border border-slate-800 bg-slate-950 p-1';
+        const fila = $('activeOrderSelect') && $('activeOrderSelect').closest('.mt-4');
+        if (fila) fila.appendChild(sec); else card.appendChild(sec);
+        nav.addEventListener('click', e => { const b = e.target.closest('[data-on]'); if (!b) return; ir(b.dataset.on === 'detalle' ? 'efficiency' : b.dataset.on); });
+        sec.addEventListener('click', e => { const b = e.target.closest('[data-on]'); if (b) ir(b.dataset.on); });
+        return true;
+      }
+      function ir(k) { try { switchOrderSubTab(k); } catch (e) { const b = btnOrig(k); if (b) b.click(); } pintar(); }
+      let firma = '';
+      function pintar() {
+        if (!montar()) return;
+        const s = sub(), enDet = DETALLE.some(d => d[0] === s);
+        const o = typeof getActiveOrder === 'function' ? getActiveOrder() : null;
+        const f = [s, enDet, o && o.id, o && o.ordNumber, PRINC.map(p => visible(p[0])).join('')].join('|');
+        const card = $('ordCard') || $('viewOrders').children[1];
+        if (card) card.classList.toggle('hidden', !enDet);
+        if (f === firma) return;
+        firma = f;
+        $('ordNav').innerHTML = PRINC.filter(p => visible(p[0])).map(([k, t]) => {
+          const on = k === 'detalle' ? enDet : s === k;
+          const txt = k === 'detalle' && o ? `📄 OP ${esc(o.ordNumber)} · ${esc(o.part || '')}` : t;
+          return `<button type="button" data-on="${k}" class="rounded-xl px-3 py-2 text-sm font-semibold transition ${on ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}">${txt}</button>`;
+        }).join('');
+        $('ordDetNav').innerHTML = DETALLE.filter(d => visible(d[0])).map(([k, t]) => `<button type="button" data-on="${k}" class="rounded-lg px-3 py-1.5 text-xs font-semibold ${s === k ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'}">${t}</button>`).join('');
+      }
+      function iniciar() {
+        pintar();
+        setInterval(pintar, 700);
+        if (typeof window.switchOrderSubTab === 'function' && !window.switchOrderSubTab.__ord) {
+          const so = window.switchOrderSubTab;
+          const f = function () { const r = so.apply(this, arguments); setTimeout(pintar, 0); return r; };
+          f.__ord = true; window.switchOrderSubTab = f;
+        }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 60)); else setTimeout(iniciar, 60);
+    })();
+  </script>

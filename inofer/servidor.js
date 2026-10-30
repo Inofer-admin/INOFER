@@ -91,7 +91,10 @@ function obtenerEstadoModulos() {
 function guardarModuloEstado(key, dataObj) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
-  try {
+  try { return guardarModuloSinLock_(key, dataObj); } finally { lock.releaseLock(); }
+}
+function guardarModuloSinLock_(key, dataObj) {
+  {
     const sheet = getStateSheet();
     const rows = sheet.getDataRange().getValues();
     const jsonStr = JSON.stringify(dataObj);
@@ -108,9 +111,8 @@ function guardarModuloEstado(key, dataObj) {
     const lastCol = Math.max(sheet.getLastColumn(), rowVals.length);
     sheet.getRange(rowIdx, 1, 1, lastCol).clearContent();
     sheet.getRange(rowIdx, 1, 1, rowVals.length).setNumberFormat('@').setValues([rowVals]);
+    marcarVersion_(key);
     return { status: 'ok' };
-  } finally {
-    lock.releaseLock();
   }
 }
 
@@ -164,6 +166,7 @@ function obtenerTodoElSistema() {
 }
 
 function guardarRegistro(entry) {
+  marcarVersion_('records');
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -185,6 +188,7 @@ function guardarRegistro(entry) {
 }
 
 function editarRegistro(entry) {
+  marcarVersion_('records');
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   let found = false;
@@ -224,6 +228,7 @@ function editarRegistro(entry) {
 }
 
 function eliminarRegistro(id) {
+  marcarVersion_('records');
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -242,6 +247,7 @@ function eliminarRegistro(id) {
 }
 
 function reemplazarRegistros(entries) {
+  marcarVersion_('records');
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -502,10 +508,19 @@ function restablecerClaveAdmin() {
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
+  if (p.action === 'versiones') {
+    const u = usuarioDeToken(p.token);
+    if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
+    return respuesta({ status: 'ok', auth: publico(u), versiones: versiones_() });
+  }
   if (p.action === 'json') {
     const u = usuarioDeToken(p.token);
     if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
-    return respuesta(paqueteDatos(u));
+    const paq = paqueteDatos(u, p.partes === '0' ? [] : null);
+    if (p.partes === '0') { delete paq.records; }
+    if (p.solo) { const solo = String(p.solo).split(','); const m = {}; solo.forEach(function (k) { if (paq.modules[k] !== undefined) m[k] = paq.modules[k]; }); paq.modules = m; paq.parcial = true; }
+    paq.versiones = versiones_();
+    return respuesta(paq);
   }
   return HtmlService.createHtmlOutput('<h3>INOFER - servidor de datos funcionando.</h3>');
 }
@@ -1550,7 +1565,7 @@ function accionAlmacen(u, body) {
         sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
       });
       const quitar = {}; c.lista.forEach(function (o) { quitar[String(o.id)] = 1; });
-      guardarModuloEstado('orders', (mods.orders || []).filter(function (o) { return !quitar[String(o.id)]; }));
+      guardarModuloSinLock_('orders', (mods.orders || []).filter(function (o) { return !quitar[String(o.id)]; }));
       olvidarIdsArchivo_();
       auditar_(u, 'archivó', 'orders', ['Archivó ' + c.lista.length + ' órdenes completadas con último turno antes del ' + c.corte + ' (' + c.lista.slice(0, 15).map(function (o) { return o.ordNumber; }).join(', ') + (c.lista.length > 15 ? '…' : '') + ')']);
       return { status: 'ok', archivadas: c.lista.length, corte: c.corte };
@@ -1562,12 +1577,143 @@ function accionAlmacen(u, body) {
       ords.unshift(x.o);
       getSs().getSheetByName('BD_Archivo_Ordenes').deleteRow(x.fila);
       olvidarIdsArchivo_();
-      guardarModuloEstado('orders', ords);
+      guardarModuloSinLock_('orders', ords);
       auditar_(u, 'restauró', 'orders', ['Sacó del archivo la OP ' + x.ordNumber + ' · ' + x.part]);
       return { status: 'ok' };
     }
   } finally { lock.releaseLock(); }
   return null;
+}
+
+// =====================================================================
+// GUARDADO SIN PISARSE: fusión de 3 vías (lo que tenía el equipo, lo que hay en la nube y lo nuevo)
+// El equipo manda junto con los datos un resumen ("base") de la versión de la nube que conocía.
+// Así se sabe qué cambió ese equipo y qué cambiaron otros mientras tanto, y no se pierde nada.
+// =====================================================================
+function hashTxt_(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + '.' + s.length.toString(36); }
+function hashObj_(o) { return hashTxt_(JSON.stringify(o === undefined ? null : o)); }
+function marcaLog_(l) { return String((l && (l.modificadoAt || l.cargadoAt)) || ''); }
+function fusionarOrden_(S, I, b) {
+  const out = Object.assign({}, I);
+  const LS = porId_(S.logs), baseLogs = {};
+  ((b && b.l) || []).forEach(function (id) { baseLogs[String(id)] = 1; });
+  const logs = [];
+  const vistos = {};
+  (I.logs || []).forEach(function (l) {
+    const id = String(l.id); vistos[id] = 1;
+    const s = LS[id];
+    if (!s) { logs.push(l); return; }
+    logs.push(marcaLog_(s) > marcaLog_(l) ? s : l);
+  });
+  (S.logs || []).forEach(function (l) {
+    const id = String(l.id); if (vistos[id]) return;
+    if (baseLogs[id]) return; // ese equipo lo borró a propósito
+    logs.push(l);           // lo cargó otro equipo mientras tanto
+  });
+  out.logs = logs;
+  if (S.status === 'Completada' && I.status !== 'Completada' && !I.autoCompletada && S.autoCompletada === false) out.status = S.status;
+  return out;
+}
+function fusionarLista_(clave, stored, incoming, base) {
+  const S = porId_(stored), I = porId_(incoming), B = base || {};
+  const out = [], usados = {};
+  let conflictos = 0;
+  (incoming || []).forEach(function (it) {
+    if (!it || it.id == null) { out.push(it); return; }
+    const id = String(it.id); usados[id] = 1;
+    const s = S[id], b = B[id];
+    if (!s) { if (b) return; out.push(it); return; } // si estaba en la base y ya no está en la nube, otro lo borró o archivó
+    const hI = hashObj_(it), hS = hashObj_(s);
+    if (hI === hS) { out.push(s); return; }
+    if (b && hI === b.h) { out.push(s); return; }   // este equipo no lo tocó: queda lo de la nube
+    if (b && hS === b.h) { out.push(it); return; }  // solo lo cambió este equipo
+    conflictos++;
+    out.push(clave === 'orders' ? fusionarOrden_(s, it, b) : it);
+  });
+  const nuevosDeOtros = [];
+  (stored || []).forEach(function (s) {
+    if (!s || s.id == null) return;
+    const id = String(s.id); if (usados[id]) return;
+    const b = B[id];
+    if (b && hashObj_(s) === b.h) return; // este equipo lo borró y nadie lo había tocado
+    nuevosDeOtros.push(s);                // lo agregó (o lo cambió) otro equipo: se conserva
+  });
+  return { datos: nuevosDeOtros.concat(out), conflictos: conflictos, deOtros: nuevosDeOtros.length };
+}
+function fusionarGantt_(stored, incoming, base) {
+  const S = stored || {}, I = incoming || {}, B = base || {};
+  const out = {};
+  let conflictos = 0;
+  Object.keys(I).forEach(function (w) {
+    const s = S[w], it = I[w], b = B[w];
+    if (!s) { if (b) return; out[w] = it; return; }
+    const hI = hashObj_(it), hS = hashObj_(s);
+    if (hI === hS || (b && hI === b.h)) { out[w] = s; return; }
+    if (b && hS === b.h) { out[w] = it; return; }
+    conflictos++;
+    // los dos cambiaron la semana: se resuelve máquina por máquina
+    const r = Object.assign({}, it, { machines: {} });
+    const mS = s.machines || {}, mI = it.machines || {}, mB = (b && b.m) || {};
+    const ms = {}; Object.keys(mS).forEach(function (m) { ms[m] = 1; }); Object.keys(mI).forEach(function (m) { ms[m] = 1; });
+    Object.keys(ms).forEach(function (m) {
+      const xs = mS[m], xi = mI[m], hb = mB[m];
+      if (xi === undefined) { if (xs !== undefined && !(hb && hashObj_(xs) === hb)) r.machines[m] = xs; return; }
+      if (xs === undefined) { if (!hb) r.machines[m] = xi; return; }
+      const hi = hashObj_(xi);
+      r.machines[m] = (hb && hi === hb) ? xs : xi;
+    });
+    out[w] = r;
+  });
+  Object.keys(S).forEach(function (w) {
+    if (out[w] !== undefined || I[w] !== undefined) return;
+    const b = B[w];
+    if (b && hashObj_(S[w]) === b.h) return;
+    out[w] = S[w];
+  });
+  return { datos: out, conflictos: conflictos };
+}
+// Partes de horas: agrega o actualiza por id; solo borra los que el equipo pidió borrar (o todo, si es "vaciar")
+function fusionarRegistros_(entries, borrados) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(15000);
+  try {
+    const sheet = getDbSheet();
+    const rows = sheet.getDataRange().getValues();
+    const fila = {};
+    for (let i = 1; i < rows.length; i++) if (rows[i][0] !== '' && rows[i][0] != null) fila[String(rows[i][0])] = i + 1;
+    const fBorrar = [];
+    (borrados || []).forEach(function (id) { if (fila[String(id)]) fBorrar.push(fila[String(id)]); });
+    const ahora = new Date().toISOString();
+    const nuevos = [];
+    (entries || []).forEach(function (entry) {
+      if (!entry || !entry.id) return;
+      const f = fila[String(entry.id)];
+      const vals = [String(entry.id), fechaTexto_(entry.date), entry.machine, entry.shift,
+        Number(entry.available) || 0, Number(entry.parada_maquina) || 0, Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
+        Number(entry.mant_preventivo) || 0, Number(entry.mant_correctivo) || 0, Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
+        Number(entry.otros) || 0, entry.actualizado || ahora, entry.cargadoPor || USUARIO_ACTUAL || '', entry.modificadoPor || '', entry.cargadoAt || ahora, paradasJson_(entry)];
+      if (f) {
+        const v = rows[f - 1];
+        const igual = vals.every(function (x, j) { return j === 13 || String(x) === String(v[j] == null ? '' : (j === 1 ? fechaTexto_(v[j]) : v[j])); });
+        if (!igual) sheet.getRange(f, 1, 1, 18).setValues([vals]);
+      } else nuevos.push(vals);
+    });
+    if (nuevos.length) sheet.getRange(sheet.getLastRow() + 1, 1, nuevos.length, 18).setValues(nuevos.slice().reverse());
+    fBorrar.sort(function (a, b) { return b - a; }).forEach(function (f) { sheet.deleteRow(f); });
+    marcarVersion_('records');
+    return obtenerRegistros();
+  } finally { lock.releaseLock(); }
+}
+
+// =====================================================================
+// VERSIONES: cada sección guarda cuándo cambió, así los equipos bajan solo lo nuevo
+// =====================================================================
+function marcarVersion_(clave) { try { PropertiesService.getScriptProperties().setProperty('VER_' + clave, String(Date.now()) + '-' + Math.floor(Math.random() * 1000)); } catch (e) {} }
+function versiones_() {
+  const p = PropertiesService.getScriptProperties().getProperties();
+  const out = {};
+  Object.keys(p).forEach(function (k) { if (k.indexOf('VER_') === 0) out[k.slice(4)] = p[k]; });
+  return out;
 }
 
 function doPost(e) {
@@ -1600,6 +1746,10 @@ function doPost(e) {
   const sinPermiso = function (area) { return respuesta({ status: 'error', error: 'permiso', area: area, auth: publico(u) }); };
   if (['add', 'edit', 'delete', 'replace'].indexOf(body.action) !== -1) {
     if (!puede(u, 'partes', 'edit')) return sinPermiso('partes');
+    // la carga manual de partes es solo para el administrador y los usuarios que él habilita
+    const det = function (k) { return u.rol === 'admin' || !!(u.permisos && u.permisos.detalle && u.permisos.detalle[k] === true); };
+    const okManual = body.action === 'add' ? det('partes_cargar') : (body.action === 'edit' ? det('partes_editar') : (body.action === 'delete' ? det('partes_borrar') : (det('partes_cargar') || det('partes_editar') || det('partes_borrar'))));
+    if (!okManual) return sinPermiso('partes');
     if (body.action === 'add') { records = guardarRegistro(body.entry); auditar_(u, 'cargó', 'partes', [resumenParte_(body.entry)]); }
     else if (body.action === 'edit') {
       try { const ant = obtenerRegistros().filter(function (r) { return String(r.id) === String(body.entry && body.entry.id); })[0]; const c = ant ? camposCambiados_(ant, body.entry, ['actualizado', 'cargadoPor', 'modificadoPor', 'cargadoAt', 'paradas', 'id']).filter(function (x) { return !/: (0|—) → (0|—)$/.test(x); }) : []; if (ant && !igual_(ant.paradas || [], body.entry.paradas || [])) c.push('paradas'); auditar_(u, 'corrigió', 'partes', [resumenParte_(body.entry) + (c.length ? ' (' + c.join('; ') + ')' : '')]); } catch (e) {}
@@ -1608,7 +1758,17 @@ function doPost(e) {
     else if (body.action === 'delete') {
       try { const b = obtenerRegistros().filter(function (r) { return String(r.id) === String(body.id); }); registrarEliminados(u, 'parte', b, {}); if (b[0]) auditar_(u, 'borró', 'partes', [resumenParte_(b[0])]); } catch (e) {}
       records = eliminarRegistro(body.id);
+    } else if (body.todo !== true) {
+      try {
+        const viejos = idsDe(obtenerRegistros());
+        const alta = (body.records || []).filter(function (r) { return r && !viejos[String(r.id)]; });
+        const bor = obtenerRegistros().filter(function (r) { return (body.borrados || []).map(String).indexOf(String(r.id)) !== -1; });
+        if (bor.length) registrarEliminados(u, 'parte', bor, {});
+        auditar_(u, 'sincronizó', 'partes', alta.map(function (r) { return 'Cargó ' + resumenParte_(r); }).concat(bor.map(function (r) { return 'Borró ' + resumenParte_(r); })));
+      } catch (e) {}
+      records = fusionarRegistros_(body.records, body.borrados);
     } else {
+      if (u.rol !== 'admin') return sinPermiso('partes');
       try {
         const nuevos = idsDe(body.records);
         const actuales = obtenerRegistros();
@@ -1627,12 +1787,29 @@ function doPost(e) {
     if (!ok) return sinPermiso(area);
     // las órdenes archivadas no vuelven aunque un equipo tenga una copia vieja
     if (body.moduleKey === 'orders' && Array.isArray(body.moduleData)) { try { const arch = idsArchivadas_(); body.moduleData = body.moduleData.filter(function (o) { return !(o && arch[String(o.id)]); }); } catch (e) {} }
-    let anterior = null;
-    try { anterior = obtenerEstadoModulos()[body.moduleKey]; } catch (e) {}
-    if (igual_(anterior, body.moduleData)) return respuesta(paqueteDatos(u, records));
-    try { registrarDiferencias(u, body.moduleKey, anterior, body.moduleData); } catch (e) {}
-    try { auditar_(u, 'modificó', body.moduleKey, resumenCambio_(body.moduleKey, anterior, body.moduleData)); } catch (e) {}
-    guardarModuloEstado(body.moduleKey, body.moduleData);
+    const lockM = LockService.getScriptLock();
+    lockM.waitLock(20000);
+    let fusion = null;
+    try {
+      let anterior = null;
+      try { anterior = obtenerEstadoModulos()[body.moduleKey]; } catch (e) {}
+      if (body.base && typeof body.base === 'object' && anterior != null) {
+        try {
+          if (body.moduleKey === 'gantt' && body.moduleData && typeof body.moduleData === 'object') fusion = fusionarGantt_(anterior, body.moduleData, body.base);
+          else if ((body.moduleKey === 'orders' || body.moduleKey === 'catalog') && Array.isArray(body.moduleData) && Array.isArray(anterior)) fusion = fusionarLista_(body.moduleKey, anterior, body.moduleData, body.base);
+          if (fusion) body.moduleData = fusion.datos;
+        } catch (e) { fusion = null; }
+      }
+      if (!igual_(anterior, body.moduleData)) {
+        try { registrarDiferencias(u, body.moduleKey, anterior, body.moduleData); } catch (e) {}
+        try { auditar_(u, 'modificó', body.moduleKey, resumenCambio_(body.moduleKey, anterior, body.moduleData)); } catch (e) {}
+        guardarModuloSinLock_(body.moduleKey, body.moduleData);
+      }
+    } finally { lockM.releaseLock(); }
+    const paqM = paqueteDatos(u, records);
+    paqM.versiones = versiones_();
+    if (fusion) paqM.fusion = { modulo: body.moduleKey, conflictos: fusion.conflictos || 0, deOtros: fusion.deOtros || 0 };
+    return respuesta(paqM);
   }
   return respuesta(paqueteDatos(u, records));
 }

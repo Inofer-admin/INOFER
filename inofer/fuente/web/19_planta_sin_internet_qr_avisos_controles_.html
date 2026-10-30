@@ -1,0 +1,1039 @@
+  <script>
+    // ===== Planta: sin internet, QR, avisos, controles, mantenimiento, stock, informe semanal y registro de cambios =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const pad = n => String(n).padStart(2, '0');
+      const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoyIso = () => isoD(new Date());
+      const masDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoD(d); };
+      const difDias = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 864e5);
+      const fFecha = iso => { if (!iso) return '—'; const p = String(iso).slice(0, 10).split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; };
+      const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+      const fDia = iso => { const d = new Date(iso + 'T12:00:00'); return DIAS[d.getDay()] + ' ' + fFecha(iso); };
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const n1 = v => (Math.round((Number(v) || 0) * 10) / 10).toLocaleString('es-AR');
+      const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+      const horasEntre = (a, b) => ((((aMin(b) - aMin(a)) + 1440) % 1440) || 1440) / 60;
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const can = (a, n) => typeof inoferCan !== 'function' || inoferCan(a, n);
+      const puedeK = k => typeof inoferPuede !== 'function' || inoferPuede(k);
+      const quien = () => (typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '') || 'equipo';
+      const enNube = () => typeof cloudApiUrl !== 'undefined' && !!cloudApiUrl && !!sesion() && sesion().modo === 'nube';
+      const api = async body => { const d = await inoferCloudPost(Object.assign({ token: inoferAuthToken() }, body)); if (!d || d.status === 'error') throw new Error((d && d.error) || 'Sin respuesta de la nube'); return d; };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const FULL = { '200V': 'Italpresse 200 Tn (V)', '200N': 'Italpresse 200 Tn (N)', '180': 'Italpresse 180 Tn', 'H50': 'H-50', 'Z30': 'Italpresse 30 Tn (Z-30)' };
+      function maqId(txt) {
+        const t = norm(txt).replace(/\s+/g, ' ');
+        for (const m of MAQS()) if (t === norm(m) || t === norm(FULL[m])) return m;
+        if (/\(v\)/.test(t)) return '200V'; if (/\(n\)/.test(t)) return '200N'; if (/180/.test(t)) return '180'; if (/h-?50/.test(t)) return 'H50'; if (/z-?30|30 tn/.test(t)) return 'Z30';
+        return String(txt || '');
+      }
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
+      const partes = () => (typeof records !== 'undefined' ? records : []).filter(r => !(window.inoferEsDemo && inoferEsDemo(r)));
+      const esDemoOrden = o => window.inoferEsDemo && inoferEsDemo({ fromOrder: true, ordId: o.id });
+      const catDe = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const COD_CAT = () => window.INOFER_CODIGO_CATEGORIA || {};
+      const catDeCodigo = cod => COD_CAT()[parseInt(String(cod || ''), 10)] || 'otros';
+      const BTN = 'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition';
+      const INP = 'rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none';
+
+      // ---------------------------------------------------------------------------------
+      // Módulos de nube propios (mantenimiento, stock, avisos, informes)
+      // ---------------------------------------------------------------------------------
+      const MOD = {
+        mantenimiento: { key: 'tablero_inyectoras_mantenimiento_v1', def: () => ({ planes: [], trabajos: [] }) },
+        stock: { key: 'tablero_inyectoras_stock_v1', def: () => ({ materiales: {}, terminado: {} }) },
+        avisos: { key: 'tablero_inyectoras_avisos_v1', def: () => ({ ignorados: {} }) },
+        informes: { key: 'tablero_inyectoras_informes_v1', def: () => ({ emails: [], activo: true }) }
+      };
+      Object.keys(MOD).forEach(k => { let v = null; try { v = JSON.parse(localStorage.getItem(MOD[k].key) || 'null'); } catch (e) { } MOD[k].val = v && typeof v === 'object' ? Object.assign(MOD[k].def(), v) : MOD[k].def(); MOD[k].cambio = 0; });
+      const D = k => MOD[k].val;
+      function guardarMod(k, subir) {
+        try { localStorage.setItem(MOD[k].key, JSON.stringify(MOD[k].val)); } catch (e) { }
+        if (subir !== false) { MOD[k].cambio = Date.now(); try { pushCloudModuleState(k, MOD[k].val); } catch (e) { } }
+      }
+      const RENDER = {};
+      function recibirMods(mods) {
+        if (!mods) return;
+        Object.keys(MOD).forEach(k => {
+          if (!mods[k] || typeof mods[k] !== 'object') return;
+          if (Date.now() - MOD[k].cambio < 20000) return; // recién cambiado acá: no se pisa con una copia vieja
+          if (JSON.stringify(mods[k]) === JSON.stringify(MOD[k].val)) return;
+          MOD[k].val = Object.assign(MOD[k].def(), mods[k]); guardarMod(k, false);
+          const a = document.activeElement;
+          if (!(a && a.closest && a.closest('.inofer-planta-form'))) { try { (RENDER[k] || []).forEach(f => f()); } catch (e) { } }
+        });
+        programarAvisos();
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 1) Trabajar sin internet: cambios pendientes de subir
+      // ---------------------------------------------------------------------------------
+      const PEND_KEY = 'tablero_inyectoras_pend_mod_v1';
+      let pend = {};
+      try { pend = JSON.parse(localStorage.getItem(PEND_KEY) || '{}') || {}; } catch (e) { pend = {}; }
+      Object.keys(pend).forEach(k => { pend[k].estado = 'error'; });
+      const guardarPend = () => { try { const o = {}; Object.keys(pend).forEach(k => { if (pend[k].estado === 'error') o[k] = { data: pend[k].data, at: pend[k].at }; }); localStorage.setItem(PEND_KEY, JSON.stringify(o)); } catch (e) { } };
+      let avisoOffline = 0;
+      window.inoferModPendiente = function (k, data, estado) {
+        if (estado === 'enviando') { pend[k] = { data, at: Date.now(), estado: 'enviando' }; }
+        else if (pend[k] && pend[k].data === data) {
+          if (estado === 'ok') delete pend[k];
+          else { pend[k].estado = 'error'; if (navigator.onLine === false && Date.now() - avisoOffline > 60000) { avisoOffline = Date.now(); toast('📴 Sin internet: quedó guardado en este equipo y se sube solo cuando vuelva la conexión'); } }
+          guardarPend();
+        }
+        ui();
+      };
+      function reintentar() {
+        if (!enNube() || navigator.onLine === false) return;
+        Object.keys(pend).forEach(k => { if (pend[k].estado === 'error') { try { pushCloudModuleState(k, pend[k].data); } catch (e) { } } });
+        try { if (window.inoferPartesPendientes && inoferPartesPendientes()) fetchCloudRecords(true); } catch (e) { }
+      }
+      setInterval(reintentar, 20000);
+      window.addEventListener('online', () => { setTimeout(reintentar, 800); ui(); toast('🌐 Volvió internet: subiendo lo que quedó pendiente…'); });
+      window.addEventListener('offline', () => { ui(); toast('📴 Sin internet: podés seguir cargando, se guarda en el equipo'); });
+      function ui() {
+        const tag = $('inoferVersionTag');
+        let p = $('inoferOfflinePill');
+        if (!p && tag) { p = document.createElement('button'); p.type = 'button'; p.id = 'inoferOfflinePill'; p.className = 'hidden ml-1 rounded-full border px-2 py-0.5 text-[10px] font-bold'; tag.parentElement.insertBefore(p, tag.nextSibling); p.addEventListener('click', () => { reintentar(); toast(navigator.onLine === false ? 'Sin internet. Todo lo que cargues queda guardado en este equipo y se sube solo cuando vuelva la conexión.' : 'Subiendo los cambios pendientes…'); }); }
+        if (!p) return;
+        const n = Object.keys(pend).filter(k => pend[k].estado === 'error').length + ((window.inoferPartesPendientes && inoferPartesPendientes()) || 0);
+        const off = navigator.onLine === false;
+        p.classList.toggle('hidden', !off && !n);
+        p.className = p.className.replace(/border-\S+|text-(rose|amber)-\S+|bg-\S+/g, '').trim() + (off ? ' border-rose-500/50 bg-rose-500/10 text-rose-200' : ' border-amber-500/50 bg-amber-500/10 text-amber-200');
+        p.textContent = off ? `📴 Sin internet${n ? ' · ' + n + ' sin subir' : ''}` : `⏳ ${n} cambio${n > 1 ? 's' : ''} por subir`;
+      }
+      window.inoferOfflineUI = ui;
+      window.inoferModsPendientes = () => Object.keys(pend);
+      setInterval(ui, 5000);
+      function instalarFiltroNube() {
+        if (typeof window.applyCloudModules !== 'function' || window.applyCloudModules.__planta) return;
+        const am = window.applyCloudModules;
+        const f = function (mods) {
+          if (mods && typeof mods === 'object') {
+            const ks = Object.keys(pend);
+            if (ks.length) { mods = Object.assign({}, mods); ks.forEach(k => { delete mods[k]; }); }
+            try { recibirMods(mods); } catch (e) { }
+          }
+          return am.apply(this, [mods].concat([].slice.call(arguments, 1)));
+        };
+        f.__planta = true;
+        window.applyCloudModules = f;
+      }
+      instalarFiltroNube();
+      window.addEventListener('load', () => { instalarFiltroNube(); ui(); });
+
+      // ---------------------------------------------------------------------------------
+      // 2) Controles al cargar (Carga rápida y parte manual)
+      // ---------------------------------------------------------------------------------
+      window.inoferControlTurno = function (o, d) {
+        const av = [];
+        const hoy = hoyIso();
+        if (d.fecha > masDias(hoy, 1) || (d.fecha > hoy && aMin(d.ini) < 20 * 60)) { av.bloqueo = '⚠️ La fecha del turno (' + fFecha(d.fecha) + ') es posterior a hoy. Corregí la fecha.'; return av; }
+        const atras = difDias(hoy, d.fecha);
+        if (atras > 7) av.push(`La fecha es de hace ${atras} días (${fFecha(d.fecha)}).`);
+        const horas = horasEntre(d.ini, d.fin);
+        const andando = Math.max(0, horas - (Number(d.paradasMin) || 0) / 60);
+        const c = catDe(o.part);
+        const uh = Number(o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
+        const total = (d.ok || 0) + (d.scrap || 0) + (d.baja || 0);
+        if (uh) {
+          const max = Math.ceil(uh * horas * 1.2);
+          if (total > max) av.push(`Cargaste ${n0(total)} piezas en total, pero en ${n1(horas)} h esta pieza da como máximo unas ${n0(max)} (${n0(uh)} u/h). ¿No sobra un número?`);
+          else if (andando >= 2 && d.ok > 0 && d.ok < uh * andando * 0.25) av.push(`Son pocas piezas buenas (${n0(d.ok)}) para ${n1(andando)} h de máquina andando (se esperaban unas ${n0(uh * andando)}). Si hubo paradas, cargalas.`);
+        }
+        if ((d.scrap || 0) > Math.max(20, total * 0.15)) av.push(`El scrap es alto: ${n0(d.scrap)} piezas (${n1(d.scrap / Math.max(1, total) * 100)}% del total).`);
+        if (!d.ok && !d.paradasMin) av.push('No cargaste piezas buenas ni paradas. Si la máquina estuvo parada, cargá el motivo.');
+        const otro = (o.logs || []).find(l => l.id !== d.editLogId && l.date === d.fecha && (norm(l.turno) === norm(d.turno) || (l.startTime === d.ini && l.endTime === d.fin)));
+        if (otro) av.push(`Ya hay un turno ${d.turno} del ${fFecha(d.fecha)} cargado en esta orden (${n0(otro.okPcs)} buenas · ${otro.operator || ''}). ¿Es otro distinto?`);
+        const m = (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : maqId(o.machine);
+        const otraOp = ordenes().find(x => x.id !== o.id && maqId(x.machine) === m && (x.logs || []).some(l => l.id !== d.editLogId && l.date === d.fecha && norm(l.turno) === norm(d.turno)));
+        if (otraOp && !otro) av.push(`En la ${m} ya cargaron el turno ${d.turno} del ${fFecha(d.fecha)} en otra orden (OP ${otraOp.ordNumber} · ${otraOp.part}).`);
+        return av;
+      };
+      document.addEventListener('submit', ev => {
+        if (!ev.target || ev.target.id !== 'newEntryForm') return;
+        const fecha = ($('modalDate') || {}).value || hoyIso(), maq = ($('modalMachine') || {}).value, turno = ($('modalShift') || {}).value;
+        const disp = Number(($('modalAvailableHours') || {}).value) || 0;
+        const editId = typeof editingRecordId !== 'undefined' ? editingRecordId : null;
+        if (fecha > hoyIso()) { ev.preventDefault(); ev.stopImmediatePropagation(); toast('⚠️ La fecha (' + fFecha(fecha) + ') es posterior a hoy. Corregí la fecha.'); return; }
+        const av = [];
+        if (difDias(hoyIso(), fecha) > 7) av.push(`La fecha es de hace ${difDias(hoyIso(), fecha)} días (${fFecha(fecha)}).`);
+        const limite = /semana/i.test(turno) ? 168 : (/d[ií]a/i.test(turno) ? 24 : 12.5);
+        if (disp > limite) av.push(`Cargaste ${n1(disp)} horas disponibles para "${turno}". ¿Está bien?`);
+        if (!disp) av.push('Las horas disponibles están en 0.');
+        const dup = partes().find(r => String(r.id) !== String(editId) && String(r.date).slice(0, 10) === fecha && maqId(r.machine) === maqId(maq) && norm(r.shift) === norm(turno));
+        if (dup) av.push(`Ya hay un parte de la ${maqId(maq)} del ${fFecha(fecha)} turno ${turno}.`);
+        if (av.length && !confirm('Revisá antes de guardar:\n\n• ' + av.join('\n• ') + '\n\n¿Está bien así? (Aceptar = guardar igual)')) { ev.preventDefault(); ev.stopImmediatePropagation(); }
+      }, true);
+
+      // ---------------------------------------------------------------------------------
+      // 3) Códigos QR por máquina y por orden
+      // ---------------------------------------------------------------------------------
+      const BASE_URL = () => (/github\.io$/.test(location.hostname) ? location.origin + location.pathname.replace(/index\.html$/, '') : 'https://inofer-admin.github.io/INOFER/inofer/');
+      // generador de QR incluido en la app (funciona sin internet)
+      function cargarQr() { return window.inoferQR ? Promise.resolve(window.inoferQR) : Promise.reject(new Error('No se pudo cargar el generador de QR')); }
+      function svgQr(txt) {
+        const q = window.inoferQR(txt, 'M'), n = q.getModuleCount(), m = 2;
+        let d = '';
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += 'M' + (c + m) + ' ' + (r + m) + 'h1v1h-1z';
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 2 * m} ${n + 2 * m}" width="100%" height="100%" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+      }
+      // Al abrir la app con ?maq=… o ?op=… (escaneando un QR) va directo a la Carga rápida
+      (function () {
+        try {
+          const p = new URLSearchParams(location.search);
+          const maq = p.get('maq'), op = p.get('op');
+          if (maq || op) {
+            sessionStorage.setItem('inoferQrPend', JSON.stringify({ maq, op, at: Date.now() }));
+            p.delete('maq'); p.delete('op');
+            history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash);
+          }
+        } catch (e) { }
+      })();
+      let qrTimer = null;
+      function resolverQr() {
+        let q = null; try { q = JSON.parse(sessionStorage.getItem('inoferQrPend') || 'null'); } catch (e) { }
+        if (!q || !sesion() || !window.inoferCargaRapida) return;
+        if (!can('ordenes', 'edit')) { sessionStorage.removeItem('inoferQrPend'); toast('Tu usuario no puede cargar producción'); return; }
+        let o = null;
+        if (q.op) { const n = String(q.op).replace(/\D/g, '').replace(/^0+/, ''); o = ordenes().find(x => String(x.ordNumber).replace(/\D/g, '').replace(/^0+/, '') === n || x.id === q.op); }
+        const espera = Date.now() - q.at < 15000;
+        if (q.op && !o && espera) { clearTimeout(qrTimer); qrTimer = setTimeout(resolverQr, 1200); return; } // todavía no llegaron las órdenes de la nube
+        sessionStorage.removeItem('inoferQrPend');
+        const maq = o ? inoferCargaRapida.maqDeOrden(o) : (MAQS().find(m => norm(m) === norm(q.maq)) || maqId(q.maq));
+        inoferCargaRapida.abrir({ maq, ordId: o ? o.id : '' });
+        toast(o ? `📷 OP ${o.ordNumber} · ${o.part}: cargá el turno` : (q.op ? `No encontré la OP ${q.op}; elegí la orden en la ${maq}` : `📷 Máquina ${maq}`));
+      }
+      function abrirQr() {
+        cerrarModal();
+        const m = modal('🏷️ Códigos QR para la planta', `
+          <p class="text-xs text-slate-400">Imprimilos y pegá cada uno en su máquina (o en la orden impresa). El operario lo escanea con la cámara del celular y entra directo a la carga del turno. Tiene que haber iniciado sesión una vez en ese celular.</p>
+          <div class="flex flex-wrap gap-2"><button type="button" class="qr-tab ${BTN} border-cyan-400 bg-cyan-500/15 text-white" data-t="maq">Máquinas</button><button type="button" class="qr-tab ${BTN} border-slate-700 text-slate-300" data-t="op">Órdenes abiertas</button>
+            <button type="button" id="qrImprimir" class="${BTN} ml-auto border-emerald-500/50 bg-emerald-500/15 text-emerald-200">🖨️ Imprimir</button></div>
+          <div id="qrLista" class="grid gap-3 sm:grid-cols-2"><div class="text-xs text-slate-400">Cargando…</div></div>`);
+        let tipo = 'maq';
+        const items = () => tipo === 'maq' ? MAQS().map(x => ({ t: x, s: FULL[x] || '', url: BASE_URL() + '?maq=' + encodeURIComponent(x), pie: 'Escaneá para cargar la producción' }))
+          : ordenes().filter(o => !esDemoOrden(o) && window.inoferCargaRapida && inoferCargaRapida.abierta(o)).map(o => ({ t: 'OP ' + o.ordNumber, s: o.part + ' · ' + (inoferCargaRapida.maqDeOrden(o) || o.machine) + ' · ' + n0(o.qtyTarget) + ' u', url: BASE_URL() + '?op=' + encodeURIComponent(o.ordNumber), pie: 'Escaneá para cargar el turno de esta orden' }));
+        const dibujar = () => {
+          cargarQr().then(() => {
+            const L = items();
+            m.querySelector('#qrLista').innerHTML = L.length ? L.map(x => `<div class="flex items-center gap-3 rounded-xl border border-slate-700 bg-white p-3 text-slate-900"><div style="width:110px;height:110px" class="shrink-0">${svgQr(x.url, 4)}</div><div class="min-w-0"><div class="text-2xl font-black">${esc(x.t)}</div><div class="text-xs text-slate-600">${esc(x.s)}</div><div class="mt-1 text-[10px] text-slate-500">${esc(x.pie)}</div></div></div>`).join('') : '<div class="text-xs text-slate-400">No hay órdenes abiertas.</div>';
+          }).catch(e => { m.querySelector('#qrLista').innerHTML = `<div class="text-xs text-rose-300">${esc(e.message)}</div>`; });
+        };
+        m.addEventListener('click', e => {
+          const t = e.target.closest('.qr-tab');
+          if (t) { tipo = t.dataset.t; m.querySelectorAll('.qr-tab').forEach(b => { const on = b === t; b.className = `qr-tab ${BTN} ${on ? 'border-cyan-400 bg-cyan-500/15 text-white' : 'border-slate-700 text-slate-300'}`; }); dibujar(); }
+          if (e.target.closest('#qrImprimir')) {
+            cargarQr().then(() => {
+              const cards = items().map(x => `<div class="c"><div class="q">${svgQr(x.url, 8)}</div><div class="t">${esc(x.t)}</div><div class="s">${esc(x.s)}</div><div class="p">${esc(x.pie)}</div><div class="i">INOFER</div></div>`).join('');
+              imprimir(`<style>body{font-family:Arial,sans-serif;margin:0}.g{display:grid;grid-template-columns:1fr 1fr;gap:10mm;padding:8mm}.c{border:2px solid #0f172a;border-radius:6mm;padding:6mm;text-align:center;page-break-inside:avoid}.q{width:60mm;height:60mm;margin:0 auto}.q svg{width:100%;height:100%}.t{font-size:28pt;font-weight:900;margin-top:3mm}.s{font-size:11pt;color:#334155}.p{font-size:9pt;color:#64748b;margin-top:2mm}.i{font-size:8pt;letter-spacing:.2em;color:#0891b2;font-weight:800;margin-top:2mm}</style><div class="g">${cards}</div>`);
+            }).catch(er => toast(er.message));
+          }
+        });
+        dibujar();
+      }
+      function imprimir(html) {
+        let f = $('inoferPrintFrame');
+        if (f) f.remove();
+        f = document.createElement('iframe'); f.id = 'inoferPrintFrame'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+        document.body.appendChild(f);
+        const d = f.contentWindow.document; d.open(); d.write('<!doctype html><html><head><meta charset="utf-8"><title>INOFER</title></head><body>' + html + '</body></html>'); d.close();
+        setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('No se pudo imprimir'); } }, 400);
+      }
+      function montarBotonQr() {
+        const ref = $('crTurnosCfgBtn');
+        if (!ref || $('crQrBtn')) return;
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'crQrBtn';
+        b.className = 'hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white'; b.textContent = '🏷️ Códigos QR';
+        ref.parentElement.insertBefore(b, ref);
+        b.addEventListener('click', abrirQr);
+      }
+
+      // ---------------------------------------------------------------------------------
+      // Ventana modal genérica
+      // ---------------------------------------------------------------------------------
+      function modal(titulo, cuerpo, ancho) {
+        cerrarModal();
+        const w = document.createElement('div'); w.id = 'inoferPlantaModal';
+        w.className = 'fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full ${ancho || 'max-w-3xl'} rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl space-y-3"><div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">${titulo}</h3><button type="button" class="pm-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕ Cerrar</button></div>${cuerpo}</div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => { if (e.target === w || e.target.closest('.pm-cerrar')) cerrarModal(); });
+        return w;
+      }
+      function cerrarModal() { const w = $('inoferPlantaModal'); if (w) w.remove(); }
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarModal(); });
+
+      // ---------------------------------------------------------------------------------
+      // Pestañas nuevas
+      // ---------------------------------------------------------------------------------
+      const TABS = {};
+      const CLS_OFF = c => `rounded-md px-3 py-1.5 text-xs font-semibold transition ${c} hover:text-white`;
+      function crearPestana(nombre, etiqueta, color, colorOn, visible, render) {
+        const ref = $('tabKpiBtn') || $('tabGanttBtn');
+        const vref = $('viewGantt');
+        if (!ref || !vref || $('tab' + nombre + 'Btn')) return;
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'tab' + nombre + 'Btn'; b.className = CLS_OFF(color) + ' hidden'; b.innerHTML = etiqueta;
+        const ultimo = Object.values(TABS).length ? Object.values(TABS)[Object.values(TABS).length - 1].btn : ref;
+        ultimo.parentNode.insertBefore(b, ultimo.nextSibling);
+        const v = document.createElement('div'); v.id = 'view' + nombre; v.className = 'hidden space-y-4';
+        vref.parentNode.insertBefore(v, vref.nextSibling);
+        TABS[nombre.toLowerCase()] = { btn: b, view: v, visible, render, color, colorOn };
+        b.addEventListener('click', () => switchTab(nombre.toLowerCase()));
+      }
+      function instalarTabs() {
+        if (window.switchTab.__planta) return;
+        const sw = window.switchTab;
+        const f = function (tab) {
+          const T = TABS[tab];
+          Object.keys(TABS).forEach(k => { if (k !== tab) { TABS[k].view.classList.add('hidden'); TABS[k].btn.className = CLS_OFF(TABS[k].color) + (TABS[k].visible() ? '' : ' hidden'); } });
+          if (T) {
+            if (!T.visible()) return;
+            sw('ai');
+            Array.from(T.view.parentElement.children).forEach(el => { if (el !== T.view && /^view/.test(el.id)) el.classList.add('hidden'); });
+            const ai = $('tabAiBtn'); if (ai) ai.className = 'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-violet-300 hover:text-white' + (ai.classList.contains('hidden') ? ' hidden' : '');
+            T.view.classList.remove('hidden');
+            T.btn.className = `rounded-md px-3 py-1.5 text-xs font-semibold transition ${T.colorOn} text-slate-950 shadow`;
+            try { T.render(); } catch (e) { console.error(e); }
+            return;
+          }
+          return sw.apply(this, arguments);
+        };
+        f.__planta = true;
+        window.switchTab = f;
+      }
+      function aplicarVisibilidad() {
+        Object.keys(TABS).forEach(k => {
+          const T = TABS[k], vis = !!sesion() && T.visible();
+          T.btn.classList.toggle('hidden', !vis);
+          if (!vis && !T.view.classList.contains('hidden')) { T.view.classList.add('hidden'); try { switchTab('dashboard'); } catch (e) { } }
+        });
+        const qb = $('crQrBtn'); if (qb) qb.classList.toggle('hidden', !(esAdmin() || puedeK('ord_crear') && can('ordenes', 'edit')));
+        montarAvisos(); programarAvisos();
+        if (sesion()) setTimeout(resolverQr, 600);
+      }
+      const verMant = () => esAdmin() || ((can('gantt', 'view') || can('ordenes', 'view')) && puedeK('mant_ver'));
+      const editMant = () => esAdmin() || ((can('gantt', 'edit') || can('ordenes', 'edit')) && puedeK('mant_editar'));
+      const verStock = () => esAdmin() || ((can('ordenes', 'view') || can('catalogo', 'view')) && puedeK('stock_ver'));
+      const editStock = () => esAdmin() || ((can('ordenes', 'edit') || can('catalogo', 'edit')) && puedeK('stock_editar'));
+      const verInforme = () => esAdmin() || ((can('indicadores', 'view') || can('ordenes', 'view')) && puedeK('informe_ver'));
+      const avisosCarga = () => esAdmin() || (can('ordenes', 'edit') && puedeK('avisos_carga') && puedeK('ord_editar_turnos'));
+
+      // ---------------------------------------------------------------------------------
+      // Datos de producción (turnos de las OP + partes manuales)
+      // ---------------------------------------------------------------------------------
+      function eventosProduccion(desde, hasta) {
+        // lista de turnos: {fuente, maq, fecha, disp, cat:{}, paradas:[{codigo,min,cat}], ok, scrap, baja, part, op}
+        const out = [];
+        const enRango = f => (!desde || f >= desde) && (!hasta || f <= hasta);
+        ordenes().forEach(o => {
+          if (esDemoOrden(o)) return;
+          const m = window.inoferCargaRapida ? inoferCargaRapida.maqDeOrden(o) || maqId(o.machine) : maqId(o.machine);
+          (o.logs || []).forEach(l => {
+            if (!enRango(String(l.date || ''))) return;
+            const ps = (Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : [])).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo) }));
+            const cat = {}; ps.forEach(p => { cat[p.cat] = (cat[p.cat] || 0) + p.min / 60; });
+            out.push({ fuente: 'OP', maq: m, fecha: l.date, turno: l.turno, disp: horasEntre(l.startTime, l.endTime), cat, paradas: ps, ok: Number(l.okPcs) || 0, scrap: Number(l.scrapPcs) || 0, baja: Number(l.lowStartPcs) || 0, part: o.part, op: o.ordNumber, ordId: o.id, logId: l.id, material: o.material, kgP: Number(o.weightWithSprueKg) || 0 });
+          });
+        });
+        partes().forEach(r => {
+          const f = String(r.date || '').slice(0, 10);
+          if (!enRango(f)) return;
+          const cat = {}; (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { if (Number(r[c.key])) cat[c.key] = Number(r[c.key]); });
+          const ps = (r.paradas || []).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo) }));
+          out.push({ fuente: 'Parte', maq: maqId(r.machine), fecha: f, turno: r.shift, disp: Number(r.available) || 0, cat, paradas: ps, ok: 0, scrap: 0, baja: 0, id: r.id });
+        });
+        return out;
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 4) Avisos: turnos sin cargar, preventivos, stock, informe
+      // ---------------------------------------------------------------------------------
+      function planificadoEnGantt(m, fecha) {
+        const W = typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {};
+        for (const code of Object.keys(W)) {
+          const w = W[code]; if (!w || !w.startDate) continue;
+          for (let d = 0; d < 7; d++) {
+            if ((window.inoferFechaDia ? inoferFechaDia(w, d) : '') !== fecha) continue;
+            const items = (((w.machines || {})[m]) || {}).items || [];
+            if (items.some(it => !it.isSharedCompanion && Number((it.dailyQty || [])[d]) > 0)) return true;
+          }
+        }
+        return false;
+      }
+      function hayCarga(m, fecha, t, nocturno) {
+        const fechas = nocturno ? [fecha, masDias(fecha, 1)] : [fecha];
+        const okOp = ordenes().some(o => (window.inoferCargaRapida ? inoferCargaRapida.maqDeOrden(o) : maqId(o.machine)) === m && (o.logs || []).some(l => fechas.includes(l.date) && (norm(l.turno) === norm(t.nombre) || l.startTime === t.ini) && (l.date === fecha || norm(l.turno) === norm(t.nombre))));
+        if (okOp) return true;
+        const nombres = (window.inoferCargaRapida ? inoferCargaRapida.turnos() : []).map(x => norm(x.nombre));
+        return partes().some(r => String(r.date).slice(0, 10) === fecha && maqId(r.machine) === m && (norm(r.shift) === norm(t.nombre) || !nombres.includes(norm(r.shift))));
+      }
+      function turnosSinCargar() {
+        if (!window.inoferCargaRapida) return [];
+        const T = inoferCargaRapida.turnos();
+        const ahora = Date.now();
+        const ign = D('avisos').ignorados || {};
+        const out = [];
+        for (let back = 0; back <= 2; back++) {
+          const fecha = masDias(hoyIso(), -back);
+          T.forEach(t => {
+            const noct = aMin(t.fin) <= aMin(t.ini);
+            const fin = new Date((noct ? masDias(fecha, 1) : fecha) + 'T' + t.fin + ':00').getTime();
+            if (ahora < fin + 30 * 60000 || ahora - fin > 50 * 3600000) return;
+            MAQS().forEach(m => {
+              if (window.inoferMaquinaDisponible && !inoferMaquinaDisponible(m, fecha)) return;
+              if (!planificadoEnGantt(m, fecha)) return;
+              const key = m + '|' + fecha + '|' + t.nombre;
+              if (ign[key]) return;
+              if (hayCarga(m, fecha, t, noct)) return;
+              out.push({ m, fecha, t, key });
+            });
+          });
+        }
+        return out;
+      }
+      function preventivosPendientes() {
+        const out = [];
+        (D('mantenimiento').planes || []).forEach(p => {
+          const prox = p.ultimo ? masDias(p.ultimo, Number(p.cadaDias) || 0) : '';
+          const falta = prox ? difDias(prox, hoyIso()) : null;
+          if (falta == null || falta <= (Number(p.avisoDias) || 3)) out.push({ p, prox, falta });
+        });
+        return out;
+      }
+      let avisosCache = [];
+      function calcularAvisos() {
+        const L = [];
+        if (!sesion()) return L;
+        if (avisosCarga()) turnosSinCargar().forEach(x => L.push({ id: 'c-' + x.key, ico: '⏰', color: 'amber', txt: `Falta cargar el turno <b>${esc(x.t.nombre)}</b> de la <b>${esc(x.m)}</b> · ${fDia(x.fecha)}`, sub: 'Estaba programada en el Gantt', acciones: [['cargar', 'Cargar'], ['ignorar', 'No se trabajó']], x }));
+        if (verMant()) preventivosPendientes().forEach(x => L.push({ id: 'p-' + x.p.id, ico: '🔧', color: x.falta != null && x.falta < 0 ? 'rose' : 'sky', txt: `Preventivo <b>${esc(x.p.tarea)}</b> · ${esc(x.p.maquina)}`, sub: x.falta == null ? 'Nunca registrado' : (x.falta < 0 ? `Vencido hace ${-x.falta} día${x.falta < -1 ? 's' : ''}` : (x.falta === 0 ? 'Vence hoy' : `Vence en ${x.falta} día${x.falta > 1 ? 's' : ''} (${fFecha(x.prox)})`)), acciones: [['mant', 'Ver']] }));
+        if (verStock()) { try { calcStock().materiales.forEach(s => { if (s.alerta) L.push({ id: 's-' + s.nombre, ico: '📦', color: s.nivel === 'rojo' ? 'rose' : 'amber', txt: `<b>${esc(s.nombre)}</b>: ${esc(s.alerta)}`, sub: s.stock != null ? `Stock ${n0(s.stock)} kg` : '', acciones: [['stock', 'Ver']] }); }); } catch (e) { } }
+        if (esAdmin()) {
+          const P = porcentajes();
+          if (P.max >= 70) L.push({ id: 'esp', ico: '💾', color: P.max >= 85 ? 'rose' : 'amber', txt: `Espacio de almacenamiento al <b>${n1(P.max)}%</b>`, sub: P.loc >= P.cel && P.loc >= P.prp ? 'En este equipo: conviene archivar órdenes viejas' : 'En la nube: conviene archivar órdenes viejas', acciones: [['almacen', 'Ver']] });
+        }
+        if (verInforme() && enNube()) {
+          const dow = new Date().getDay(), lun = lunesDe(hoyIso()), sem = masDias(lun, -7);
+          let visto = ''; try { visto = localStorage.getItem('tablero_inyectoras_informe_visto_v1') || ''; } catch (e) { }
+          if (dow >= 1 && dow <= 3 && visto !== sem) L.push({ id: 'i-' + sem, ico: '📄', color: 'cyan', txt: `Ya está el <b>informe de la semana pasada</b>`, sub: `Del ${fFecha(sem)} al ${fFecha(masDias(sem, 6))}`, acciones: [['informe', 'Ver informe']] });
+        }
+        return L;
+      }
+      function montarAvisos() {
+        if ($('inoferAvisosBtn') || !$('inoferUserChip') || !sesion()) return;
+        const chip = $('inoferUserChip');
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'inoferAvisosBtn'; b.title = 'Avisos';
+        b.className = 'relative inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700';
+        b.innerHTML = '🔔<span class="hidden sm:inline">Avisos</span><span id="inoferAvisosBadge" class="hidden absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-black text-white"></span>';
+        const wrap = chip.parentElement; wrap.parentElement.insertBefore(b, wrap);
+        b.addEventListener('click', e => { e.stopPropagation(); const p = $('inoferAvisosPanel'); if (p && !p.classList.contains('hidden')) p.classList.add('hidden'); else abrirAvisos(); });
+        document.addEventListener('click', e => { const p = $('inoferAvisosPanel'); if (p && !p.contains(e.target) && !e.target.closest('#inoferAvisosBtn')) p.classList.add('hidden'); });
+      }
+      function pintarBadge() {
+        const bd = $('inoferAvisosBadge'); if (!bd) return;
+        const n = avisosCache.length;
+        bd.textContent = n > 99 ? '99+' : String(n); bd.classList.toggle('hidden', !n);
+        const p = $('inoferAvisosPanel'); if (p && !p.classList.contains('hidden')) abrirAvisos();
+      }
+      let tAvisos = null;
+      function programarAvisos() { clearTimeout(tAvisos); tAvisos = setTimeout(() => { try { avisosCache = calcularAvisos(); pintarBadge(); } catch (e) { console.error(e); } }, 400); }
+      setInterval(programarAvisos, 60000);
+      function abrirAvisos() {
+        let p = $('inoferAvisosPanel');
+        if (!p) { p = document.createElement('div'); p.id = 'inoferAvisosPanel'; p.className = 'fixed right-2 top-16 z-[65] w-[min(420px,calc(100vw-16px))] max-h-[75vh] overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-3 shadow-2xl'; document.body.appendChild(p); p.addEventListener('click', accionAviso); }
+        p.classList.remove('hidden');
+        const L = avisosCache;
+        p.innerHTML = `<div class="mb-2 flex items-center justify-between"><span class="text-sm font-black text-white">🔔 Avisos</span><span class="text-[11px] text-slate-500">${L.length ? L.length + ' pendiente' + (L.length > 1 ? 's' : '') : ''}</span></div>` +
+          (L.length ? L.map(a => `<div class="mb-2 rounded-xl border border-${a.color}-500/30 bg-${a.color}-500/10 p-2.5"><div class="flex gap-2"><span class="text-lg leading-none">${a.ico}</span><div class="min-w-0 flex-1"><div class="text-xs text-slate-100">${a.txt}</div>${a.sub ? `<div class="text-[11px] text-slate-400">${esc(a.sub)}</div>` : ''}
+            <div class="mt-1.5 flex flex-wrap gap-1.5">${a.acciones.map(([k, t]) => `<button type="button" class="av-acc ${BTN} ${k === 'ignorar' ? 'border-slate-700 text-slate-300' : `border-${a.color}-400/60 text-${a.color}-200`}" data-a="${k}" data-id="${esc(a.id)}">${t}</button>`).join('')}</div></div></div></div>`).join('')
+            : '<div class="py-6 text-center text-xs text-slate-400">✅ No hay avisos pendientes</div>') +
+          (verInforme() && enNube() ? '<button type="button" class="av-acc mt-1 w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300 hover:text-white" data-a="informe">📄 Ver el informe semanal</button>' : '');
+      }
+      function accionAviso(e) {
+        const b = e.target.closest('.av-acc'); if (!b) return;
+        const a = avisosCache.find(x => x.id === b.dataset.id);
+        const acc = b.dataset.a;
+        if (acc === 'cargar' && a) { $('inoferAvisosPanel').classList.add('hidden'); inoferCargaRapida.abrir({ maq: a.x.m, fecha: a.x.fecha, turnoNombre: a.x.t.nombre }); toast(`Elegí la orden de la ${a.x.m} y cargá el turno ${a.x.t.nombre} del ${fFecha(a.x.fecha)}`); }
+        else if (acc === 'ignorar' && a) {
+          const av = D('avisos'); av.ignorados = av.ignorados || {};
+          av.ignorados[a.x.key] = { por: quien(), at: new Date().toISOString() };
+          const lim = masDias(hoyIso(), -10); Object.keys(av.ignorados).forEach(k => { if (k.split('|')[1] < lim) delete av.ignorados[k]; });
+          guardarMod('avisos'); programarAvisos();
+        }
+        else if (acc === 'mant') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('mant'); }
+        else if (acc === 'stock') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('stock'); }
+        else if (acc === 'informe') { $('inoferAvisosPanel').classList.add('hidden'); abrirInforme(); }
+        else if (acc === 'almacen') { $('inoferAvisosPanel').classList.add('hidden'); abrirAlmacen(); }
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 5) Mantenimiento
+      // ---------------------------------------------------------------------------------
+      let mantDias = 90, mantFiltro = '', mantForm = '';
+      function indicadoresMaq(m, desde) {
+        const ev = eventosProduccion(desde, hoyIso()).filter(x => x.maq === m);
+        let disp = 0, paradas = 0, corr = 0, fallas = 0; const causas = {};
+        ev.forEach(x => {
+          disp += x.disp;
+          Object.keys(x.cat).forEach(k => { paradas += x.cat[k]; });
+          corr += x.cat.mant_correctivo || 0;
+          const pc = x.paradas.filter(p => p.cat === 'mant_correctivo');
+          if (pc.length) { fallas += pc.length; pc.forEach(p => { causas[p.codigo] = (causas[p.codigo] || 0) + p.min / 60; }); }
+          else if (x.cat.mant_correctivo) { fallas += 1; causas['Mant. correctivo (parte)'] = (causas['Mant. correctivo (parte)'] || 0) + x.cat.mant_correctivo; }
+        });
+        const andando = Math.max(0, disp - paradas);
+        return { disp, paradas, corr, fallas, mtbf: fallas ? andando / fallas : null, mttr: fallas ? corr / fallas : null, causas: Object.entries(causas).sort((a, b) => b[1] - a[1]).slice(0, 3), turnos: ev.length };
+      }
+      function renderMant() {
+        const v = $('viewMant'); if (!v || v.classList.contains('hidden')) return;
+        const M = D('mantenimiento'); const edit = editMant();
+        const desde = masDias(hoyIso(), -mantDias);
+        const planes = (M.planes || []).slice().map(p => { const prox = p.ultimo ? masDias(p.ultimo, Number(p.cadaDias) || 0) : ''; return Object.assign({}, p, { prox, falta: prox ? difDias(prox, hoyIso()) : null }); }).sort((a, b) => (a.falta == null ? -9999 : a.falta) - (b.falta == null ? -9999 : b.falta));
+        const estadoPlan = p => p.falta == null ? ['amber', 'Sin registrar'] : (p.falta < 0 ? ['rose', `Vencido (${-p.falta} d)`] : (p.falta <= (Number(p.avisoDias) || 3) ? ['amber', p.falta === 0 ? 'Vence hoy' : `En ${p.falta} d`] : ['emerald', `En ${p.falta} d`]));
+        const roturas = eventosProduccion(desde, hoyIso()).filter(x => x.cat.mant_correctivo).map(x => ({ fecha: x.fecha, maq: x.maq, tipo: 'Rotura en producción', det: (x.paradas.filter(p => p.cat === 'mant_correctivo').map(p => p.codigo + ' · ' + n1(p.min / 60) + ' h').join('; ') || n1(x.cat.mant_correctivo) + ' h de correctivo') + (x.op ? ` · OP ${x.op}` : ' · parte manual'), horas: x.cat.mant_correctivo, fuente: x.fuente }));
+        const trabajos = (M.trabajos || []).filter(t => t.fecha >= desde).map(t => ({ fecha: t.fecha, maq: t.maquina, tipo: t.tipo === 'preventivo' ? 'Preventivo' : (t.tipo === 'mejora' ? 'Mejora' : 'Reparación'), det: [t.tarea, t.descripcion, t.repuestos ? 'Repuestos: ' + t.repuestos : '', t.hecho_por ? 'Por ' + t.hecho_por : ''].filter(Boolean).join(' · '), horas: Number(t.horas) || 0, id: t.id }));
+        const hist = trabajos.concat(roturas).filter(x => !mantFiltro || x.maq === mantFiltro).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+        const tarjetas = MAQS().map(m => {
+          const k = indicadoresMaq(m, desde);
+          const e = window.inoferMaquinaEstado ? inoferMaquinaEstado(m) : { activa: true };
+          const prox = planes.find(p => p.maquina === m);
+          return `<div class="rounded-2xl border ${e.activa ? 'border-slate-700' : 'border-rose-500/60'} bg-slate-950/60 p-3">
+            <div class="flex items-center justify-between gap-2"><span class="text-xl font-black text-amber-300">${esc(m)}</span>
+              ${e.activa ? '<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">✅ En servicio</span>' : `<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-200">⛔ Fuera de servicio</span>`}</div>
+            ${e.activa ? '' : `<div class="mt-1 text-[11px] text-rose-200">${esc(e.motivo || 'Sin motivo')}${e.desde || e.hasta ? ` · ${e.desde ? 'desde ' + fFecha(e.desde) : ''} ${e.hasta ? 'hasta ' + fFecha(e.hasta) : ''}` : ''}</div>`}
+            <div class="mt-2 grid grid-cols-2 gap-1.5 text-center">
+              <div class="rounded-lg bg-slate-900 p-1.5" title="Tiempo medio entre fallas: horas de máquina andando entre una rotura y la siguiente. Más alto es mejor."><div class="text-[10px] uppercase text-slate-500">MTBF</div><div class="text-sm font-black text-white">${k.mtbf == null ? '—' : n1(k.mtbf) + ' h'}</div></div>
+              <div class="rounded-lg bg-slate-900 p-1.5" title="Tiempo medio de reparación: cuánto dura en promedio cada rotura. Más bajo es mejor."><div class="text-[10px] uppercase text-slate-500">MTTR</div><div class="text-sm font-black text-white">${k.mttr == null ? '—' : n1(k.mttr) + ' h'}</div></div>
+              <div class="rounded-lg bg-slate-900 p-1.5"><div class="text-[10px] uppercase text-slate-500">Roturas</div><div class="text-sm font-black ${k.fallas ? 'text-rose-300' : 'text-white'}">${k.fallas}</div></div>
+              <div class="rounded-lg bg-slate-900 p-1.5"><div class="text-[10px] uppercase text-slate-500">Hs correctivo</div><div class="text-sm font-black text-white">${n1(k.corr)}</div></div>
+            </div>
+            ${k.causas.length ? `<div class="mt-2 text-[10px] text-slate-400">Principal: ${esc(k.causas[0][0])} (${n1(k.causas[0][1])} h)</div>` : `<div class="mt-2 text-[10px] text-slate-500">${k.turnos ? 'Sin roturas en el período' : 'Sin turnos cargados en el período'}</div>`}
+            ${prox ? `<div class="mt-1 text-[10px] ${prox.falta != null && prox.falta < 0 ? 'text-rose-300' : 'text-slate-400'}">Próximo preventivo: ${esc(prox.tarea)} · ${prox.prox ? fFecha(prox.prox) : 'sin registrar'}</div>` : ''}
+            ${edit ? `<button type="button" class="mt-2 w-full mt-estado ${BTN} ${e.activa ? 'border-rose-500/40 text-rose-200' : 'border-emerald-500/50 text-emerald-200'}" data-m="${esc(m)}">${e.activa ? '⛔ Poner fuera de servicio' : '✅ Volver a habilitar'}</button>` : ''}
+          </div>`;
+        }).join('');
+        const form = mantForm === 'trabajo' ? `<form class="inofer-planta-form mt-form rounded-2xl border border-cyan-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-3" data-f="trabajo">
+            <div class="sm:col-span-3 text-sm font-black text-cyan-300">Registrar trabajo de mantenimiento</div>
+            <label class="text-[11px] text-slate-400">Máquina<select name="maquina" class="${INP} w-full">${MAQS().map(m => `<option>${m}</option>`).join('')}</select></label>
+            <label class="text-[11px] text-slate-400">Tipo<select name="tipo" class="${INP} w-full"><option value="correctivo">Reparación / rotura</option><option value="preventivo">Preventivo</option><option value="mejora">Mejora</option></select></label>
+            <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Qué se hizo<input name="tarea" required placeholder="Ej: cambio de bomba hidráulica" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Horas de máquina parada<input type="number" step="0.25" min="0" name="horas" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Detalle / causa<input name="descripcion" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Hecho por<input name="hecho_por" value="${esc((sesion() || {}).nombre || '')}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Repuestos usados<input name="repuestos" class="${INP} w-full"></label>
+            <label class="flex items-center gap-2 text-[11px] text-rose-200"><input type="checkbox" name="fuera"> La máquina queda fuera de servicio</label>
+            <div class="sm:col-span-3 flex justify-end gap-2"><button type="button" class="mt-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar</button></div></form>`
+          : mantForm === 'plan' ? `<form class="inofer-planta-form mt-form rounded-2xl border border-sky-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4" data-f="plan">
+            <div class="sm:col-span-4 text-sm font-black text-sky-300">Nuevo mantenimiento preventivo</div>
+            <label class="text-[11px] text-slate-400">Máquina<select name="maquina" class="${INP} w-full">${MAQS().map(m => `<option>${m}</option>`).join('')}<option value="TODAS">Todas (uno por máquina)</option></select></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Tarea<input name="tarea" required placeholder="Ej: cambio de aceite hidráulico" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Cada cuántos días<input type="number" min="1" name="cadaDias" required value="30" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Última vez que se hizo<input type="date" name="ultimo" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Avisar con días de anticipación<input type="number" min="0" name="avisoDias" value="3" class="${INP} w-full"></label>
+            <div class="sm:col-span-2 flex items-end justify-end gap-2"><button type="button" class="mt-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-sky-400 bg-sky-500 text-slate-950">Guardar</button></div></form>` : '';
+        v.innerHTML = `<div class="rounded-2xl border border-orange-500/30 bg-slate-900/80 p-4 shadow-xl space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">🔧 Mantenimiento de máquinas</h2>
+            <p class="text-xs text-slate-400">Las roturas salen solas de las paradas cargadas en las órdenes y partes (mantenimiento correctivo). Acá registrás las reparaciones y armás el plan preventivo con avisos.</p></div>
+            <div class="flex flex-wrap items-center gap-2"><select id="mtDias" class="${INP}">${[[30, 'Último mes'], [90, 'Últimos 3 meses'], [180, 'Últimos 6 meses'], [365, 'Último año']].map(([d, t]) => `<option value="${d}" ${d === mantDias ? 'selected' : ''}>${t}</option>`).join('')}</select>
+              ${edit ? `<button type="button" class="mt-nuevo ${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200" data-f="trabajo">+ Registrar trabajo</button><button type="button" class="mt-nuevo ${BTN} border-sky-500/50 bg-sky-500/15 text-sky-200" data-f="plan">+ Preventivo</button>` : ''}</div></div>
+          ${form}
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">${tarjetas}</div>
+          <div><div class="mb-2 text-sm font-black text-white">📅 Plan preventivo</div>
+            ${planes.length ? `<div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Máquina</th><th class="pr-2">Tarea</th><th class="pr-2">Cada</th><th class="pr-2">Última</th><th class="pr-2">Próxima</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
+              ${planes.map(p => { const [c, t] = estadoPlan(p); return `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(p.maquina)}</td><td class="pr-2 text-slate-200">${esc(p.tarea)}</td><td class="pr-2 text-slate-400">${p.cadaDias} días</td><td class="pr-2 text-slate-400">${p.ultimo ? fFecha(p.ultimo) : '—'}</td><td class="pr-2 text-slate-300">${p.prox ? fDia(p.prox) : '—'}</td><td class="pr-2"><span class="rounded-full bg-${c}-500/15 px-2 py-0.5 text-[10px] font-bold text-${c}-300">${t}</span></td>
+                <td class="whitespace-nowrap text-right">${edit ? `<button type="button" class="mt-hecho ${BTN} border-emerald-500/50 text-emerald-200" data-id="${esc(p.id)}">✓ Hecho hoy</button> <button type="button" class="mt-plan-del ${BTN} border-slate-700 text-slate-400" data-id="${esc(p.id)}">🗑️</button>` : ''}</td></tr>`; }).join('')}
+            </tbody></table></div>` : `<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">Todavía no hay preventivos cargados. ${edit ? 'Tocá <b>+ Preventivo</b> y poné cada cuántos días se hace (cambio de aceite, limpieza de filtros, revisión de termocuplas…). INOFER te avisa cuando se acerca la fecha.' : ''}</div>`}</div>
+          <div><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">🧾 Historial</span><select id="mtFiltro" class="${INP}"><option value="">Todas las máquinas</option>${MAQS().map(m => `<option ${m === mantFiltro ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+            ${hist.length ? `<div class="max-h-[420px] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fecha</th><th class="pr-2">Máquina</th><th class="pr-2">Tipo</th><th class="pr-2">Detalle</th><th class="pr-2 text-right">Horas</th><th></th></tr></thead><tbody>
+              ${hist.map(x => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 whitespace-nowrap text-slate-300">${fDia(x.fecha)}</td><td class="pr-2 font-bold text-white">${esc(x.maq)}</td><td class="pr-2"><span class="rounded bg-${x.tipo === 'Preventivo' ? 'sky' : (x.tipo === 'Mejora' ? 'violet' : (x.tipo === 'Reparación' ? 'cyan' : 'rose'))}-500/15 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">${esc(x.tipo)}</span></td><td class="pr-2 text-slate-300">${esc(x.det)}</td><td class="pr-2 text-right text-slate-300">${x.horas ? n1(x.horas) : ''}</td><td class="text-right">${x.id && edit ? `<button type="button" class="mt-tr-del text-slate-500 hover:text-rose-300" data-id="${esc(x.id)}">🗑️</button>` : ''}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="text-xs text-slate-400">No hay registros en el período.</div>'}</div>
+          <p class="text-[11px] text-slate-500">MTBF = horas de máquina andando ÷ cantidad de roturas (más alto es mejor). MTTR = horas de reparación ÷ cantidad de roturas (más bajo es mejor). Cada parada de mantenimiento correctivo cargada en un turno cuenta como una rotura.</p>
+        </div>`;
+      }
+      function montarMant() {
+        crearPestana('Mant', '🔧 Mantenimiento', 'text-orange-300', 'bg-orange-500', verMant, renderMant);
+        const v = $('viewMant'); if (!v || v.__ok) return; v.__ok = 1;
+        RENDER.mantenimiento = [renderMant];
+        v.addEventListener('change', e => { if (e.target.id === 'mtDias') { mantDias = Number(e.target.value) || 90; renderMant(); } if (e.target.id === 'mtFiltro') { mantFiltro = e.target.value; renderMant(); } });
+        v.addEventListener('click', e => {
+          const g = s => e.target.closest(s); let b;
+          if ((b = g('.mt-nuevo'))) { mantForm = mantForm === b.dataset.f ? '' : b.dataset.f; renderMant(); return; }
+          if (g('.mt-cancel')) { mantForm = ''; renderMant(); return; }
+          if (!editMant()) return;
+          const M = D('mantenimiento');
+          if ((b = g('.mt-hecho'))) {
+            const p = M.planes.find(x => x.id === b.dataset.id); if (!p) return;
+            p.ultimo = hoyIso();
+            M.trabajos.push({ id: 'mt-' + Date.now(), maquina: p.maquina, fecha: hoyIso(), tipo: 'preventivo', tarea: p.tarea, planId: p.id, hecho_por: (sesion() || {}).nombre || '', cargadoPor: quien(), cargadoAt: new Date().toISOString() });
+            guardarMod('mantenimiento'); renderMant(); programarAvisos(); toast('✓ Preventivo registrado'); return;
+          }
+          if ((b = g('.mt-plan-del'))) { const p = M.planes.find(x => x.id === b.dataset.id); if (!p || !confirm(`¿Borrar el preventivo "${p.tarea}" de la ${p.maquina}?`)) return; M.planes = M.planes.filter(x => x !== p); guardarMod('mantenimiento'); renderMant(); programarAvisos(); return; }
+          if ((b = g('.mt-tr-del'))) { if (!confirm('¿Borrar este registro?')) return; M.trabajos = M.trabajos.filter(x => x.id !== b.dataset.id); guardarMod('mantenimiento'); renderMant(); return; }
+          if ((b = g('.mt-estado'))) {
+            const m = b.dataset.m, e2 = inoferMaquinaEstado(m);
+            if (e2.activa) { const mot = prompt(`¿Por qué queda parada la ${m}? (ej: rotura de bomba, mantenimiento)`, ''); if (mot === null) return; inoferSetMaquinaEstado(m, { activa: false, motivo: mot.trim() }); toast(`⛔ ${m} fuera de servicio: el Gantt ya no le programa piezas`); }
+            else { inoferSetMaquinaEstado(m, { activa: true }); toast(`✅ ${m} habilitada de nuevo`); }
+            renderMant(); programarAvisos();
+          }
+        });
+        v.addEventListener('submit', e => {
+          e.preventDefault();
+          if (!editMant()) { toast('Tu usuario no puede modificar mantenimiento'); return; }
+          const f = e.target, fd = Object.fromEntries(new FormData(f).entries()), M = D('mantenimiento');
+          if (f.dataset.f === 'trabajo') {
+            M.trabajos.push({ id: 'mt-' + Date.now(), maquina: fd.maquina, fecha: fd.fecha || hoyIso(), tipo: fd.tipo, tarea: String(fd.tarea || '').trim(), descripcion: String(fd.descripcion || '').trim(), horas: Number(fd.horas) || 0, repuestos: String(fd.repuestos || '').trim(), hecho_por: String(fd.hecho_por || '').trim(), cargadoPor: quien(), cargadoAt: new Date().toISOString() });
+            if (fd.tipo === 'preventivo') { const p = M.planes.find(x => x.maquina === fd.maquina && norm(x.tarea) === norm(fd.tarea)); if (p && (!p.ultimo || fd.fecha > p.ultimo)) p.ultimo = fd.fecha; }
+            if (fd.fuera && window.inoferSetMaquinaEstado) inoferSetMaquinaEstado(fd.maquina, { activa: false, motivo: String(fd.tarea || fd.descripcion || 'Mantenimiento').trim() });
+            toast('✓ Trabajo registrado');
+          } else {
+            const maqs = fd.maquina === 'TODAS' ? MAQS() : [fd.maquina];
+            maqs.forEach((m, i) => M.planes.push({ id: 'pv-' + Date.now() + '-' + i, maquina: m, tarea: String(fd.tarea || '').trim(), cadaDias: Math.max(1, Number(fd.cadaDias) || 30), ultimo: fd.ultimo || '', avisoDias: Math.max(0, Number(fd.avisoDias) || 0) }));
+            toast('✓ Preventivo agregado');
+          }
+          mantForm = ''; guardarMod('mantenimiento'); renderMant(); programarAvisos();
+        });
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 6) Stock de material y producto terminado
+      // ---------------------------------------------------------------------------------
+      const kgDe = (part, o) => { const c = catDe(part); return Number(c && c.weightWithSprueKg) || Number(o && o.weightWithSprueKg) || 0; };
+      const matDe = (part, o) => String((catDe(part) || {}).material || (o && o.material) || '').toUpperCase().trim();
+      function saldo(movs, base0, consumoDesde) {
+        // movs: [{fecha, tipo: ingreso|ajuste|conteo|despacho, cant, cargadoAt}] → {stock, desde, sinDatos}
+        const L = (movs || []).slice().sort((a, b) => String(a.fecha + (a.cargadoAt || '')).localeCompare(String(b.fecha + (b.cargadoAt || ''))));
+        if (!L.length) return { stock: null, desde: '', sinDatos: true };
+        let idx = -1; L.forEach((m, i) => { if (m.tipo === 'conteo') idx = i; });
+        const base = idx >= 0 ? L[idx] : null;
+        let s = base ? Number(base.cant) || 0 : 0;
+        const desde = base ? base.fecha : L[0].fecha;
+        L.slice(idx + 1).forEach(m => { const c = Number(m.cant) || 0; if (m.tipo === 'ingreso') s += c; else if (m.tipo === 'despacho') s -= c; else if (m.tipo === 'ajuste') s += c; });
+        s -= consumoDesde(desde, !!base);
+        return { stock: s, desde, sinDatos: false };
+      }
+      function consumoMaterial(mat, desde, estricto) {
+        let kg = 0;
+        ordenes().forEach(o => { if (esDemoOrden(o) || matDe(o.part, o) !== mat) return; const k = kgDe(o.part, o); if (!k) return; (o.logs || []).forEach(l => { if (estricto ? l.date > desde : l.date >= desde) kg += ((Number(l.okPcs) || 0) + (Number(l.scrapPcs) || 0) + (Number(l.lowStartPcs) || 0)) * k; }); });
+        return kg;
+      }
+      function producidoPieza(part, desde, estricto) {
+        let u = 0;
+        ordenes().forEach(o => { if (esDemoOrden(o) || norm(o.part) !== norm(part)) return; (o.logs || []).forEach(l => { if (estricto ? l.date > desde : l.date >= desde) u += Number(l.okPcs) || 0; }); });
+        return u;
+      }
+      function programadoPorDia(dias) {
+        // {fecha: {mat: kg}} desde hoy en adelante según el Gantt
+        const out = {}; const W = typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {};
+        const hoy = hoyIso(), fin = masDias(hoy, dias);
+        Object.values(W).forEach(w => {
+          if (!w || !w.startDate) return;
+          Object.keys(w.machines || {}).forEach(m => (((w.machines[m] || {}).items) || []).forEach(it => {
+            if (it.isSharedCompanion) return;
+            const mat = matDe(it.part), k = kgDe(it.part); if (!mat || !k) return;
+            (it.dailyQty || []).forEach((q, d) => { const f = window.inoferFechaDia ? inoferFechaDia(w, d) : ''; if (!f || f < hoy || f > fin || !Number(q)) return; out[f] = out[f] || {}; out[f][mat] = (out[f][mat] || 0) + Number(q) * k; });
+          }));
+        });
+        return out;
+      }
+      function calcStock() {
+        const S = D('stock');
+        const mats = {};
+        (typeof partsCatalog !== 'undefined' ? partsCatalog : []).forEach(c => { const m = String(c.material || '').toUpperCase().trim(); if (m) mats[m] = 1; });
+        Object.keys(S.materiales || {}).forEach(m => { mats[m] = 1; });
+        const prog = programadoPorDia(28);
+        const fechas = Object.keys(prog).sort();
+        const hace7 = masDias(hoyIso(), -7);
+        const materiales = Object.keys(mats).sort().map(nombre => {
+          const d = (S.materiales || {})[nombre] || {};
+          const r = saldo((d.movimientos || []).map(m => ({ fecha: m.fecha, tipo: m.tipo, cant: m.kg, cargadoAt: m.cargadoAt })), 0, (desde, est) => consumoMaterial(nombre, desde, est));
+          const c7 = consumoMaterial(nombre, hace7, false);
+          let acum = 0, alcanza = '', bajoMin = '';
+          const min = Number(d.minimo) || 0;
+          const prog14 = fechas.filter(f => f <= masDias(hoyIso(), 14)).reduce((a, f) => a + ((prog[f] || {})[nombre] || 0), 0);
+          if (r.stock != null) fechas.forEach(f => { acum += (prog[f] || {})[nombre] || 0; if (!alcanza && r.stock - acum < 0) alcanza = f; if (!bajoMin && min && r.stock - acum < min) bajoMin = f; });
+          let alerta = '', nivel = '';
+          if (r.stock != null) {
+            if (r.stock < 0) { alerta = 'el stock calculado da negativo: hacé un conteo'; nivel = 'rojo'; }
+            else if (min && r.stock < min) { alerta = `está debajo del mínimo (${n0(min)} kg)`; nivel = 'rojo'; }
+            else if (alcanza && difDias(alcanza, hoyIso()) <= 7) { alerta = `con lo programado se termina el ${fDia(alcanza)}`; nivel = 'rojo'; }
+            else if (bajoMin && difDias(bajoMin, hoyIso()) <= 7) { alerta = `con lo programado queda bajo el mínimo el ${fDia(bajoMin)}`; nivel = 'amarillo'; }
+          }
+          return { nombre, minimo: min, stock: r.stock, desde: r.desde, sinDatos: r.sinDatos, c7, prog14, alcanza, bajoMin, alerta, nivel, movimientos: d.movimientos || [] };
+        });
+        const piezas = {};
+        Object.keys(S.terminado || {}).forEach(p => { piezas[p] = 1; });
+        ordenes().forEach(o => { if (!esDemoOrden(o) && (o.logs || []).some(l => l.date >= masDias(hoyIso(), -30))) piezas[o.part] = 1; });
+        const terminado = Object.keys(piezas).sort().map(part => {
+          const d = (S.terminado || {})[part] || {};
+          const r = saldo(d.movimientos || [], 0, (desde, est) => producidoPieza(part, desde, est));
+          const prod7 = producidoPieza(part, hace7, false);
+          const desp7 = (d.movimientos || []).filter(m => m.tipo === 'despacho' && m.fecha >= hace7).reduce((a, m) => a + (Number(m.cant) || 0), 0);
+          return { part, stock: r.stock, sinDatos: r.sinDatos, desde: r.desde, prod7, desp7, minimo: Number(d.minimo) || 0, movimientos: d.movimientos || [] };
+        });
+        // piezas sin peso o material (programadas o producidas)
+        const sinPeso = {};
+        Object.values(typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {}).forEach(w => Object.values((w && w.machines) || {}).forEach(md => ((md && md.items) || []).forEach(it => { if (!it.isSharedCompanion && (!kgDe(it.part) || !matDe(it.part))) sinPeso[it.part] = 1; })));
+        return { materiales, terminado, sinPeso: Object.keys(sinPeso).slice(0, 40) };
+      }
+      let stockForm = null, stockBuscar = '';
+      function renderStock() {
+        const v = $('viewStock'); if (!v || v.classList.contains('hidden')) return;
+        const C = calcStock(), edit = editStock();
+        const est = s => s.stock == null ? '<span class="text-slate-500">Sin datos</span>' : `<b class="${s.nivel === 'rojo' ? 'text-rose-300' : (s.nivel ? 'text-amber-300' : 'text-white')}">${n0(s.stock)} kg</b>`;
+        const fm = stockForm;
+        const form = fm ? `<form class="inofer-planta-form st-form rounded-2xl border border-teal-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
+          <div class="sm:col-span-4 text-sm font-black text-teal-300">${{ ingreso: '📥 Ingreso de material', conteo: '🔢 Conteo físico de material', despacho: '🚚 Despacho de piezas', conteoP: '🔢 Conteo de piezas terminadas', ingresoP: '📥 Ingreso de piezas (sin OP)' }[fm.tipo]}</div>
+          ${fm.tipo === 'ingreso' || fm.tipo === 'conteo' ? `<label class="text-[11px] text-slate-400">Material<input name="clave" list="stMatList" required value="${esc(fm.clave || '')}" class="${INP} w-full"><datalist id="stMatList">${C.materiales.map(m => `<option value="${esc(m.nombre)}">`).join('')}</datalist></label>
+            <label class="text-[11px] text-slate-400">${fm.tipo === 'conteo' ? 'Kg que hay realmente' : 'Kg que ingresan'}<input type="number" step="0.1" min="0" name="cant" required class="${INP} w-full"></label>`
+          : `<label class="text-[11px] text-slate-400">Pieza<input name="clave" list="stPzList" required value="${esc(fm.clave || '')}" class="${INP} w-full"><datalist id="stPzList">${(typeof partsCatalog !== 'undefined' ? partsCatalog : []).slice(0, 600).map(c => `<option value="${esc(c.part)}">`).join('')}</datalist></label>
+            <label class="text-[11px] text-slate-400">${fm.tipo === 'conteoP' ? 'Piezas que hay realmente' : 'Cantidad de piezas'}<input type="number" step="1" min="0" name="cant" required class="${INP} w-full"></label>`}
+          <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
+          <label class="text-[11px] text-slate-400">${fm.tipo === 'despacho' ? 'Cliente / remito' : (fm.tipo === 'ingreso' ? 'Proveedor / remito' : 'Nota')}<input name="nota" class="${INP} w-full"></label>
+          ${fm.tipo === 'conteo' || fm.tipo === 'conteoP' ? '<p class="sm:col-span-4 text-[11px] text-slate-400">El conteo es lo que hay al <b>final del día</b> elegido. Desde ahí INOFER resta solo lo que se consume (o suma lo que se produce) en los turnos siguientes.</p>' : ''}
+          <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-teal-400 bg-teal-500 text-slate-950">Guardar</button></div></form>` : '';
+        const ter = C.terminado.filter(t => !stockBuscar || norm(t.part).includes(norm(stockBuscar)));
+        v.innerHTML = `<div class="rounded-2xl border border-teal-500/30 bg-slate-900/80 p-4 shadow-xl space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">📦 Stock</h2>
+            <p class="text-xs text-slate-400">El consumo de material sale solo de los turnos cargados (piezas buenas + scrap + arranque × peso con colada de la base de datos). Las piezas producidas suman al stock de terminado; los despachos restan.</p></div>
+            ${edit ? `<div class="flex flex-wrap gap-2"><button type="button" class="st-nuevo ${BTN} border-teal-500/50 bg-teal-500/15 text-teal-200" data-t="ingreso">📥 Ingreso de material</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteo">🔢 Conteo de material</button><button type="button" class="st-nuevo ${BTN} border-amber-500/50 bg-amber-500/10 text-amber-200" data-t="despacho">🚚 Despacho</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteoP">🔢 Conteo de piezas</button></div>` : ''}</div>
+          ${form}
+          <div><div class="mb-2 text-sm font-black text-white">🧱 Materiales</div><div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Material</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">Mínimo</th><th class="pr-2 text-right">Consumo 7 días</th><th class="pr-2 text-right">Programado 14 días</th><th class="pr-2">Alcanza hasta</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
+            ${C.materiales.map(s => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(s.nombre)}</td><td class="pr-2 text-right">${est(s)}${s.desde ? `<div class="text-[10px] text-slate-500">desde ${fFecha(s.desde)}</div>` : ''}</td>
+              <td class="pr-2 text-right">${edit ? `<input type="number" min="0" step="1" class="st-min ${INP} w-20 text-right" data-g="materiales" data-k="${esc(s.nombre)}" value="${s.minimo || ''}" placeholder="—">` : (s.minimo ? n0(s.minimo) : '—')}</td>
+              <td class="pr-2 text-right text-slate-300">${n0(s.c7)} kg</td><td class="pr-2 text-right text-slate-300">${n0(s.prog14)} kg</td>
+              <td class="pr-2 ${s.alcanza && difDias(s.alcanza, hoyIso()) <= 7 ? 'text-rose-300 font-bold' : 'text-slate-300'}">${s.stock == null ? '—' : (s.alcanza ? fDia(s.alcanza) : 'más de 4 semanas')}</td>
+              <td class="pr-2 text-[11px] ${s.nivel === 'rojo' ? 'text-rose-300' : (s.nivel ? 'text-amber-300' : 'text-emerald-300')}">${s.sinDatos ? '<span class="text-slate-500">Cargá un conteo inicial</span>' : esc(s.alerta || 'OK')}</td>
+              <td class="text-right"><button type="button" class="st-movs text-[11px] text-slate-400 hover:text-white" data-g="materiales" data-k="${esc(s.nombre)}">movimientos</button></td></tr>`).join('') || '<tr><td colspan="8" class="py-3 text-slate-400">No hay materiales en la base de datos.</td></tr>'}
+          </tbody></table></div></div>
+          ${C.sinPeso.length ? `<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">⚠️ ${C.sinPeso.length} pieza${C.sinPeso.length > 1 ? 's' : ''} del Gantt sin peso o material en la base de datos (no se cuentan en el consumo): ${C.sinPeso.slice(0, 15).map(esc).join(', ')}${C.sinPeso.length > 15 ? '…' : ''}. Completalos en Órdenes → Base de datos (material y peso c/colada).</div>` : ''}
+          <div><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">🧩 Producto terminado</span><input id="stBuscar" value="${esc(stockBuscar)}" placeholder="Buscar pieza…" class="${INP} w-48"></div>
+            <div class="max-h-[460px] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Pieza</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">Producido 7 días</th><th class="pr-2 text-right">Despachado 7 días</th><th class="pr-2 text-right">Mínimo</th><th></th></tr></thead><tbody>
+              ${ter.map(t => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(t.part)}</td><td class="pr-2 text-right">${t.stock == null ? '<span class="text-slate-500">Sin conteo</span>' : `<b class="${t.minimo && t.stock < t.minimo ? 'text-rose-300' : 'text-white'}">${n0(t.stock)}</b>`}</td><td class="pr-2 text-right text-emerald-300">${n0(t.prod7)}</td><td class="pr-2 text-right text-amber-300">${n0(t.desp7)}</td>
+                <td class="pr-2 text-right">${edit ? `<input type="number" min="0" step="1" class="st-min ${INP} w-20 text-right" data-g="terminado" data-k="${esc(t.part)}" value="${t.minimo || ''}" placeholder="—">` : (t.minimo ? n0(t.minimo) : '—')}</td>
+                <td class="whitespace-nowrap text-right">${edit ? `<button type="button" class="st-nuevo text-[11px] text-amber-300" data-t="despacho" data-k="${esc(t.part)}">🚚</button> <button type="button" class="st-nuevo text-[11px] text-slate-300" data-t="conteoP" data-k="${esc(t.part)}">🔢</button> ` : ''}<button type="button" class="st-movs text-[11px] text-slate-400 hover:text-white" data-g="terminado" data-k="${esc(t.part)}">movimientos</button></td></tr>`).join('') || '<tr><td colspan="6" class="py-3 text-slate-400">Todavía no hay piezas con producción reciente o movimientos.</td></tr>'}
+            </tbody></table></div>
+            <p class="mt-1 text-[11px] text-slate-500">Para que el stock de una pieza sea real, hacé un conteo una vez (🔢). Después se suma lo producido en las órdenes y se resta cada despacho.</p></div>
+        </div>`;
+      }
+      function verMovimientos(g, k) {
+        const S = D('stock'); const d = ((S[g] || {})[k]) || {}; const edit = editStock();
+        const L = (d.movimientos || []).slice().sort((a, b) => String(b.fecha + (b.cargadoAt || '')).localeCompare(String(a.fecha + (a.cargadoAt || ''))));
+        const u = g === 'materiales' ? 'kg' : 'u';
+        const w = modal(`Movimientos · ${esc(k)}`, L.length ? `<table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fecha</th><th class="pr-2">Tipo</th><th class="pr-2 text-right">Cantidad</th><th class="pr-2">Nota</th><th class="pr-2">Cargó</th><th></th></tr></thead><tbody>${L.map(m => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 text-slate-300">${fDia(m.fecha)}</td><td class="pr-2 text-white">${esc(m.tipo)}</td><td class="pr-2 text-right font-bold text-white">${n1(g === 'materiales' ? m.kg : m.cant)} ${u}</td><td class="pr-2 text-slate-400">${esc(m.nota || '')}</td><td class="pr-2 text-[10px] text-slate-500">${esc(m.por || '')}</td><td class="text-right">${edit ? `<button type="button" class="stm-del text-slate-500 hover:text-rose-300" data-id="${esc(m.id)}">🗑️</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="text-xs text-slate-400">Sin movimientos cargados.</div>', 'max-w-2xl');
+        w.addEventListener('click', e => { const b = e.target.closest('.stm-del'); if (!b || !editStock() || !confirm('¿Borrar este movimiento?')) return; d.movimientos = d.movimientos.filter(m => m.id !== b.dataset.id); guardarMod('stock'); verMovimientos(g, k); renderStock(); programarAvisos(); });
+      }
+      function montarStock() {
+        crearPestana('Stock', '📦 Stock', 'text-teal-300', 'bg-teal-500', verStock, renderStock);
+        const v = $('viewStock'); if (!v || v.__ok) return; v.__ok = 1;
+        RENDER.stock = [renderStock];
+        v.addEventListener('click', e => {
+          const g = s => e.target.closest(s); let b;
+          if ((b = g('.st-nuevo'))) { stockForm = { tipo: b.dataset.t, clave: b.dataset.k || '' }; renderStock(); setTimeout(() => { const i = v.querySelector('.st-form [name="' + (b.dataset.k ? 'cant' : 'clave') + '"]'); if (i) i.focus(); }, 30); return; }
+          if (g('.st-cancel')) { stockForm = null; renderStock(); return; }
+          if ((b = g('.st-movs'))) verMovimientos(b.dataset.g, b.dataset.k);
+        });
+        v.addEventListener('input', e => { if (e.target.id === 'stBuscar') { stockBuscar = e.target.value; const pos = e.target.selectionStart; renderStock(); const i = $('stBuscar'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (er) { } } } });
+        v.addEventListener('change', e => {
+          const el = e.target; if (!el.classList.contains('st-min') || !editStock()) return;
+          const S = D('stock'); S[el.dataset.g] = S[el.dataset.g] || {}; const d = S[el.dataset.g][el.dataset.k] = S[el.dataset.g][el.dataset.k] || { movimientos: [] };
+          d.minimo = Math.max(0, Number(el.value) || 0); guardarMod('stock'); renderStock(); programarAvisos();
+        });
+        v.addEventListener('submit', e => {
+          e.preventDefault();
+          if (!editStock()) { toast('Tu usuario no puede modificar el stock'); return; }
+          const fd = Object.fromEntries(new FormData(e.target).entries());
+          const tipo = stockForm.tipo; const mat = tipo === 'ingreso' || tipo === 'conteo';
+          const g = mat ? 'materiales' : 'terminado';
+          let clave = String(fd.clave || '').trim(); if (!clave) return;
+          if (mat) clave = clave.toUpperCase(); else { const c = catDe(clave); if (c) clave = c.part; }
+          const cant = Number(fd.cant); if (!(cant >= 0)) { toast('Poné la cantidad'); return; }
+          const S = D('stock'); S[g] = S[g] || {}; const d = S[g][clave] = S[g][clave] || { movimientos: [] }; d.movimientos = d.movimientos || [];
+          const mv = { id: 'sm-' + Date.now(), fecha: fd.fecha || hoyIso(), tipo: { ingreso: 'ingreso', conteo: 'conteo', despacho: 'despacho', conteoP: 'conteo', ingresoP: 'ingreso' }[tipo], nota: String(fd.nota || '').trim(), por: quien(), cargadoAt: new Date().toISOString() };
+          if (mat) mv.kg = cant; else mv.cant = cant;
+          if (mat) d.movimientos.forEach(m => { if (m.kg == null && m.cant != null) m.kg = m.cant; });
+          d.movimientos.push(mv);
+          stockForm = null; guardarMod('stock'); renderStock(); programarAvisos();
+          toast('✓ Guardado');
+        });
+      }
+      // los movimientos de material guardan "kg"; para el cálculo se leen como cantidad
+      window.inoferStock = () => calcStock();
+
+      // ---------------------------------------------------------------------------------
+      // 7) Informe semanal
+      // ---------------------------------------------------------------------------------
+      const lunesDe = iso => { const d = new Date(iso + 'T12:00:00'); return masDias(iso, -((d.getDay() + 6) % 7)); };
+      const CODIGO_GS = `// ===== INOFER · Informe semanal por mail (pegar al final, una sola vez) =====
+function inoferInformeSemanal() { return inoferServidor_().enviarInformeSemanal(false); }
+function activarInformePorMail() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'inoferInformeSemanal') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('inoferInformeSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
+  MailApp.getRemainingDailyQuota();
+  return inoferServidor_().enviarInformeSemanal(true);
+}`;
+      async function abrirInforme(semana) {
+        if (!enNube()) { toast('El informe semanal necesita la conexión con la nube'); return; }
+        const sem = semana || masDias(lunesDe(hoyIso()), -7);
+        const ops = []; for (let i = 0; i < 12; i++) { const l = masDias(lunesDe(hoyIso()), -7 * i); ops.push([l, i === 0 ? 'Esta semana (en curso)' : `Semana del ${fFecha(l)} al ${fFecha(masDias(l, 6))}`]); }
+        const cfg = D('informes');
+        const w = modal('📄 Informe semanal', `
+          <div class="flex flex-wrap items-center gap-2"><select id="infSem" class="${INP}">${ops.map(([l, t]) => `<option value="${l}" ${l === sem ? 'selected' : ''}>${t}</option>`).join('')}</select>
+            <button type="button" id="infPrint" class="${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200">🖨️ Imprimir / PDF</button>
+            <button type="button" id="infWa" class="${BTN} border-green-500/50 bg-green-500/15 text-green-200">📲 WhatsApp</button>
+            <button type="button" id="infCopy" class="${BTN} border-slate-600 text-slate-200">📋 Copiar resumen</button>
+            ${esAdmin() ? `<button type="button" id="infMailCfg" class="${BTN} ml-auto border-cyan-500/50 text-cyan-200">✉️ Enviar por mail</button>` : ''}</div>
+          <div id="infMailBox" class="hidden rounded-xl border border-cyan-500/30 bg-slate-950/70 p-3 space-y-2 text-xs text-slate-300">
+            <div class="font-black text-cyan-300">Envío automático por mail (todos los lunes a las 7)</div>
+            <label class="block">Mails que lo reciben (separados por coma)<input id="infEmails" class="inofer-planta-form ${INP} mt-1 w-full" value="${esc((cfg.emails || []).join(', '))}" placeholder="jefe@empresa.com, produccion@empresa.com"></label>
+            <label class="flex items-center gap-2"><input type="checkbox" id="infActivo" ${cfg.activo !== false ? 'checked' : ''}> Enviar automáticamente</label>
+            <button type="button" id="infMailSave" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar mails</button>
+            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"><b>Una sola vez</b>, para que Google deje mandar mails: abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarInformePorMail</b> → <b>Ejecutar</b> → aceptá los permisos. Te llega un mail de prueba y desde ahí sale solo cada lunes.</div>
+            <pre id="infCodigo" class="max-h-40 overflow-auto rounded-lg bg-slate-950 p-2 text-[10px] text-emerald-200">${esc(CODIGO_GS)}</pre>
+            <button type="button" id="infCopyCode" class="${BTN} border-slate-600 text-slate-200">📋 Copiar el código</button>
+          </div>
+          <div class="overflow-hidden rounded-xl border border-slate-700 bg-white"><iframe id="infFrame" class="h-[65vh] w-full" title="Informe"></iframe></div>`, 'max-w-5xl');
+        let actual = null;
+        const cargar = async l => {
+          const fr = w.querySelector('#infFrame');
+          fr.srcdoc = '<p style="font-family:Arial;padding:20px;color:#475569">Armando el informe…</p>';
+          try { actual = await api({ action: 'informeSemanal', semana: l }); fr.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:16px;background:#fff}@media print{body{margin:0}}</style></head><body>' + actual.html + '</body></html>'; try { localStorage.setItem('tablero_inyectoras_informe_visto_v1', l); } catch (e) { } programarAvisos(); }
+          catch (e) { fr.srcdoc = '<p style="font-family:Arial;padding:20px;color:#b91c1c">No se pudo armar el informe: ' + esc(e.message) + '</p>'; }
+        };
+        w.addEventListener('change', e => { if (e.target.id === 'infSem') cargar(e.target.value); });
+        w.addEventListener('click', async e => {
+          const id = (e.target.closest('button') || {}).id;
+          if (id === 'infPrint') { try { const f = w.querySelector('#infFrame'); f.contentWindow.focus(); f.contentWindow.print(); } catch (er) { toast('No se pudo imprimir'); } }
+          if (id === 'infWa' && actual) window.open('https://wa.me/?text=' + encodeURIComponent(actual.texto), '_blank');
+          if (id === 'infCopy' && actual) { try { await navigator.clipboard.writeText(actual.texto); toast('Resumen copiado'); } catch (er) { toast('No se pudo copiar'); } }
+          if (id === 'infMailCfg') w.querySelector('#infMailBox').classList.toggle('hidden');
+          if (id === 'infCopyCode') { try { await navigator.clipboard.writeText(CODIGO_GS); toast('Código copiado'); } catch (er) { toast('Seleccioná el texto y copialo a mano'); } }
+          if (id === 'infMailSave') {
+            const emails = w.querySelector('#infEmails').value.split(/[,;\s]+/).map(x => x.trim()).filter(x => /@/.test(x));
+            const c = D('informes'); c.emails = emails; c.activo = w.querySelector('#infActivo').checked; guardarMod('informes');
+            toast(emails.length ? `✓ Se enviará a ${emails.length} mail${emails.length > 1 ? 's' : ''}` : 'Sin mails: no se envía');
+          }
+        });
+        cargar(sem);
+      }
+      window.inoferInformeSemanal = abrirInforme;
+      function montarBotonInforme() {
+        const kv = $('viewKpi');
+        if (kv && !$('infBtnKpi')) {
+          const h = kv.querySelector('.flex.flex-wrap.items-center.gap-2');
+          if (h) { const b = document.createElement('button'); b.type = 'button'; b.id = 'infBtnKpi'; b.className = 'rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-bold text-cyan-200'; b.textContent = '📄 Informe semanal'; b.addEventListener('click', () => abrirInforme()); h.insertBefore(b, h.firstChild); }
+        }
+        const b = $('infBtnKpi'); if (b) b.classList.toggle('hidden', !(verInforme() && enNube()));
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 8) Registro de cambios (solo administrador)
+      // ---------------------------------------------------------------------------------
+      let aud = { filas: [], cargado: false, cargando: false, desde: masDias(hoyIso(), -7), hasta: '', usuario: '', modulo: '', texto: '' };
+      const NOMBRE_MOD = { orders: 'Órdenes', gantt: 'Gantt', catalog: 'Base de datos', partes: 'Partes de horas', weekly: 'Cierres', memory: 'IA', config: 'Configuración', pistones: 'Pistones', kpis: 'Indicadores', turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal', usuarios: 'Usuarios', 'sesión': 'Ingresos', papelera: 'Papelera', IA: 'IA' };
+      async function cargarAud() {
+        if (!enNube()) return;
+        aud.cargando = true; renderAud();
+        try { const d = await api({ action: 'audListar', desde: aud.desde, hasta: aud.hasta, limite: 3000 }); aud.filas = d.filas || []; aud.cargado = true; }
+        catch (e) { toast('No se pudo leer el registro: ' + e.message); }
+        aud.cargando = false; renderAud();
+      }
+      function renderAud() {
+        const v = $('viewAud'); if (!v || v.classList.contains('hidden')) return;
+        if (!aud.cargado && !aud.cargando) { cargarAud(); return; }
+        const usuarios = [...new Set(aud.filas.map(f => f.usuario))].sort();
+        const mods = [...new Set(aud.filas.map(f => f.modulo))].sort();
+        const L = aud.filas.filter(f => (!aud.usuario || f.usuario === aud.usuario) && (!aud.modulo || f.modulo === aud.modulo) && (!aud.texto || norm(f.detalle + ' ' + f.usuario).includes(norm(aud.texto))));
+        const hora = f => { try { const d = new Date(f); return fDia(isoD(d)) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); } catch (e) { return f; } };
+        const foco = document.activeElement && document.activeElement.id;
+        v.innerHTML = `<div class="rounded-2xl border border-slate-600/50 bg-slate-900/80 p-4 shadow-xl space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">🧾 Registro de cambios</h2><p class="text-xs text-slate-400">Quién cambió qué y cuándo: órdenes y turnos, Gantt, base de datos y precios, partes, stock, mantenimiento, usuarios e ingresos. Solo lo ve el administrador.</p></div>
+            <div class="flex gap-2"><button type="button" id="almBtn" class="${BTN} border-violet-500/50 bg-violet-500/15 text-violet-200">💾 Almacenamiento</button><button type="button" id="audCsv" class="${BTN} border-slate-600 text-slate-200">⬇ CSV</button><button type="button" id="audRefresh" class="${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200">${aud.cargando ? 'Cargando…' : '↻ Actualizar'}</button></div></div>
+          <div class="flex flex-wrap items-end gap-2 text-[11px] text-slate-400">
+            <label>Desde<input type="date" id="audDesde" value="${aud.desde}" class="${INP} block"></label><label>Hasta<input type="date" id="audHasta" value="${aud.hasta}" class="${INP} block"></label>
+            <label>Usuario<select id="audUsuario" class="${INP} block"><option value="">Todos</option>${usuarios.map(u => `<option ${u === aud.usuario ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></label>
+            <label>Sección<select id="audModulo" class="${INP} block"><option value="">Todas</option>${mods.map(m => `<option value="${esc(m)}" ${m === aud.modulo ? 'selected' : ''}>${esc(NOMBRE_MOD[m] || m)}</option>`).join('')}</select></label>
+            <label class="flex-1 min-w-[160px]">Buscar<input id="audTexto" value="${esc(aud.texto)}" placeholder="pieza, OP, máquina…" class="${INP} block w-full"></label>
+            <span class="pb-1.5">${L.length} cambio${L.length === 1 ? '' : 's'}</span></div>
+          <div class="max-h-[60vh] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Cuándo</th><th class="pr-2">Quién</th><th class="pr-2">Sección</th><th class="pr-2">Qué hizo</th></tr></thead><tbody>
+            ${L.slice(0, 1500).map(f => `<tr class="border-t border-slate-800 align-top"><td class="py-1.5 pr-2 whitespace-nowrap text-slate-400">${hora(f.fecha)}</td><td class="pr-2 whitespace-nowrap font-bold text-white">${esc(f.usuario)}</td><td class="pr-2 whitespace-nowrap text-slate-300">${esc(NOMBRE_MOD[f.modulo] || f.modulo)}</td><td class="pr-2 text-slate-200">${esc(f.detalle)}</td></tr>`).join('') || `<tr><td colspan="4" class="py-6 text-center text-slate-400">${aud.cargando ? 'Cargando…' : 'No hay cambios registrados en esas fechas. (El registro empezó a guardarse con esta versión.)'}</td></tr>`}
+          </tbody></table></div></div>`;
+        if (foco === 'audTexto') { const i = $('audTexto'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+      }
+      function montarAud() {
+        crearPestana('Aud', '🧾 Cambios', 'text-slate-300', 'bg-slate-200', () => esAdmin() && enNube(), renderAud);
+        const v = $('viewAud'); if (!v || v.__ok) return; v.__ok = 1;
+        v.addEventListener('change', e => {
+          const id = e.target.id;
+          if (id === 'audDesde' || id === 'audHasta') { aud[id === 'audDesde' ? 'desde' : 'hasta'] = e.target.value; cargarAud(); }
+          if (id === 'audUsuario') { aud.usuario = e.target.value; renderAud(); }
+          if (id === 'audModulo') { aud.modulo = e.target.value; renderAud(); }
+        });
+        v.addEventListener('input', e => { if (e.target.id === 'audTexto') { aud.texto = e.target.value; renderAud(); } });
+        v.addEventListener('click', e => {
+          const id = (e.target.closest('button') || {}).id;
+          if (id === 'audRefresh') cargarAud();
+          if (id === 'audCsv') {
+            const q = s => '"' + String(s || '').replace(/"/g, '""') + '"';
+            const csv = 'fecha;usuario;seccion;accion;detalle\n' + aud.filas.map(f => [f.fecha, f.usuario, NOMBRE_MOD[f.modulo] || f.modulo, f.accion, f.detalle].map(q).join(';')).join('\n');
+            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = 'INOFER_registro_cambios.csv'; a.click();
+          }
+        });
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 9) Almacenamiento y archivo de órdenes viejas (solo administrador)
+      // ---------------------------------------------------------------------------------
+      const LIMITE_LOCAL = 5 * 1024 * 1024;
+      const kb = n => (n >= 1024 * 1024 ? n1(n / 1024 / 1024) + ' MB' : n0(n / 1024) + ' KB');
+      function usoLocal() {
+        let total = 0; const det = {};
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i), v = localStorage.getItem(k) || '';
+            const n = (k.length + v.length) * 2; total += n;
+            const nom = k.replace(/^tablero_inyectoras_/, '').replace(/_v\d+$/, '');
+            det[nom] = (det[nom] || 0) + n;
+          }
+        } catch (e) { }
+        return { total, det: Object.entries(det).sort((a, b) => b[1] - a[1]).slice(0, 8) };
+      }
+      let usoNube = null, usoNubeAt = 0;
+      async function pedirUsoNube(meses) {
+        const d = await api({ action: 'almacenUso', meses: meses || 6 });
+        usoNube = d.uso; usoNubeAt = Date.now(); programarAvisos(); return usoNube;
+      }
+      function porcentajes() {
+        const L = usoLocal();
+        const loc = L.total / LIMITE_LOCAL * 100;
+        const cel = usoNube ? usoNube.celdas / usoNube.limiteCeldas * 100 : 0;
+        const prp = usoNube ? usoNube.props / usoNube.limiteProps * 100 : 0;
+        return { loc, cel, prp, max: Math.max(loc, cel, prp) };
+      }
+      const barra = (pct, txt) => { const c = pct >= 85 ? 'bg-rose-500' : (pct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'); return `<div class="space-y-1"><div class="flex justify-between text-[11px] text-slate-300"><span>${txt}</span><b class="${pct >= 70 ? 'text-amber-300' : 'text-white'}">${n1(pct)}%</b></div><div class="h-2.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full ${c}" style="width:${Math.min(100, Math.max(1, pct))}%"></div></div></div>`; };
+      const NOMBRE_DATO = { orders: 'Órdenes y turnos', gantt: 'Plan Gantt', catalog: 'Base de datos de piezas', weekly: 'Cierres semanales', memory: 'Memoria de la IA', config: 'Configuración', pistones: 'Pistones', kpis: 'Indicadores', turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal', records: 'Partes de horas', catalog_v3: 'Base de datos de piezas', gantt_weeks: 'Plan Gantt', pend_mod: 'Cambios sin subir', users: 'Usuarios' };
+      async function abrirAlmacen() {
+        if (!esAdmin()) return;
+        let meses = 6, archivadas = null, buscar = '';
+        const w = modal('💾 Almacenamiento', '<div id="almCuerpo" class="space-y-4 text-xs text-slate-300">Calculando…</div>', 'max-w-4xl');
+        const cuerpo = () => w.querySelector('#almCuerpo');
+        const pintar = () => {
+          const L = usoLocal(), P = porcentajes(), U = usoNube;
+          const sync = U ? Object.values(U.modulos || {}).reduce((a, b) => a + b, 0) : 0;
+          const arch = (archivadas || []).filter(a => !buscar || norm(a.ordNumber + ' ' + a.part + ' ' + a.machine).includes(norm(buscar)));
+          cuerpo().innerHTML = `
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-white">☁️ Nube (Google Sheets)</div>
+                ${U ? barra(P.cel, `${n0(U.celdas)} de ${n0(U.limiteCeldas)} celdas`) + barra(P.prp, `Sesiones y claves: ${kb(U.props)} de ${kb(U.limiteProps)}`) +
+                  `<div class="text-[11px] text-slate-400">${n0(U.partes)} partes de horas · ${n0(U.ordenes)} órdenes con ${n0(U.turnos)} turnos · ${n0(U.archivadas)} archivadas</div>
+                   <details class="text-[11px] text-slate-400"><summary class="cursor-pointer">Detalle por hoja</summary>${U.hojas.map(h => `<div class="flex justify-between"><span>${esc(h.hoja)}</span><span>${n0(h.filas)} filas · ${n0(h.celdas)} celdas</span></div>`).join('')}</details>` : '<div class="text-slate-400">Consultando la nube…</div>'}</div>
+              <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-white">💻 Este equipo</div>
+                ${barra(P.loc, `${kb(L.total)} de unos ${kb(LIMITE_LOCAL)} (límite del navegador)`)}
+                <div class="text-[11px] text-slate-400">${L.det.map(([k, v]) => `<div class="flex justify-between"><span>${esc(NOMBRE_DATO[k] || k)}</span><span>${kb(v)}</span></div>`).join('')}</div>
+                ${U ? `<div class="text-[11px] text-slate-400">En cada sincronización cada equipo baja <b class="text-white">${kb(sync)}</b> de datos.</div>` : ''}</div>
+            </div>
+            <div class="rounded-xl border border-cyan-500/30 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-cyan-300">🗄️ Archivar órdenes viejas</div>
+              <p class="text-[11px] text-slate-400">Las órdenes <b>completadas</b> cuyo último turno es anterior a la fecha elegida pasan a una hoja aparte de la nube (BD_Archivo_Ordenes). Dejan de viajar a cada celular y PC, pero <b>siguen contando</b> en el tablero, los velocímetros y el informe semanal. Se pueden volver a sacar del archivo cuando quieras.</p>
+              <div class="flex flex-wrap items-center gap-2"><span>Archivar las completadas de hace más de</span><select id="almMeses" class="${INP}">${[3, 6, 12, 24].map(m => `<option value="${m}" ${m === meses ? 'selected' : ''}>${m} meses</option>`).join('')}</select>
+                ${U ? (U.candidatas ? `<span class="text-white">→ <b>${n0(U.candidatas)}</b> órdenes (${n0(U.turnosCandidatas)} turnos, ${kb(U.bytesCandidatas)}) con último turno antes del ${fFecha(U.corte)}/${String(U.corte).slice(0, 4)}</span><button type="button" id="almArchivar" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Archivar ${n0(U.candidatas)} órdenes</button>` : `<span class="text-slate-400">No hay órdenes completadas tan viejas para archivar.</span>`) : ''}</div></div>
+            <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">📁 Órdenes archivadas ${archivadas ? '(' + archivadas.length + ')' : ''}</span><input id="almBuscar" value="${esc(buscar)}" placeholder="Buscar OP o pieza…" class="${INP} w-48"></div>
+              ${archivadas == null ? '<div class="text-slate-400">Cargando…</div>' : (arch.length ? `<div class="max-h-64 overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-950"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">OP</th><th class="pr-2">Pieza</th><th class="pr-2">Máquina</th><th class="pr-2">Último turno</th><th class="pr-2 text-right">Buenas</th><th></th></tr></thead><tbody>
+                ${arch.slice(0, 300).map(a => `<tr class="border-t border-slate-800"><td class="py-1 pr-2 font-bold text-white">${esc(a.ordNumber)}</td><td class="pr-2">${esc(a.part)}</td><td class="pr-2 text-slate-400">${esc(maqId(a.machine))}</td><td class="pr-2 text-slate-400">${a.ultima ? fFecha(a.ultima) + '/' + a.ultima.slice(0, 4) : '—'}</td><td class="pr-2 text-right">${n0(a.ok)} / ${n0(a.qty)}</td><td class="text-right"><button type="button" class="alm-rest ${BTN} border-slate-600 text-slate-200" data-id="${esc(a.id)}">↩ Sacar del archivo</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-slate-400">No hay órdenes archivadas.</div>')}</div>
+            <p class="text-[11px] text-slate-500">Cuando algo pase del 70% te aparece un aviso en la 🔔. Esta ventana y los avisos de espacio los ve solo el administrador.</p>`;
+          if (document.activeElement && document.activeElement.id === 'almBuscar') { }
+        };
+        const cargar = async () => {
+          pintar();
+          try { await pedirUsoNube(meses); } catch (e) { toast('No se pudo consultar la nube: ' + e.message); }
+          try { archivadas = (await api({ action: 'archivoListar' })).archivadas || []; } catch (e) { archivadas = []; }
+          pintar();
+        };
+        w.addEventListener('change', e => { if (e.target.id === 'almMeses') { meses = Number(e.target.value) || 6; usoNube = null; cargar(); } });
+        w.addEventListener('input', e => { if (e.target.id === 'almBuscar') { buscar = e.target.value; pintar(); const i = w.querySelector('#almBuscar'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
+        w.addEventListener('click', async e => {
+          const b = e.target.closest('button'); if (!b) return;
+          if (b.id === 'almArchivar') {
+            if (!confirm(`¿Archivar ${usoNube.candidatas} órdenes completadas?\n\nSiguen contando en el tablero y en el informe, y las podés sacar del archivo cuando quieras.`)) return;
+            b.disabled = true; b.textContent = 'Archivando…';
+            try {
+              const d = await api({ action: 'archivarOrdenes', meses });
+              archRegs = null;
+              try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (er) { }
+              toast(`✓ ${d.archivadas} órdenes archivadas`);
+            } catch (er) { toast('No se pudo archivar: ' + er.message); }
+            usoNube = null; archivadas = null; cargar();
+          }
+          if (b.classList.contains('alm-rest')) {
+            b.disabled = true;
+            try { await api({ action: 'archivoRestaurar', id: b.dataset.id }); archRegs = null; try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (er) { } toast('✓ La orden volvió a la lista'); }
+            catch (er) { toast(er.message); }
+            usoNube = null; archivadas = null; cargar();
+          }
+        });
+        cargar();
+      }
+      window.inoferAlmacenamiento = abrirAlmacen;
+      window.inoferPlantaPerm = { verInforme: () => verInforme() && enNube(), esAdmin };
+      // turnos de órdenes archivadas: se piden una vez por sesión y suman en el tablero
+      let archRegs = null, archPidiendo = false, archAt = 0;
+      function pedirArch() {
+        if (archPidiendo || !enNube() || (archRegs && Date.now() - archAt < 30 * 60000)) return;
+        archPidiendo = true;
+        api({ action: 'archivoRegistros' }).then(d => { archRegs = d.records || []; archAt = Date.now(); archPidiendo = false; if (archRegs.length) { try { refreshAll(); } catch (e) { } } })
+          .catch(() => { archPidiendo = false; archRegs = archRegs || []; archAt = Date.now(); });
+      }
+      function instalarArchivoTablero() {
+        if (typeof window.getFilteredRecords !== 'function' || window.getFilteredRecords.__planta) return;
+        const gf = window.getFilteredRecords;
+        const f = function () {
+          const base = gf.apply(this, arguments);
+          if (!sesion()) return base;
+          const fuente = ($('filterFuente') || {}).value || 'ALL';
+          if (fuente === 'MANUAL') return base;
+          pedirArch();
+          if (!archRegs || !archRegs.length) return base;
+          const machine = ($('filterMachine') || {}).value || 'ALL', shift = ($('filterShift') || {}).value || 'ALL';
+          const from = ($('filterDateFrom') || {}).value, to = ($('filterDateTo') || {}).value;
+          const ids = new Set(base.map(r => r.id));
+          const extra = archRegs.filter(r => !ids.has(r.id) && (machine === 'ALL' || r.machine === machine) && (shift === 'ALL' || r.shift === shift) && (!from || r.date >= from) && (!to || r.date <= to));
+          return extra.length ? base.concat(extra).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))) : base;
+        };
+        f.__planta = true; window.getFilteredRecords = f;
+      }
+      document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#almBtn')) abrirAlmacen(); });
+      // consulta de espacio para el aviso (solo admin, una vez por hora)
+      setInterval(() => { if (esAdmin() && enNube() && Date.now() - usoNubeAt > 3600000) pedirUsoNube().catch(() => { usoNubeAt = Date.now(); }); }, 60000);
+      setTimeout(() => { if (esAdmin() && enNube() && !usoNube) pedirUsoNube().catch(() => { usoNubeAt = Date.now(); }); }, 8000);
+
+      // ---------------------------------------------------------------------------------
+      // Arranque
+      // ---------------------------------------------------------------------------------
+      function iniciar() {
+        try { montarMant(); montarStock(); montarAud(); instalarTabs(); montarBotonQr(); montarBotonInforme(); instalarArchivoTablero(); } catch (e) { console.error(e); }
+        if (typeof window.inoferApplyPermissions === 'function' && !window.inoferApplyPermissions.__planta) {
+          const ap = window.inoferApplyPermissions;
+          const f = function () { const r = ap.apply(this, arguments); try { montarBotonQr(); montarBotonInforme(); aplicarVisibilidad(); } catch (e) { console.error(e); } return r; };
+          f.__planta = true; window.inoferApplyPermissions = f;
+        }
+        try { aplicarVisibilidad(); } catch (e) { }
+        if (typeof window.saveProductionOrders === 'function' && !window.saveProductionOrders.__planta) {
+          const sp = window.saveProductionOrders;
+          const f = function () { const r = sp.apply(this, arguments); programarAvisos(); try { renderStock(); renderMant(); } catch (e) { } return r; };
+          f.__planta = true; window.saveProductionOrders = f;
+        }
+        if (typeof window.renderGanttView === 'function' && !window.renderGanttView.__planta) {
+          const rg = window.renderGanttView;
+          const f = function () { const r = rg.apply(this, arguments); programarAvisos(); return r; };
+          f.__planta = true; window.renderGanttView = f;
+        }
+        ui();
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 0)); else setTimeout(iniciar, 0);
+      window.addEventListener('load', () => setTimeout(() => { try { iniciar(); } catch (e) { } }, 50));
+    })();
+  </script>
