@@ -1397,6 +1397,7 @@ function textoInforme_(R, P, verPrecios) {
 function puedeVerPreciosSrv_(u) { return !!u && (u.rol === 'admin' || (puede(u, 'catalogo', 'view') && !(u.permisos && u.permisos.detalle && u.permisos.detalle.precios_ver === false))); }
 function armarInforme_(u, lunes) {
   const mods = obtenerEstadoModulos();
+  try { const arch = leerArchivo_(true).map(function (x) { return x.o; }).filter(function (o) { return o; }); if (arch.length) mods.orders = (mods.orders || []).concat(arch); } catch (e) {}
   const regs = obtenerRegistros();
   const R = datosSemana_(mods, regs, lunes), P = datosSemana_(mods, regs, sumarDias_(lunes, -7));
   const verPrecios = puedeVerPreciosSrv_(u);
@@ -1434,6 +1435,141 @@ function enviarInformeSemanal(forzar) {
   return 'Informe enviado a ' + emails.join(', ');
 }
 
+// =====================================================================
+// ALMACENAMIENTO Y ARCHIVO DE ÓRDENES VIEJAS (solo administrador)
+// Hoja BD_Archivo_Ordenes: id | ordNumber | pieza | maquina | ultima_fecha | archivada_at | archivada_por | json (partido desde la col H)
+// =====================================================================
+const LIMITE_CELDAS = 10000000;
+const LIMITE_PROPS = 500 * 1024;
+function hojaArchivo_() {
+  const ss = getSs();
+  let sh = ss.getSheetByName('BD_Archivo_Ordenes');
+  if (!sh) {
+    sh = ss.insertSheet('BD_Archivo_Ordenes');
+    sh.appendRow(['id', 'ordNumber', 'pieza', 'maquina', 'ultima_fecha', 'archivada_at', 'archivada_por', 'json']);
+    sh.getRange('A:G').setNumberFormat('@');
+  }
+  return sh;
+}
+function leerArchivo_(conDatos) {
+  const sh = getSs().getSheetByName('BD_Archivo_Ordenes');
+  if (!sh) return [];
+  const rows = sh.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r[0]) continue;
+    const x = { fila: i + 1, id: String(r[0]), ordNumber: String(r[1] || ''), part: String(r[2] || ''), machine: String(r[3] || ''), ultima: fechaTexto_(r[4]), at: String(r[5] || ''), por: String(r[6] || '') };
+    if (conDatos) { let j = ''; for (let c = 7; c < r.length; c++) j += String(r[c] || ''); try { x.o = JSON.parse(j); } catch (e) { x.o = null; } }
+    out.push(x);
+  }
+  return out;
+}
+function idsArchivadas_() {
+  const cache = CacheService.getScriptCache();
+  const c = cache.get('inofer_arch_ids');
+  if (c) { try { return JSON.parse(c); } catch (e) {} }
+  const o = {}; leerArchivo_(false).forEach(function (x) { o[x.id] = 1; });
+  try { cache.put('inofer_arch_ids', JSON.stringify(o), 600); } catch (e) {}
+  return o;
+}
+function olvidarIdsArchivo_() { try { CacheService.getScriptCache().remove('inofer_arch_ids'); } catch (e) { try { CacheService.getScriptCache().put('inofer_arch_ids', 'x', 1); } catch (er) {} } }
+function ultimaFechaOrden_(o) { let f = String(o.date || ''); (o.logs || []).forEach(function (l) { if (String(l.date || '') > f) f = String(l.date); }); return f; }
+function totalBuenas_(o) { return (o.logs || []).reduce(function (s, l) { return s + num_(l.okPcs); }, 0); }
+// Turnos de las órdenes archivadas, en el mismo formato que usa el tablero
+function registrosArchivados_() {
+  const out = [];
+  leerArchivo_(true).forEach(function (x) {
+    const o = x.o; if (!o) return;
+    (o.logs || []).forEach(function (l) {
+      const r = { id: 'op-' + o.id + '-' + l.id, fromOrder: true, archivada: true, ordId: o.id, logId: l.id, date: String(l.date || ''), machine: o.machine, shift: l.turno || 'Turno',
+        available: Math.round(horasEntre_(l.startTime, l.endTime) * 100) / 100, part: o.part, ordNumber: o.ordNumber, okPcs: num_(l.okPcs), scrapPcs: num_(l.scrapPcs), operator: l.operator || '' };
+      CATS_SRV.forEach(function (c) { r[c[0]] = 0; });
+      const ps = (l.paradas && l.paradas.length) ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: l.stopMinutes }] : []);
+      ps.forEach(function (p) { const cat = COD_CAT_SRV[parseInt(String(p.codigo || ''), 10)] || 'otros'; r[cat] = Math.round((r[cat] + num_(p.min) / 60) * 100) / 100; });
+      out.push(r);
+    });
+  });
+  return out;
+}
+function usoNube_() {
+  const ss = getSs();
+  const hojas = ss.getSheets ? ss.getSheets() : [];
+  let celdas = 0; const detalle = [];
+  hojas.forEach(function (sh) {
+    let filas, cols;
+    try { filas = sh.getMaxRows(); cols = sh.getMaxColumns(); } catch (e) { filas = sh.getLastRow(); cols = sh.getLastColumn(); }
+    const n = filas * cols; celdas += n;
+    detalle.push({ hoja: sh.getName ? sh.getName() : sh.name, filas: sh.getLastRow(), celdas: n });
+  });
+  detalle.sort(function (a, b) { return b.celdas - a.celdas; });
+  let props = 0;
+  try { const p = PropertiesService.getScriptProperties().getProperties(); Object.keys(p).forEach(function (k) { props += k.length + String(p[k]).length; }); } catch (e) {}
+  const mods = obtenerEstadoModulos(); const tam = {};
+  Object.keys(mods).forEach(function (k) { if (k !== 'users') tam[k] = JSON.stringify(mods[k]).length; });
+  const ordenes = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id]; });
+  return { celdas: celdas, limiteCeldas: LIMITE_CELDAS, hojas: detalle.slice(0, 12), props: props, limiteProps: LIMITE_PROPS, modulos: tam,
+    ordenes: ordenes.length, turnos: ordenes.reduce(function (s, o) { return s + (o.logs || []).length; }, 0), partes: Math.max(0, getDbSheet().getLastRow() - 1), archivadas: leerArchivo_(false).length };
+}
+function candidatasArchivo_(mods, meses) {
+  const corte = sumarDias_(isoDia_(new Date()), -Math.round(Math.max(1, num_(meses) || 6) * 30.44));
+  return { corte: corte, lista: (mods.orders || []).filter(function (o) { return o && !DEMO_ORD_SRV[o.id] && o.status === 'Completada' && ultimaFechaOrden_(o) && ultimaFechaOrden_(o) < corte; }) };
+}
+function accionAlmacen(u, body) {
+  const A = ['almacenUso', 'archivarOrdenes', 'archivoListar', 'archivoRestaurar', 'archivoRegistros'];
+  if (A.indexOf(body.action) === -1) return null;
+  if (body.action === 'archivoRegistros') {
+    if (!(puede(u, 'partes', 'view') || puede(u, 'indicadores', 'view') || puede(u, 'ordenes', 'view'))) return { status: 'ok', records: [] };
+    return { status: 'ok', records: registrosArchivados_() };
+  }
+  if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador ve el almacenamiento.' };
+  if (body.action === 'almacenUso') {
+    const uso = usoNube_();
+    const c = candidatasArchivo_(obtenerEstadoModulos(), body.meses);
+    uso.candidatas = c.lista.length; uso.corte = c.corte;
+    uso.turnosCandidatas = c.lista.reduce(function (s, o) { return s + (o.logs || []).length; }, 0);
+    uso.bytesCandidatas = JSON.stringify(c.lista).length;
+    return { status: 'ok', uso: uso };
+  }
+  if (body.action === 'archivoListar') {
+    return { status: 'ok', archivadas: leerArchivo_(true).map(function (x) { return { id: x.id, ordNumber: x.ordNumber, part: x.part, machine: x.machine, ultima: x.ultima, at: x.at, por: x.por, qty: x.o ? num_(x.o.qtyTarget) : 0, ok: x.o ? totalBuenas_(x.o) : 0, turnos: x.o ? (x.o.logs || []).length : 0 }; }).reverse() };
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const mods = obtenerEstadoModulos();
+    if (body.action === 'archivarOrdenes') {
+      const c = candidatasArchivo_(mods, body.meses);
+      if (!c.lista.length) return { status: 'ok', archivadas: 0, corte: c.corte };
+      const sh = hojaArchivo_();
+      const ahora = new Date().toISOString(), por = etiquetaUsuario_(u);
+      c.lista.forEach(function (o) {
+        const j = JSON.stringify(o); const partes = [];
+        for (let p = 0; p < j.length; p += CHUNK) partes.push(j.substring(p, p + CHUNK));
+        const fila = [String(o.id), String(o.ordNumber || ''), String(o.part || ''), String(o.machine || ''), ultimaFechaOrden_(o), ahora, por].concat(partes);
+        sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
+      });
+      const quitar = {}; c.lista.forEach(function (o) { quitar[String(o.id)] = 1; });
+      guardarModuloEstado('orders', (mods.orders || []).filter(function (o) { return !quitar[String(o.id)]; }));
+      olvidarIdsArchivo_();
+      auditar_(u, 'archivó', 'orders', ['Archivó ' + c.lista.length + ' órdenes completadas con último turno antes del ' + c.corte + ' (' + c.lista.slice(0, 15).map(function (o) { return o.ordNumber; }).join(', ') + (c.lista.length > 15 ? '…' : '') + ')']);
+      return { status: 'ok', archivadas: c.lista.length, corte: c.corte };
+    }
+    if (body.action === 'archivoRestaurar') {
+      const x = leerArchivo_(true).filter(function (a) { return a.id === String(body.id); })[0];
+      if (!x || !x.o) return { status: 'error', error: 'No encontré esa orden en el archivo.' };
+      const ords = (mods.orders || []).filter(function (o) { return String(o.id) !== x.id; });
+      ords.unshift(x.o);
+      getSs().getSheetByName('BD_Archivo_Ordenes').deleteRow(x.fila);
+      olvidarIdsArchivo_();
+      guardarModuloEstado('orders', ords);
+      auditar_(u, 'restauró', 'orders', ['Sacó del archivo la OP ' + x.ordNumber + ' · ' + x.part]);
+      return { status: 'ok' };
+    }
+  } finally { lock.releaseLock(); }
+  return null;
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -1450,6 +1586,8 @@ function doPost(e) {
   if (aud) return respuesta(aud);
   const inf = accionInforme(u, body);
   if (inf) return respuesta(inf);
+  const alm = accionAlmacen(u, body);
+  if (alm) return respuesta(alm);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };
@@ -1487,6 +1625,8 @@ function doPost(e) {
     if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
     const ok = area === 'admin' ? u.rol === 'admin' : puedeArea_(u, area, 'edit');
     if (!ok) return sinPermiso(area);
+    // las órdenes archivadas no vuelven aunque un equipo tenga una copia vieja
+    if (body.moduleKey === 'orders' && Array.isArray(body.moduleData)) { try { const arch = idsArchivadas_(); body.moduleData = body.moduleData.filter(function (o) { return !(o && arch[String(o.id)]); }); } catch (e) {} }
     let anterior = null;
     try { anterior = obtenerEstadoModulos()[body.moduleKey]; } catch (e) {}
     if (igual_(anterior, body.moduleData)) return respuesta(paqueteDatos(u, records));

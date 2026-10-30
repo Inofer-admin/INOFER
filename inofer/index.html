@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.29.47" />
+  <meta name="inofer-version" content="2026.10.30.01" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -17169,6 +17169,10 @@ module.exports = QRCode;
         if (avisosCarga()) turnosSinCargar().forEach(x => L.push({ id: 'c-' + x.key, ico: '⏰', color: 'amber', txt: `Falta cargar el turno <b>${esc(x.t.nombre)}</b> de la <b>${esc(x.m)}</b> · ${fDia(x.fecha)}`, sub: 'Estaba programada en el Gantt', acciones: [['cargar', 'Cargar'], ['ignorar', 'No se trabajó']], x }));
         if (verMant()) preventivosPendientes().forEach(x => L.push({ id: 'p-' + x.p.id, ico: '🔧', color: x.falta != null && x.falta < 0 ? 'rose' : 'sky', txt: `Preventivo <b>${esc(x.p.tarea)}</b> · ${esc(x.p.maquina)}`, sub: x.falta == null ? 'Nunca registrado' : (x.falta < 0 ? `Vencido hace ${-x.falta} día${x.falta < -1 ? 's' : ''}` : (x.falta === 0 ? 'Vence hoy' : `Vence en ${x.falta} día${x.falta > 1 ? 's' : ''} (${fFecha(x.prox)})`)), acciones: [['mant', 'Ver']] }));
         if (verStock()) { try { calcStock().materiales.forEach(s => { if (s.alerta) L.push({ id: 's-' + s.nombre, ico: '📦', color: s.nivel === 'rojo' ? 'rose' : 'amber', txt: `<b>${esc(s.nombre)}</b>: ${esc(s.alerta)}`, sub: s.stock != null ? `Stock ${n0(s.stock)} kg` : '', acciones: [['stock', 'Ver']] }); }); } catch (e) { } }
+        if (esAdmin()) {
+          const P = porcentajes();
+          if (P.max >= 70) L.push({ id: 'esp', ico: '💾', color: P.max >= 85 ? 'rose' : 'amber', txt: `Espacio de almacenamiento al <b>${n1(P.max)}%</b>`, sub: P.loc >= P.cel && P.loc >= P.prp ? 'En este equipo: conviene archivar órdenes viejas' : 'En la nube: conviene archivar órdenes viejas', acciones: [['almacen', 'Ver']] });
+        }
         if (verInforme() && enNube()) {
           const dow = new Date().getDay(), lun = lunesDe(hoyIso()), sem = masDias(lun, -7);
           let visto = ''; try { visto = localStorage.getItem('tablero_inyectoras_informe_visto_v1') || ''; } catch (e) { }
@@ -17220,6 +17224,7 @@ module.exports = QRCode;
         else if (acc === 'mant') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('mant'); }
         else if (acc === 'stock') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('stock'); }
         else if (acc === 'informe') { $('inoferAvisosPanel').classList.add('hidden'); abrirInforme(); }
+        else if (acc === 'almacen') { $('inoferAvisosPanel').classList.add('hidden'); abrirAlmacen(); }
       }
 
       // ---------------------------------------------------------------------------------
@@ -17604,7 +17609,7 @@ function activarInformePorMail() {
         const foco = document.activeElement && document.activeElement.id;
         v.innerHTML = `<div class="rounded-2xl border border-slate-600/50 bg-slate-900/80 p-4 shadow-xl space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">🧾 Registro de cambios</h2><p class="text-xs text-slate-400">Quién cambió qué y cuándo: órdenes y turnos, Gantt, base de datos y precios, partes, stock, mantenimiento, usuarios e ingresos. Solo lo ve el administrador.</p></div>
-            <div class="flex gap-2"><button type="button" id="audCsv" class="${BTN} border-slate-600 text-slate-200">⬇ CSV</button><button type="button" id="audRefresh" class="${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200">${aud.cargando ? 'Cargando…' : '↻ Actualizar'}</button></div></div>
+            <div class="flex gap-2"><button type="button" id="almBtn" class="${BTN} border-violet-500/50 bg-violet-500/15 text-violet-200">💾 Almacenamiento</button><button type="button" id="audCsv" class="${BTN} border-slate-600 text-slate-200">⬇ CSV</button><button type="button" id="audRefresh" class="${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200">${aud.cargando ? 'Cargando…' : '↻ Actualizar'}</button></div></div>
           <div class="flex flex-wrap items-end gap-2 text-[11px] text-slate-400">
             <label>Desde<input type="date" id="audDesde" value="${aud.desde}" class="${INP} block"></label><label>Hasta<input type="date" id="audHasta" value="${aud.hasta}" class="${INP} block"></label>
             <label>Usuario<select id="audUsuario" class="${INP} block"><option value="">Todos</option>${usuarios.map(u => `<option ${u === aud.usuario ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></label>
@@ -17638,10 +17643,133 @@ function activarInformePorMail() {
       }
 
       // ---------------------------------------------------------------------------------
+      // 9) Almacenamiento y archivo de órdenes viejas (solo administrador)
+      // ---------------------------------------------------------------------------------
+      const LIMITE_LOCAL = 5 * 1024 * 1024;
+      const kb = n => (n >= 1024 * 1024 ? n1(n / 1024 / 1024) + ' MB' : n0(n / 1024) + ' KB');
+      function usoLocal() {
+        let total = 0; const det = {};
+        try {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i), v = localStorage.getItem(k) || '';
+            const n = (k.length + v.length) * 2; total += n;
+            const nom = k.replace(/^tablero_inyectoras_/, '').replace(/_v\d+$/, '');
+            det[nom] = (det[nom] || 0) + n;
+          }
+        } catch (e) { }
+        return { total, det: Object.entries(det).sort((a, b) => b[1] - a[1]).slice(0, 8) };
+      }
+      let usoNube = null, usoNubeAt = 0;
+      async function pedirUsoNube(meses) {
+        const d = await api({ action: 'almacenUso', meses: meses || 6 });
+        usoNube = d.uso; usoNubeAt = Date.now(); programarAvisos(); return usoNube;
+      }
+      function porcentajes() {
+        const L = usoLocal();
+        const loc = L.total / LIMITE_LOCAL * 100;
+        const cel = usoNube ? usoNube.celdas / usoNube.limiteCeldas * 100 : 0;
+        const prp = usoNube ? usoNube.props / usoNube.limiteProps * 100 : 0;
+        return { loc, cel, prp, max: Math.max(loc, cel, prp) };
+      }
+      const barra = (pct, txt) => { const c = pct >= 85 ? 'bg-rose-500' : (pct >= 70 ? 'bg-amber-400' : 'bg-emerald-500'); return `<div class="space-y-1"><div class="flex justify-between text-[11px] text-slate-300"><span>${txt}</span><b class="${pct >= 70 ? 'text-amber-300' : 'text-white'}">${n1(pct)}%</b></div><div class="h-2.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full ${c}" style="width:${Math.min(100, Math.max(1, pct))}%"></div></div></div>`; };
+      const NOMBRE_DATO = { orders: 'Órdenes y turnos', gantt: 'Plan Gantt', catalog: 'Base de datos de piezas', weekly: 'Cierres semanales', memory: 'Memoria de la IA', config: 'Configuración', pistones: 'Pistones', kpis: 'Indicadores', turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal', records: 'Partes de horas', catalog_v3: 'Base de datos de piezas', gantt_weeks: 'Plan Gantt', pend_mod: 'Cambios sin subir', users: 'Usuarios' };
+      async function abrirAlmacen() {
+        if (!esAdmin()) return;
+        let meses = 6, archivadas = null, buscar = '';
+        const w = modal('💾 Almacenamiento', '<div id="almCuerpo" class="space-y-4 text-xs text-slate-300">Calculando…</div>', 'max-w-4xl');
+        const cuerpo = () => w.querySelector('#almCuerpo');
+        const pintar = () => {
+          const L = usoLocal(), P = porcentajes(), U = usoNube;
+          const sync = U ? Object.values(U.modulos || {}).reduce((a, b) => a + b, 0) : 0;
+          const arch = (archivadas || []).filter(a => !buscar || norm(a.ordNumber + ' ' + a.part + ' ' + a.machine).includes(norm(buscar)));
+          cuerpo().innerHTML = `
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-white">☁️ Nube (Google Sheets)</div>
+                ${U ? barra(P.cel, `${n0(U.celdas)} de ${n0(U.limiteCeldas)} celdas`) + barra(P.prp, `Sesiones y claves: ${kb(U.props)} de ${kb(U.limiteProps)}`) +
+                  `<div class="text-[11px] text-slate-400">${n0(U.partes)} partes de horas · ${n0(U.ordenes)} órdenes con ${n0(U.turnos)} turnos · ${n0(U.archivadas)} archivadas</div>
+                   <details class="text-[11px] text-slate-400"><summary class="cursor-pointer">Detalle por hoja</summary>${U.hojas.map(h => `<div class="flex justify-between"><span>${esc(h.hoja)}</span><span>${n0(h.filas)} filas · ${n0(h.celdas)} celdas</span></div>`).join('')}</details>` : '<div class="text-slate-400">Consultando la nube…</div>'}</div>
+              <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-white">💻 Este equipo</div>
+                ${barra(P.loc, `${kb(L.total)} de unos ${kb(LIMITE_LOCAL)} (límite del navegador)`)}
+                <div class="text-[11px] text-slate-400">${L.det.map(([k, v]) => `<div class="flex justify-between"><span>${esc(NOMBRE_DATO[k] || k)}</span><span>${kb(v)}</span></div>`).join('')}</div>
+                ${U ? `<div class="text-[11px] text-slate-400">En cada sincronización cada equipo baja <b class="text-white">${kb(sync)}</b> de datos.</div>` : ''}</div>
+            </div>
+            <div class="rounded-xl border border-cyan-500/30 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-cyan-300">🗄️ Archivar órdenes viejas</div>
+              <p class="text-[11px] text-slate-400">Las órdenes <b>completadas</b> cuyo último turno es anterior a la fecha elegida pasan a una hoja aparte de la nube (BD_Archivo_Ordenes). Dejan de viajar a cada celular y PC, pero <b>siguen contando</b> en el tablero, los velocímetros y el informe semanal. Se pueden volver a sacar del archivo cuando quieras.</p>
+              <div class="flex flex-wrap items-center gap-2"><span>Archivar las completadas de hace más de</span><select id="almMeses" class="${INP}">${[3, 6, 12, 24].map(m => `<option value="${m}" ${m === meses ? 'selected' : ''}>${m} meses</option>`).join('')}</select>
+                ${U ? (U.candidatas ? `<span class="text-white">→ <b>${n0(U.candidatas)}</b> órdenes (${n0(U.turnosCandidatas)} turnos, ${kb(U.bytesCandidatas)}) con último turno antes del ${fFecha(U.corte)}/${String(U.corte).slice(0, 4)}</span><button type="button" id="almArchivar" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Archivar ${n0(U.candidatas)} órdenes</button>` : `<span class="text-slate-400">No hay órdenes completadas tan viejas para archivar.</span>`) : ''}</div></div>
+            <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">📁 Órdenes archivadas ${archivadas ? '(' + archivadas.length + ')' : ''}</span><input id="almBuscar" value="${esc(buscar)}" placeholder="Buscar OP o pieza…" class="${INP} w-48"></div>
+              ${archivadas == null ? '<div class="text-slate-400">Cargando…</div>' : (arch.length ? `<div class="max-h-64 overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-950"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">OP</th><th class="pr-2">Pieza</th><th class="pr-2">Máquina</th><th class="pr-2">Último turno</th><th class="pr-2 text-right">Buenas</th><th></th></tr></thead><tbody>
+                ${arch.slice(0, 300).map(a => `<tr class="border-t border-slate-800"><td class="py-1 pr-2 font-bold text-white">${esc(a.ordNumber)}</td><td class="pr-2">${esc(a.part)}</td><td class="pr-2 text-slate-400">${esc(maqId(a.machine))}</td><td class="pr-2 text-slate-400">${a.ultima ? fFecha(a.ultima) + '/' + a.ultima.slice(0, 4) : '—'}</td><td class="pr-2 text-right">${n0(a.ok)} / ${n0(a.qty)}</td><td class="text-right"><button type="button" class="alm-rest ${BTN} border-slate-600 text-slate-200" data-id="${esc(a.id)}">↩ Sacar del archivo</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-slate-400">No hay órdenes archivadas.</div>')}</div>
+            <p class="text-[11px] text-slate-500">Cuando algo pase del 70% te aparece un aviso en la 🔔. Esta ventana y los avisos de espacio los ve solo el administrador.</p>`;
+          if (document.activeElement && document.activeElement.id === 'almBuscar') { }
+        };
+        const cargar = async () => {
+          pintar();
+          try { await pedirUsoNube(meses); } catch (e) { toast('No se pudo consultar la nube: ' + e.message); }
+          try { archivadas = (await api({ action: 'archivoListar' })).archivadas || []; } catch (e) { archivadas = []; }
+          pintar();
+        };
+        w.addEventListener('change', e => { if (e.target.id === 'almMeses') { meses = Number(e.target.value) || 6; usoNube = null; cargar(); } });
+        w.addEventListener('input', e => { if (e.target.id === 'almBuscar') { buscar = e.target.value; pintar(); const i = w.querySelector('#almBuscar'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
+        w.addEventListener('click', async e => {
+          const b = e.target.closest('button'); if (!b) return;
+          if (b.id === 'almArchivar') {
+            if (!confirm(`¿Archivar ${usoNube.candidatas} órdenes completadas?\n\nSiguen contando en el tablero y en el informe, y las podés sacar del archivo cuando quieras.`)) return;
+            b.disabled = true; b.textContent = 'Archivando…';
+            try {
+              const d = await api({ action: 'archivarOrdenes', meses });
+              archRegs = null;
+              try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (er) { }
+              toast(`✓ ${d.archivadas} órdenes archivadas`);
+            } catch (er) { toast('No se pudo archivar: ' + er.message); }
+            usoNube = null; archivadas = null; cargar();
+          }
+          if (b.classList.contains('alm-rest')) {
+            b.disabled = true;
+            try { await api({ action: 'archivoRestaurar', id: b.dataset.id }); archRegs = null; try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (er) { } toast('✓ La orden volvió a la lista'); }
+            catch (er) { toast(er.message); }
+            usoNube = null; archivadas = null; cargar();
+          }
+        });
+        cargar();
+      }
+      window.inoferAlmacenamiento = abrirAlmacen;
+      // turnos de órdenes archivadas: se piden una vez por sesión y suman en el tablero
+      let archRegs = null, archPidiendo = false, archAt = 0;
+      function pedirArch() {
+        if (archPidiendo || !enNube() || (archRegs && Date.now() - archAt < 30 * 60000)) return;
+        archPidiendo = true;
+        api({ action: 'archivoRegistros' }).then(d => { archRegs = d.records || []; archAt = Date.now(); archPidiendo = false; if (archRegs.length) { try { refreshAll(); } catch (e) { } } })
+          .catch(() => { archPidiendo = false; archRegs = archRegs || []; archAt = Date.now(); });
+      }
+      function instalarArchivoTablero() {
+        if (typeof window.getFilteredRecords !== 'function' || window.getFilteredRecords.__planta) return;
+        const gf = window.getFilteredRecords;
+        const f = function () {
+          const base = gf.apply(this, arguments);
+          if (!sesion()) return base;
+          const fuente = ($('filterFuente') || {}).value || 'ALL';
+          if (fuente === 'MANUAL') return base;
+          pedirArch();
+          if (!archRegs || !archRegs.length) return base;
+          const machine = ($('filterMachine') || {}).value || 'ALL', shift = ($('filterShift') || {}).value || 'ALL';
+          const from = ($('filterDateFrom') || {}).value, to = ($('filterDateTo') || {}).value;
+          const ids = new Set(base.map(r => r.id));
+          const extra = archRegs.filter(r => !ids.has(r.id) && (machine === 'ALL' || r.machine === machine) && (shift === 'ALL' || r.shift === shift) && (!from || r.date >= from) && (!to || r.date <= to));
+          return extra.length ? base.concat(extra).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))) : base;
+        };
+        f.__planta = true; window.getFilteredRecords = f;
+      }
+      document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#almBtn')) abrirAlmacen(); });
+      // consulta de espacio para el aviso (solo admin, una vez por hora)
+      setInterval(() => { if (esAdmin() && enNube() && Date.now() - usoNubeAt > 3600000) pedirUsoNube().catch(() => { usoNubeAt = Date.now(); }); }, 60000);
+      setTimeout(() => { if (esAdmin() && enNube() && !usoNube) pedirUsoNube().catch(() => { usoNubeAt = Date.now(); }); }, 8000);
+
+      // ---------------------------------------------------------------------------------
       // Arranque
       // ---------------------------------------------------------------------------------
       function iniciar() {
-        try { montarMant(); montarStock(); montarAud(); instalarTabs(); montarBotonQr(); montarBotonInforme(); } catch (e) { console.error(e); }
+        try { montarMant(); montarStock(); montarAud(); instalarTabs(); montarBotonQr(); montarBotonInforme(); instalarArchivoTablero(); } catch (e) { console.error(e); }
         if (typeof window.inoferApplyPermissions === 'function' && !window.inoferApplyPermissions.__planta) {
           const ap = window.inoferApplyPermissions;
           const f = function () { const r = ap.apply(this, arguments); try { montarBotonQr(); montarBotonInforme(); aplicarVisibilidad(); } catch (e) { console.error(e); } return r; };
