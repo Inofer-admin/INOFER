@@ -253,6 +253,26 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       });
       ok(r.card && r.canvas && r.meta === 1000000 && /% de la meta/.test(r.txt), 'el gráfico de facturación no quedó bien: ' + JSON.stringify(r).slice(0, 200));
     });
+    await prueba('Importar el Gantt de Excel y que el automático lo respete', async () => {
+      const r = await A.evaluate(async () => {
+        const H = ['Máquina', 'INYECCIÓN', 'Unid.\nTOTALES', 'Material', 'STD\n[Unid./h]', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.'];
+        const fila = (a, b, c, d, e, dias) => { const f = [a, b, c, d, e]; for (let i = 0; i < 7; i++) { const x = dias ? dias[i] : null; f.push(x && x.h != null ? x.h : null, x && x.u != null ? x.u : null); } return f; };
+        const filas = [['PLANTA INOFER, SEM 45'], ['Versión:', new Date(2026, 9, 30), null, null, 6, 'Domingo', null, null, new Date(2026, 10, 2), null, new Date(2026, 10, 3)], H,
+          ['200V', 'UTILIZACIÓN', 0.2], ['zamac', 'HS TOTALES', 51], ['CMO', 'CAMBIO DE MOLDE', 3, null, 0.2, null, null, 5, 1, 5, 1],
+          fila('PZA-XLS-1', 'PIEZA DE PRUEBA', 450, 'alsi', 56, [null, { h: 8, u: 450 }]),
+          ['200N', 'UTILIZACIÓN', 0], fila('PZA-XLS-2', 'SIN DIAS', 900, 'alsi', 75)];
+        const sem = inoferLeerGanttExcel.leerHoja(filas);
+        const res = inoferAplicarGanttExcel(sem, { reemplazar: true, fijo: true });
+        const w = ganttWeeksData['SEM-45'];
+        const v = w.machines['200V'].items.find(i => i.part === 'PZA-XLS-1'), n = w.machines['200N'].items.find(i => i.part === 'PZA-XLS-2');
+        let sigue = false;
+        try { scheduleOneMonthIntoGanttWeeks(0, 44, '2026-10-26', 'Prueba'); sigue = (ganttWeeksData['SEM-45'].machines['200V'].items || []).some(i => i.part === 'PZA-XLS-1' && i.fijo && i.dailyQty[1] === 450); } catch (e) { sigue = 'error ' + e.message; }
+        return { lunes: sem[0] && sem[0].lunes, v: v && v.dailyQty.join('/'), cmo: w.machines['200V'].aux.CMO.join('/'), n: n && n.dailyQty.reduce((a, b) => a + b, 0), fijo: !!(v && v.fijo), sigue, piezas: res.piezas };
+      });
+      ok(r.lunes === '2026-11-02' && r.v === '0/450/0/0/0/0/0' && r.cmo === '0/5/5/0/0/0/0', 'no leyó bien el Excel: ' + JSON.stringify(r));
+      ok(r.n === 900 && r.fijo, 'no repartió la pieza sin días o no quedó fija: ' + JSON.stringify(r));
+      ok(r.sigue === true, 'el Gantt automático movió o borró lo importado: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

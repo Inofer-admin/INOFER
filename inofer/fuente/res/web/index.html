@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.30.08" />
+  <meta name="inofer-version" content="2026.10.30.09" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -7700,6 +7700,7 @@ ${lines}${trendNote}`;
       const activeDayIndices = workDaysCount === 7 ? [0, 1, 2, 3, 4, 5, 6] : (workDaysCount === 5 ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6]);
       const baseDate = new Date(baseIsoDate + 'T00:00:00');
       const monthWeekCodes = [];
+      window.__inoferPrevSemanas = JSON.parse(JSON.stringify(ganttWeeksData || {}));
 
       for (let wOffset = 0; wOffset < 4; wOffset++) {
         const wNum = startWeekNum + wOffset;
@@ -7728,6 +7729,28 @@ ${lines}${trendNote}`;
       ['200V', '200N', '180', 'H50', 'Z30'].forEach(m => {
         usedHours[m] = [[0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0]];
       });
+      // Piezas fijas (📌 importadas del Gantt de Excel o marcadas a mano): quedan donde están, ocupan horas y descuentan demanda
+      const fijosQty = {};
+      monthWeekCodes.forEach((wc, wi) => {
+        const nueva = ganttWeeksData[wc], vieja = (window.__inoferPrevSemanas || {})[wc];
+        if (!vieja || !vieja.machines) return;
+        Object.keys(vieja.machines).forEach(m => {
+          const vm = vieja.machines[m] || {};
+          const fijos = (vm.items || []).filter(it => it.fijo);
+          if (!fijos.length && !vm.auxFijo) return;
+          nueva.machines[m] = nueva.machines[m] || { aux: {}, items: [] };
+          if (vm.auxFijo) { nueva.machines[m].aux = JSON.parse(JSON.stringify(vm.aux || {})); nueva.machines[m].auxFijo = true; }
+          fijos.forEach(it => { nueva.machines[m].items.push(JSON.parse(JSON.stringify(it))); if (!it.isSharedCompanion) fijosQty[String(it.part).trim().toLowerCase()] = (fijosQty[String(it.part).trim().toLowerCase()] || 0) + (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); });
+          if (!usedHours[m]) return;
+          for (let d = 0; d < 7; d++) {
+            let h = 0;
+            fijos.forEach(it => { if (!it.isSharedCompanion) h += (Number((it.dailyQty || [])[d]) || 0) / (Number(it.stdRate) || 60); });
+            if (vm.auxFijo) Object.keys(vm.aux || {}).forEach(k => { h += Number((vm.aux[k] || [])[d]) || 0; });
+            usedHours[m][wi][d] += h; totalMachHours[m] += h;
+          }
+        });
+      });
+      delete window.__inoferPrevSemanas;
 
       let scheduledPartsCount = 0;
       let criticalPartsCount = 0;
@@ -7750,6 +7773,12 @@ ${lines}${trendNote}`;
           return;
         }
         if (req.urgencyLevel === 'critical') criticalPartsCount++;
+        const yaFijo = fijosQty[req.part.trim().toLowerCase()] || 0;
+        if (yaFijo) {
+          const lmF = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(req.part.trim(), '') : 0;
+          req.qty = Math.max(0, req.qty - yaFijo);
+          if (req.qty <= 0 || (lmF && req.qty < lmF)) { scheduledPartsCount++; return; }
+        }
 
         const cleanPart = req.part.trim();
         const catEntry = partsCatalog.find(x => x.part.toLowerCase() === cleanPart.toLowerCase());
@@ -18952,6 +18981,167 @@ function activarAutomaticos() {
         setInterval(render, 4000);
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 300)); else setTimeout(iniciar, 300);
+    })();
+  </script>
+  <script>
+    // ===== Importar el Gantt que ya estaba armado en Excel (formato "PLANTA INOFER, SEM N") y dejarlo fijo =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const pad = n => String(n).padStart(2, '0');
+      const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const AUX = ['CMA', 'CMO', 'ALIS', 'DESG', 'LING', 'LIMP', 'CPIS'];
+      const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      const NO_PIEZA = ['utilizacion', 'hs totales', 'hs otras tareas', 'hs de inyeccion', 'inyeccion'];
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const maqDe = v => { const t = norm(v).toUpperCase().replace(/\s/g, ''); return MAQS().find(m => m.toUpperCase() === t) || ''; };
+      const cat = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const num = v => { if (v == null || v === '') return 0; if (typeof v === 'number') return v; const n = Number(String(v).replace(/\./g, '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+      const aFecha = v => { if (v instanceof Date && !isNaN(v)) return isoD(v); if (typeof v === 'number' && v > 30000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 864e5)); return isoD(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); } const m = String(v || '').match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); if (m) { const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]); return y + '-' + pad(m[2]) + '-' + pad(m[1]); } return ''; };
+      function lunesIsoDeSemana(n, anio) { const s = new Date(anio, 0, 4); const lunes1 = new Date(s); lunes1.setDate(s.getDate() - ((s.getDay() + 6) % 7)); lunes1.setDate(lunes1.getDate() + (n - 1) * 7); return isoD(lunes1); }
+
+      // Lee una hoja (filas como arrays) y devuelve las semanas que encuentra
+      function leerHoja(filas) {
+        const semanas = [];
+        let sem = null, cols = null, maq = '';
+        for (let r = 0; r < filas.length; r++) {
+          const f = filas[r] || [];
+          const c0 = f[0], c1 = f[1];
+          const t0 = String(c0 == null ? '' : c0);
+          const mSem = t0.match(/SEM(?:ANA)?\s*[-:]?\s*(\d{1,2})/i);
+          if (mSem && /planta|inofer|sem/i.test(t0) && !maqDe(c0)) { sem = { num: Number(mSem[1]), lunes: '', maquinas: {} }; semanas.push(sem); cols = null; maq = ''; continue; }
+          if (!sem) continue;
+          // fila de fechas: la primera fecha que cae en lunes marca la semana
+          if (!sem.lunes) { for (let k = 2; k < f.length; k++) { const iso = aFecha(f[k]); if (iso) { const d = new Date(iso + 'T12:00:00'); const lun = new Date(d); lun.setDate(d.getDate() - ((d.getDay() + 6) % 7)); sem.lunes = isoD(lun); break; } } }
+          // encabezado: "Hs" / "Unid." por día
+          if (!cols && norm(c0) === 'maquina') { const hs = []; f.forEach((v, k) => { if (k >= 5 && norm(v) === 'hs') hs.push(k); }); if (hs.length >= 6) cols = hs.slice(0, 7).map(k => ({ hs: k, u: k + 1 })); continue; }
+          if (!cols) continue;
+          if (norm(c1) === 'utilizacion' && maqDe(c0)) { maq = maqDe(c0); sem.maquinas[maq] = sem.maquinas[maq] || { aux: {}, items: [] }; continue; }
+          if (!maq) continue;
+          const cod = String(c0 == null ? '' : c0).trim().toUpperCase();
+          if (AUX.includes(cod)) { const h = cols.map(x => num(f[x.hs])); if (h.some(Boolean)) sem.maquinas[maq].aux[cod] = h; continue; }
+          if (c0 == null || c0 === '' || NO_PIEZA.includes(norm(c1)) || ['alsi', 'zamac'].includes(norm(c0))) continue;
+          const total = num(f[2]);
+          const dia = cols.map(x => num(f[x.u]));
+          if (!total && !dia.some(Boolean)) continue;
+          sem.maquinas[maq].items.push({ part: String(c0).trim(), desc: String(c1 || '').trim(), total, mat: String(f[3] || '').trim().toLowerCase(), std: num(f[4]), dia });
+        }
+        semanas.forEach(s => { if (!s.lunes) s.lunes = lunesIsoDeSemana(s.num, new Date().getFullYear()); });
+        return semanas.filter(s => Object.keys(s.maquinas).length);
+      }
+      async function leerArchivo(file) {
+        if (typeof XLSX === 'undefined' || !XLSX.read) throw new Error('No se pudo abrir Excel en este equipo (hace falta internet la primera vez).');
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+        let semanas = [];
+        wb.SheetNames.forEach(n => { const filas = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }); semanas = semanas.concat(leerHoja(filas)); });
+        return semanas;
+      }
+      window.inoferLeerGanttExcel = { leerHoja, leerArchivo };
+
+      // reparte en la semana las piezas que vienen con total pero sin días, según lo libre de la máquina
+      function horasDia(w, m, d) { const md = (w.machines || {})[m] || {}; let h = 0; (md.items || []).forEach(it => { if (!it.isSharedCompanion) h += (Number((it.dailyQty || [])[d]) || 0) / (Number(it.stdRate) || 60); }); Object.keys(md.aux || {}).forEach(k => { h += Number((md.aux[k] || [])[d]) || 0; }); return h; }
+      function capDia() { try { const c = window.inoferTurnosConfig && inoferTurnosConfig(); const e = c && (c.esquemas.find(x => x.id === c.activo) || c.esquemas[0]); if (e) { const aMin = h => { const [a, b] = String(h).split(':').map(Number); return a * 60 + (b || 0); }; return e.turnos.reduce((s, t) => s + ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440) / 60, 0); } } catch (e) { } return 16; }
+      function repartir(w, m, it, qty, std) {
+        const dq = [0, 0, 0, 0, 0, 0, 0]; let resta = qty; const cap = capDia();
+        for (const d of [1, 2, 3, 4, 5, 6]) {
+          if (resta <= 0) break;
+          if (window.inoferMaquinaDisponibleDia && !inoferMaquinaDisponibleDia(m, w, d)) continue;
+          const libre = Math.max(0, cap - horasDia(w, m, d));
+          const u = Math.min(resta, Math.floor(libre * std));
+          if (u > 0) { dq[d] = u; resta -= u; it.dailyQty = dq; }
+        }
+        if (resta > 0) dq[5] += resta; // lo que no entra queda el viernes, con aviso
+        return { dq, sobra: resta };
+      }
+
+      function aplicar(semanas, opc) {
+        const res = { semanas: 0, piezas: 0, repartidas: 0, sinLugar: [] };
+        semanas.forEach(s => {
+          const code = 'SEM-' + s.num;
+          let w = ganttWeeksData[code];
+          if (!w) { w = ganttWeeksData[code] = { code, name: `Semana ${s.num} (importada de Excel)`, startDate: s.lunes, machines: {} }; }
+          w.startDate = s.lunes || w.startDate;
+          res.semanas++;
+          Object.keys(s.maquinas).forEach(m => {
+            const src = s.maquinas[m];
+            const md = w.machines[m] = w.machines[m] || { aux: {}, items: [] };
+            if (opc.reemplazar) { md.items = []; md.aux = {}; }
+            AUX.forEach(k => { if (!md.aux[k]) md.aux[k] = [0, 0, 0, 0, 0, 0, 0]; if (src.aux[k]) md.aux[k] = src.aux[k].map((h, d) => (opc.reemplazar ? 0 : (Number(md.aux[k][d]) || 0)) + h); });
+            if (opc.fijo) md.auxFijo = true;
+            src.items.forEach((x, i) => {
+              const c = cat(x.part) || {};
+              const std = x.std || Number(c.unitsPerHour) || 60;
+              const it = { id: 'gi-xls-' + Date.now() + '-' + i + '-' + Math.floor(Math.random() * 1e4), part: c.part || x.part, desc: '📌 ' + (x.desc || c.desc || ''), totalQty: x.total || x.dia.reduce((a, b) => a + b, 0), mat: x.mat || String(c.material || 'alsi').toLowerCase(), stdRate: std,
+                weightKg: Number(c.weightWithSprueKg) || 0.08, recuperoKg: Number(c.recuperoKg) || 0.03, dailyQty: x.dia.slice(0, 7), orderId: '', sharedWithPart: '', isSharedCompanion: false, origen: 'excel', fijo: !!opc.fijo };
+              while (it.dailyQty.length < 7) it.dailyQty.push(0);
+              md.items.push(it);
+              if (!x.dia.some(Boolean) && x.total > 0) { const r = repartir(w, m, it, x.total, std); it.dailyQty = r.dq; res.repartidas++; if (r.sobra) res.sinLugar.push(`${it.part} (${m}, ${code}): ${n0(r.sobra)} u no entran, quedaron el viernes`); }
+              res.piezas++;
+            });
+          });
+        });
+        saveGanttWeeks();
+        if (semanas[0]) activeGanttWeekCode = 'SEM-' + semanas[0].num;
+        try { renderGanttView(); } catch (e) { }
+        return res;
+      }
+      window.inoferAplicarGanttExcel = aplicar;
+
+      function vista(semanas, nombre) {
+        const w0 = $('inoferPlantaModal'); if (w0) w0.remove();
+        const w = document.createElement('div'); w.id = 'inoferPlantaModal';
+        w.className = 'fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        const avisos = [];
+        semanas.forEach(s => Object.keys(s.maquinas).forEach(m => s.maquinas[m].items.forEach(x => {
+          const c = cat(x.part);
+          if (!c) avisos.push(`${x.part}: no está en la base de datos (se carga igual)`);
+          else if (Array.isArray(c.machines) && c.machines.length && !c.machines.includes(m)) avisos.push(`${x.part}: en la base de datos no figura para la ${m} (se respeta tu Excel)`);
+        })));
+        const existe = semanas.filter(s => ganttWeeksData['SEM-' + s.num]);
+        w.innerHTML = `<div class="w-full max-w-4xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+          <div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">📥 Gantt de Excel: ${esc(nombre)}</h3><button type="button" class="gx-x rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕</button></div>
+          ${semanas.map(s => `<div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3">
+            <div class="mb-2 text-sm font-black text-amber-300">SEM ${s.num} <span class="text-xs font-normal text-slate-400">· semana del ${s.lunes.slice(8, 10)}/${s.lunes.slice(5, 7)}${ganttWeeksData['SEM-' + s.num] ? ' · ya existe en INOFER' : ' · se crea'}</span></div>
+            ${Object.keys(s.maquinas).map(m => { const md = s.maquinas[m]; const aux = Object.keys(md.aux).map(k => `${k} ${n0(md.aux[k].reduce((a, b) => a + b, 0))} h`).join(' · ');
+              return `<div class="mb-2"><div class="text-xs font-bold text-white">${esc(m)} <span class="font-normal text-slate-500">${md.items.length} pieza${md.items.length === 1 ? '' : 's'}${aux ? ' · ' + esc(aux) : ''}</span></div>
+              ${md.items.length ? `<table class="mt-1 w-full text-[11px]"><thead><tr class="text-left text-slate-500"><th class="pr-2 font-normal">Pieza</th><th class="pr-2 text-right font-normal">Total</th>${DIAS.map(d => `<th class="px-1 text-right font-normal">${d}</th>`).join('')}</tr></thead><tbody>${md.items.map(x => `<tr class="border-t border-slate-800"><td class="pr-2 font-bold text-slate-200">${esc(x.part)}</td><td class="pr-2 text-right text-slate-300">${n0(x.total)}</td>${x.dia.some(Boolean) ? x.dia.map(q => `<td class="px-1 text-right ${q ? 'text-emerald-300' : 'text-slate-600'}">${q ? n0(q) : '·'}</td>`).join('') : `<td colspan="7" class="px-1 text-right text-amber-300">sin días en el Excel → se reparte solo en la semana</td>`}</tr>`).join('')}</tbody></table>` : ''}</div>`; }).join('')}
+          </div>`).join('')}
+          ${avisos.length ? `<details class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100"><summary class="cursor-pointer font-bold">⚠️ ${avisos.length} aviso${avisos.length > 1 ? 's' : ''}</summary>${avisos.slice(0, 40).map(a => `<div>• ${esc(a)}</div>`).join('')}</details>` : ''}
+          <div class="space-y-2 rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-xs text-slate-200">
+            <label class="flex items-start gap-2"><input type="radio" name="gxModo" value="r" checked class="mt-0.5 accent-amber-500"> <span><b>Reemplazar</b> lo que haya en esas máquinas y semanas por lo del Excel${existe.length ? ` <span class="text-slate-400">(${existe.map(s => 'SEM ' + s.num).join(', ')} ya tiene${existe.length > 1 ? 'n' : ''} cosas)</span>` : ''}</span></label>
+            <label class="flex items-start gap-2"><input type="radio" name="gxModo" value="s" class="mt-0.5 accent-amber-500"> <span><b>Sumar</b> lo del Excel a lo que ya hay</span></label>
+            <label class="flex items-start gap-2 border-t border-slate-800 pt-2"><input type="checkbox" id="gxFijo" checked class="mt-0.5 accent-amber-500"> <span>📌 <b>Dejarlas fijas:</b> el Gantt automático no las mueve, planifica el resto alrededor y descuenta estas cantidades de lo que falta producir.</span></label>
+          </div>
+          <div class="flex justify-end gap-2"><button type="button" class="gx-x rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">Cancelar</button><button type="button" id="gxOk" class="rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950">📥 Cargar en el Gantt</button></div>
+        </div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => {
+          if (e.target === w || e.target.closest('.gx-x')) { w.remove(); return; }
+          if (e.target.closest('#gxOk')) {
+            const r = aplicar(semanas, { reemplazar: w.querySelector('input[name="gxModo"]:checked').value === 'r', fijo: w.querySelector('#gxFijo').checked });
+            w.remove();
+            showToast(`✓ Cargadas ${r.piezas} piezas en ${r.semanas} semana${r.semanas > 1 ? 's' : ''}${r.repartidas ? ` (${r.repartidas} repartidas solas)` : ''}${r.sinLugar.length ? ' · ⚠️ ' + r.sinLugar.join('; ') : ''}. Revisá las órdenes en Órdenes → Del Gantt.`);
+          }
+        });
+      }
+      function montar() {
+        const ref = $('duplicateGanttWeekBtn'); if (!ref || $('importGanttExcelBtn')) return;
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'importGanttExcelBtn';
+        b.className = 'rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200 hover:bg-amber-500/20'; b.textContent = '📥 Subir mi Gantt de Excel';
+        const inp = document.createElement('input'); inp.type = 'file'; inp.id = 'importGanttExcelInput'; inp.accept = '.xlsx,.xls'; inp.className = 'hidden';
+        ref.parentElement.insertBefore(b, ref.nextSibling); ref.parentElement.insertBefore(inp, b.nextSibling);
+        b.addEventListener('click', () => { if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) { showToast('Tu usuario no puede modificar el Gantt'); return; } inp.value = ''; inp.click(); });
+        inp.addEventListener('change', async () => {
+          const f = inp.files && inp.files[0]; if (!f) return;
+          try { const s = await leerArchivo(f); if (!s.length) { showToast('No encontré semanas con el formato "PLANTA INOFER, SEM …" en ese archivo'); return; } vista(s, f.name); }
+          catch (e) { showToast(e.message); }
+        });
+        try { if (typeof INOFER_EDIT_CONTROLS !== 'undefined' && INOFER_EDIT_CONTROLS.gantt) INOFER_EDIT_CONTROLS.gantt.push('#importGanttExcelBtn'); } catch (e) { }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(montar, 300)); else setTimeout(montar, 300);
     })();
   </script>
 </body>

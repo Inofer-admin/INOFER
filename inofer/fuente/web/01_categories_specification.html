@@ -4936,6 +4936,7 @@ ${lines}${trendNote}`;
       const activeDayIndices = workDaysCount === 7 ? [0, 1, 2, 3, 4, 5, 6] : (workDaysCount === 5 ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6]);
       const baseDate = new Date(baseIsoDate + 'T00:00:00');
       const monthWeekCodes = [];
+      window.__inoferPrevSemanas = JSON.parse(JSON.stringify(ganttWeeksData || {}));
 
       for (let wOffset = 0; wOffset < 4; wOffset++) {
         const wNum = startWeekNum + wOffset;
@@ -4964,6 +4965,28 @@ ${lines}${trendNote}`;
       ['200V', '200N', '180', 'H50', 'Z30'].forEach(m => {
         usedHours[m] = [[0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0]];
       });
+      // Piezas fijas (📌 importadas del Gantt de Excel o marcadas a mano): quedan donde están, ocupan horas y descuentan demanda
+      const fijosQty = {};
+      monthWeekCodes.forEach((wc, wi) => {
+        const nueva = ganttWeeksData[wc], vieja = (window.__inoferPrevSemanas || {})[wc];
+        if (!vieja || !vieja.machines) return;
+        Object.keys(vieja.machines).forEach(m => {
+          const vm = vieja.machines[m] || {};
+          const fijos = (vm.items || []).filter(it => it.fijo);
+          if (!fijos.length && !vm.auxFijo) return;
+          nueva.machines[m] = nueva.machines[m] || { aux: {}, items: [] };
+          if (vm.auxFijo) { nueva.machines[m].aux = JSON.parse(JSON.stringify(vm.aux || {})); nueva.machines[m].auxFijo = true; }
+          fijos.forEach(it => { nueva.machines[m].items.push(JSON.parse(JSON.stringify(it))); if (!it.isSharedCompanion) fijosQty[String(it.part).trim().toLowerCase()] = (fijosQty[String(it.part).trim().toLowerCase()] || 0) + (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); });
+          if (!usedHours[m]) return;
+          for (let d = 0; d < 7; d++) {
+            let h = 0;
+            fijos.forEach(it => { if (!it.isSharedCompanion) h += (Number((it.dailyQty || [])[d]) || 0) / (Number(it.stdRate) || 60); });
+            if (vm.auxFijo) Object.keys(vm.aux || {}).forEach(k => { h += Number((vm.aux[k] || [])[d]) || 0; });
+            usedHours[m][wi][d] += h; totalMachHours[m] += h;
+          }
+        });
+      });
+      delete window.__inoferPrevSemanas;
 
       let scheduledPartsCount = 0;
       let criticalPartsCount = 0;
@@ -4986,6 +5009,12 @@ ${lines}${trendNote}`;
           return;
         }
         if (req.urgencyLevel === 'critical') criticalPartsCount++;
+        const yaFijo = fijosQty[req.part.trim().toLowerCase()] || 0;
+        if (yaFijo) {
+          const lmF = typeof inoferLoteMinDe === 'function' ? inoferLoteMinDe(req.part.trim(), '') : 0;
+          req.qty = Math.max(0, req.qty - yaFijo);
+          if (req.qty <= 0 || (lmF && req.qty < lmF)) { scheduledPartsCount++; return; }
+        }
 
         const cleanPart = req.part.trim();
         const catEntry = partsCatalog.find(x => x.part.toLowerCase() === cleanPart.toLowerCase());
