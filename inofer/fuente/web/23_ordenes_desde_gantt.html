@@ -114,25 +114,54 @@
       function revisar() {
         const L = propuestas();
         const w0 = $('inoferPlantaModal'); if (w0) w0.remove();
+        const GRUPOS = [['nueva', '🆕 Órdenes nuevas'], ['ajuste', '✏️ Cambios de cantidad'], ['vincular', '🔗 Órdenes que ya existían'], ['mover', '↔️ Cambios de máquina'], ['borrar', '🗑️ Se borran (sin producción)'], ['aviso', '⚠️ Salieron del Gantt con producción']];
+        const maqP = p => (p.x && p.x.maq) || (p.o ? maqDe(p.o) : '') || '—';
+        const marcado = L.map(p => p.tipo !== 'aviso');
+        const maqs = [...new Set(L.map(maqP))].sort();
         const w = document.createElement('div'); w.id = 'inoferPlantaModal';
         w.className = 'fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
-        w.innerHTML = `<div class="w-full max-w-3xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
-          <div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">📅 Órdenes según el Gantt</h3><button type="button" class="gp-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕ Cerrar</button></div>
-          ${L.length ? `<p class="text-xs text-slate-400">INOFER comparó el Gantt (desde esta semana) con las órdenes. Destildá lo que no quieras y tocá <b>Aprobar</b>. Lo que descartes no se vuelve a proponer hasta que cambie el Gantt.</p>
-          <div class="space-y-1.5">${L.map((p, i) => { const t = texto(p); return `<label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-xs text-slate-200 hover:border-amber-400/60"><input type="checkbox" class="gp-chk mt-0.5 h-4 w-4 accent-amber-500" data-i="${i}" ${p.tipo === 'aviso' ? '' : 'checked'}><span class="text-base leading-none">${t.ico}</span><span class="flex-1">${t.t}</span></label>`; }).join('')}</div>
-          <div class="flex flex-wrap justify-end gap-2"><button type="button" class="gp-desc rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">Descartar las destildadas</button><button type="button" class="gp-ok rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950">✓ Aprobar seleccionadas</button></div>`
-          : '<div class="py-6 text-center text-sm text-slate-300">✅ Las órdenes están al día con el Gantt.</div>'}</div>`;
         document.body.appendChild(w);
+        let ultimo = -1;
+        const chip = (cls, data, txt, on, parcial) => `<button type="button" class="${cls} rounded-full border px-3 py-1.5 text-xs font-bold ${on ? 'border-amber-400 bg-amber-500/20 text-amber-100' : (parcial ? 'border-amber-400/50 bg-amber-500/5 text-amber-200/80' : 'border-slate-700 text-slate-400')}" ${data}>${txt}</button>`;
+        function dibujar() {
+          const n = marcado.filter(Boolean).length;
+          const estadoDe = idx => { const k = idx.filter(i => marcado[i]).length; return { todos: idx.length && k === idx.length, alguno: k > 0 && k < idx.length, k }; };
+          w.innerHTML = `<div class="w-full max-w-3xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+            <div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">📅 Órdenes según el Gantt</h3><button type="button" class="gp-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕ Cerrar</button></div>
+            ${L.length ? `<p class="text-xs text-slate-400">Vienen todas tildadas (menos las que ya tienen producción). Usá los botones para tildar o destildar de a grupos; tocando una fila con <b>Shift</b> apretado se marca todo el tramo.</p>
+            <div class="space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-2.5">
+              <div class="flex flex-wrap items-center gap-1.5"><span class="w-20 text-[11px] font-bold text-slate-500">Todo</span>${chip('gp-todo', 'data-v="1"', '✓ Tildar todo', n === L.length)}${chip('gp-todo', 'data-v="0"', '✗ Destildar todo', n === 0)}</div>
+              <div class="flex flex-wrap items-center gap-1.5"><span class="w-20 text-[11px] font-bold text-slate-500">Por tipo</span>${GRUPOS.filter(g => L.some(p => p.tipo === g[0])).map(g => { const idx = L.map((p, i) => p.tipo === g[0] ? i : -1).filter(i => i >= 0); const e = estadoDe(idx); return chip('gp-tipo', `data-t="${g[0]}"`, `${g[1].split(' ')[0]} ${g[1].split(' ').slice(1).join(' ')} · ${e.k}/${idx.length}`, e.todos, e.alguno); }).join('')}</div>
+              ${maqs.length > 1 ? `<div class="flex flex-wrap items-center gap-1.5"><span class="w-20 text-[11px] font-bold text-slate-500">Por máquina</span>${maqs.map(m => { const idx = L.map((p, i) => maqP(p) === m ? i : -1).filter(i => i >= 0); const e = estadoDe(idx); return chip('gp-maq', `data-m="${esc(m)}"`, `${esc(m)} · ${e.k}/${idx.length}`, e.todos, e.alguno); }).join('')}</div>` : ''}
+            </div>
+            <div class="max-h-[50vh] space-y-3 overflow-y-auto pr-1">${GRUPOS.map(g => { const idx = L.map((p, i) => p.tipo === g[0] ? i : -1).filter(i => i >= 0); if (!idx.length) return ''; const e = estadoDe(idx);
+              return `<div><label class="mb-1 flex cursor-pointer items-center gap-2 text-xs font-black text-slate-300"><input type="checkbox" class="gp-grupo h-4 w-4 accent-amber-500" data-t="${g[0]}" ${e.todos ? 'checked' : ''}> ${g[1]} <span class="font-normal text-slate-500">(${e.k} de ${idx.length})</span></label>
+                <div class="space-y-1">${idx.map(i => { const t = texto(L[i]); return `<div class="gp-fila flex cursor-pointer select-none items-start gap-2.5 rounded-xl border ${marcado[i] ? 'border-amber-400/50 bg-amber-500/5' : 'border-slate-800 bg-slate-950/40 opacity-60'} px-3 py-2 text-xs text-slate-200" data-i="${i}"><span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${marcado[i] ? 'border-amber-400 bg-amber-500 text-slate-950' : 'border-slate-600'} text-[10px] font-black">${marcado[i] ? '✓' : ''}</span><span class="flex-1">${t.t}</span></div>`; }).join('')}</div></div>`; }).join('')}</div>
+            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3"><span class="text-xs text-slate-400">Se aplican <b class="text-white">${n}</b> de ${L.length}</span>
+              <div class="flex flex-wrap gap-2"><button type="button" class="gp-desc rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300" ${n === L.length ? 'disabled' : ''}>Aplicar las tildadas y descartar el resto (${L.length - n})</button><button type="button" class="gp-ok rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950" ${n ? '' : 'disabled'}>✓ Aprobar ${n}</button></div></div>`
+            : '<div class="py-6 text-center text-sm text-slate-300">✅ Las órdenes están al día con el Gantt.</div>'}</div>`;
+        }
+        dibujar();
         w.addEventListener('click', e => {
           if (e.target === w || e.target.closest('.gp-cerrar')) { w.remove(); return; }
-          const sel = () => [...w.querySelectorAll('.gp-chk')].map(c => ({ c, p: L[Number(c.dataset.i)] }));
+          let b;
+          if ((b = e.target.closest('.gp-todo'))) { marcado.fill(b.dataset.v === '1'); dibujar(); return; }
+          if ((b = e.target.closest('.gp-tipo')) || (b = e.target.closest('.gp-grupo'))) { const idx = L.map((p, i) => p.tipo === b.dataset.t ? i : -1).filter(i => i >= 0); const v = !idx.every(i => marcado[i]); idx.forEach(i => { marcado[i] = v; }); dibujar(); return; }
+          if ((b = e.target.closest('.gp-maq'))) { const idx = L.map((p, i) => maqP(p) === b.dataset.m ? i : -1).filter(i => i >= 0); const v = !idx.every(i => marcado[i]); idx.forEach(i => { marcado[i] = v; }); dibujar(); return; }
+          if ((b = e.target.closest('.gp-fila'))) {
+            const i = Number(b.dataset.i), v = !marcado[i];
+            if (e.shiftKey && ultimo >= 0) { const filas = [...w.querySelectorAll('.gp-fila')].map(f => Number(f.dataset.i)); const a1 = filas.indexOf(ultimo), b1 = filas.indexOf(i); filas.slice(Math.min(a1, b1), Math.max(a1, b1) + 1).forEach(j => { marcado[j] = v; }); }
+            else marcado[i] = v;
+            ultimo = i; dibujar(); return;
+          }
           if (e.target.closest('.gp-ok')) {
-            const n = aplicar(sel().filter(x => x.c.checked).map(x => x.p));
+            const n = aplicar(L.filter((p, i) => marcado[i]));
             w.remove(); pintar(); showToast(n ? `✓ ${n} cambio${n > 1 ? 's' : ''} aplicado${n > 1 ? 's' : ''} en las órdenes` : 'No se aplicó nada');
           }
           if (e.target.closest('.gp-desc')) {
-            sel().filter(x => !x.c.checked).forEach(x => { ign[x.p.firma] = Date.now(); }); guardarIgn();
-            w.remove(); pintar(); showToast('Listo, no se vuelven a proponer');
+            L.forEach((p, i) => { if (!marcado[i]) ign[p.firma] = Date.now(); }); guardarIgn();
+            const n = aplicar(L.filter((p, i) => marcado[i]));
+            w.remove(); pintar(); showToast(`Listo: ${n} aplicado${n === 1 ? '' : 's'} y el resto no se vuelve a proponer`);
           }
         });
       }
