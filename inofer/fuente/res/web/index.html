@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.10.30.09" />
+  <meta name="inofer-version" content="2026.10.30.11" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -17735,8 +17735,11 @@ function activarAutomaticos() {
   ScriptApp.newTrigger('inoferInformeSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
   ScriptApp.newTrigger('inoferRespaldoDiario').timeBased().everyDays(1).atHour(3).create();
   MailApp.getRemainingDailyQuota(); DriveApp.getRootFolder();
-  return inoferServidor_().copiaDeSeguridad() + ' | ' + inoferServidor_().enviarInformeSemanal(true);
-}`;
+  const r = inoferServidor_().copiaDeSeguridad() + ' | ' + inoferServidor_().enviarInformeSemanal(true);
+  Logger.log(r);
+  return r;
+}
+function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSemanal(true)); }`;
       window.inoferCodigoGs = CODIGO_GS;
       async function abrirInforme(semana) {
         if (!enNube()) { toast('El informe semanal necesita la conexión con la nube'); return; }
