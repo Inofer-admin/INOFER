@@ -1,0 +1,129 @@
+  <script>
+    // ===== Rotura de molde: la orden sale de la programación (Gantt) y vuelve sola cuando la pieza aparece de nuevo en el Gantt =====
+    // La máquina sigue operativa (se baja el molde roto y se monta otro): solo se quita esa pieza, no la máquina.
+    (function () {
+      const ESTADO = 'Detenida por rotura';
+      const $ = id => document.getElementById(id);
+      const norm = s => String(s == null ? '' : s).trim().toLowerCase();
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const ordenes = () => (typeof productionOrders !== 'undefined' && Array.isArray(productionOrders) ? productionOrders : []);
+      const semanas = () => (typeof ganttWeeksData !== 'undefined' && ganttWeeksData ? ganttWeeksData : {});
+      const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
+      const fechaDia = (w, d) => (window.inoferFechaDia ? inoferFechaDia(w, d) : '');
+      const nombreMaq = m => { try { const c = GANTT_MACHINES_CONFIG.find(x => x.id === m); return c ? c.name : m; } catch (e) { return m; } };
+      const detenida = o => !!o && o.status === ESTADO;
+      window.inoferOrdenDetenida = detenida;
+      window.INOFER_ESTADO_ROTURA = ESTADO;
+      // Códigos de parada que suelen ser del molde (no de la máquina)
+      window.INOFER_CODIGOS_MOLDE = [2, 3, 4, 5, 10, 11, 12, 14, 17];
+
+      // Saca del Gantt la pieza (y su compañera del mismo molde) en esa máquina, desde hoy en adelante
+      function quitarDelGantt(part, maq, desde) {
+        const quitado = []; let total = 0;
+        Object.keys(semanas()).forEach(code => {
+          const w = semanas()[code]; const md = w && w.machines && w.machines[maq]; if (!md || !Array.isArray(md.items)) return;
+          const principal = md.items.filter(it => !it.isSharedCompanion && norm(it.part) === norm(part));
+          const companeras = new Set(principal.map(it => norm(it.sharedWithPart)).filter(Boolean));
+          md.items.forEach(it => {
+            const esta = (!it.isSharedCompanion && norm(it.part) === norm(part)) || (it.isSharedCompanion && companeras.has(norm(it.part)));
+            if (!esta) return;
+            (it.dailyQty || []).forEach((q, d) => {
+              q = Number(q) || 0; if (!q) return;
+              const f = fechaDia(w, d); if (!f || f < desde) return;
+              if (!it.isSharedCompanion) { total += q; quitado.push({ semana: code, dia: f, qty: q }); }
+              it.dailyQty[d] = 0;
+            });
+            it.totalQty = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0);
+          });
+          md.items = md.items.filter(it => !((principal.includes(it) || (it.isSharedCompanion && companeras.has(norm(it.part)))) && !(it.dailyQty || []).some(q => Number(q) > 0)));
+        });
+        return { total, quitado };
+      }
+      // Lo que hay programado de una pieza desde una fecha, en cualquier máquina
+      function programadoDesde(part, desde) {
+        const porMaq = {}; let primera = null;
+        Object.keys(semanas()).forEach(code => {
+          const w = semanas()[code];
+          Object.keys((w && w.machines) || {}).forEach(m => (w.machines[m].items || []).forEach(it => {
+            if (it.isSharedCompanion || norm(it.part) !== norm(part)) return;
+            (it.dailyQty || []).forEach((q, d) => {
+              q = Number(q) || 0; if (!q) return;
+              const f = fechaDia(w, d); if (!f || f < desde) return;
+              porMaq[m] = (porMaq[m] || 0) + q;
+              if (!primera || f < primera.f) primera = { f, m };
+            });
+          }));
+        });
+        return { porMaq, primera, total: Object.values(porMaq).reduce((a, b) => a + b, 0) };
+      }
+      // Detiene la orden por rotura de molde: sale de la programación desde hoy
+      function detener(ordId, info) {
+        const o = ordenes().find(x => String(x.id) === String(ordId)); if (!o) return null;
+        if (detenida(o)) return { total: 0, ya: true };
+        const maq = maqDe(o), desde = hoy();
+        const r = maq ? quitarDelGantt(o.part, maq, desde) : { total: 0, quitado: [] };
+        o.statusAntesRotura = o.status || 'En Proceso';
+        o.status = ESTADO; o.modificadoAt = new Date().toISOString();
+        o.rotura = { desde, maquina: maq, motivo: (info && info.motivo) || 'Rotura de molde', roturaId: (info && info.roturaId) || '', quitado: r.total, por: (window.inoferUsuarioEtiqueta ? inoferUsuarioEtiqueta() : ''), at: new Date().toISOString() };
+        try { saveProductionOrders(); } catch (e) { }
+        if (r.total) { try { saveGanttWeeks(); } catch (e) { } }
+        try { renderProductionOrdersView(); } catch (e) { }
+        try { if (typeof renderGanttView === 'function') renderGanttView(); } catch (e) { }
+        return r;
+      }
+      // Si la pieza volvió a aparecer en el Gantt, la orden vuelve a En Proceso (en la máquina donde la programaron)
+      function revisarVuelta(silencio) {
+        const vueltas = [];
+        ordenes().forEach(o => {
+          if (!detenida(o)) return;
+          const p = programadoDesde(o.part, (o.rotura && o.rotura.desde) || hoy());
+          if (!p.total || !p.primera) return;
+          const m = p.primera.m;
+          o.roturasHist = (o.roturasHist || []).concat([Object.assign({}, o.rotura || {}, { volvio: hoy() })]);
+          o.status = 'En Proceso'; o.modificadoAt = new Date().toISOString();
+          delete o.rotura; delete o.statusAntesRotura;
+          if (maqDe(o) !== m) o.machine = nombreMaq(m);
+          if (o.gantt) o.gantt = Object.assign({}, o.gantt, { key: norm(o.part) + '|' + m });
+          vueltas.push(`OP ${o.ordNumber || ''} · ${o.part} (${m})`);
+        });
+        if (vueltas.length) {
+          try { saveProductionOrders(); } catch (e) { }
+          try { renderProductionOrdersView(); } catch (e) { }
+          if (!silencio) toast('🔁 Volvió a la programación: ' + vueltas.join(', '));
+        }
+        return vueltas;
+      }
+      window.inoferDetenerPorRotura = detener;
+      window.inoferRevisarVueltaRotura = revisarVuelta;
+
+      // Al guardar el Gantt: primero se reactivan las órdenes detenidas (así no se propone una orden nueva para esa pieza)
+      function envolverGuardado() {
+        if (typeof window.saveGanttWeeks !== 'function' || window.saveGanttWeeks.__rotura) return;
+        const orig = window.saveGanttWeeks;
+        const f = function () { try { revisarVuelta(false); } catch (e) { } return orig.apply(this, arguments); };
+        Object.assign(f, orig); f.__rotura = true; window.saveGanttWeeks = f;
+      }
+      // Estado manual en el detalle de la orden
+      function opcionEstado() {
+        const s = $('ord_status'); if (!s || [...s.options].some(x => x.value === ESTADO)) return;
+        const op = document.createElement('option'); op.value = ESTADO; op.textContent = '🔧 Detenida por rotura de molde (sale del Gantt)'; s.appendChild(op);
+      }
+      document.addEventListener('change', e => {
+        if (!e.target || e.target.id !== 'ord_status') return;
+        const id = typeof selectedOrderId !== 'undefined' ? selectedOrderId : null;
+        const o = ordenes().find(x => String(x.id) === String(id)); if (!o) return;
+        if (e.target.value === ESTADO && !detenida(o)) {
+          if (!confirm(`¿Detener la OP ${o.ordNumber || ''} (${o.part}) por rotura de molde?\n\nSale del Gantt desde hoy y la máquina queda libre para otra pieza. Vuelve sola a "En Proceso" cuando la pieza aparezca otra vez en el Gantt.`)) { e.target.value = o.status || 'En Proceso'; return; }
+          const r = detener(o.id, { motivo: 'Rotura de molde (marcado en la orden)' });
+          toast(`🔧 OP ${o.ordNumber || ''} detenida por rotura${r && r.total ? ` · se sacaron ${r.total.toLocaleString('es-AR')} piezas del Gantt` : ''}`);
+        } else if (e.target.value !== ESTADO && detenida(o)) {
+          o.roturasHist = (o.roturasHist || []).concat([Object.assign({}, o.rotura || {}, { volvio: hoy(), manual: true })]);
+          delete o.rotura; delete o.statusAntesRotura;
+        }
+      }, true);
+      setInterval(() => { try { envolverGuardado(); opcionEstado(); revisarVuelta(false); } catch (e) { } }, 20000);
+      function iniciar() { try { envolverGuardado(); opcionEstado(); } catch (e) { } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 300)); else setTimeout(iniciar, 300);
+    })();
+  </script>

@@ -822,7 +822,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         cont.innerHTML = vis.map(o => {
           const e = estadoDe(o);
           const activa = o.id === selectedOrderId;
-          const color = e.st === 'Completada' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-cyan-500/20 text-cyan-300';
+          const color = e.st === 'Completada' ? 'bg-emerald-500/20 text-emerald-300' : (e.st === 'Detenida por rotura' ? 'bg-rose-500/20 text-rose-300' : 'bg-cyan-500/20 text-cyan-300');
           const barra = e.pct >= 100 ? 'bg-emerald-400' : 'bg-amber-400';
           return `<div class="rounded-xl border ${activa ? 'border-amber-400 ring-1 ring-amber-400/40' : 'border-slate-800'} bg-slate-950/70 p-3.5 space-y-2.5">
             <div class="flex items-start justify-between gap-2">

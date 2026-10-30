@@ -53,7 +53,7 @@
       const puedeEditar = () => typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit');
       const nombreOperario = () => pref.operario || (typeof inoferSession !== 'undefined' && inoferSession && inoferSession.nombre) || '';
       function avance(o) { try { const m = computeOrderMetrics(o); return { pct: Math.min(100, Math.round((m && m.progressPct) || 0)), ok: (m && m.totalOk) || 0 }; } catch (e) { return { pct: 0, ok: 0 }; } }
-      const abierta = o => !(o.status === 'Completada' || avance(o).pct >= 100);
+      const abierta = o => !(o.status === 'Completada' || o.status === 'Detenida por rotura' || avance(o).pct >= 100);
       function siguienteNumero() {
         const n = (typeof productionOrders !== 'undefined' ? productionOrders : []).map(o => parseInt(String(o.ordNumber).replace(/\D/g, ''), 10) || 0);
         return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0');

@@ -1849,6 +1849,7 @@ function accionRotura(u, body) {
   if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
   if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };
   const fotoId = body.action === 'avisarRotura' && body.foto ? guardarFoto_(u, body.foto) : '';
+  let roturaNueva = '';
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -1864,7 +1865,9 @@ function accionRotura(u, body) {
       const m = String(body.maquina || '').slice(0, 20);
       if (!m) return { status: 'error', error: 'Falta la máquina.' };
       const motivo = String(body.motivo || 'Rotura').slice(0, 120), desc = String(body.descripcion || '').slice(0, 600);
-      const r = { id: idNuevo_('rot'), maquina: m, fecha: fecha, hora: hora, motivo: motivo, descripcion: desc, fotoId: fotoId, paro: body.parada !== false, por: etiquetaUsuario_(u), estado: 'abierta', avisadaAt: ahora.toISOString() };
+      const esMolde = body.tipo === 'molde';
+      const r = { id: idNuevo_('rot'), maquina: m, fecha: fecha, hora: hora, motivo: motivo, descripcion: desc, fotoId: fotoId, paro: !esMolde && body.parada !== false, tipo: esMolde ? 'molde' : 'maquina', ordId: String(body.ordId || '').slice(0, 60), pieza: String(body.pieza || '').slice(0, 60), ordNumber: String(body.ordNumber || '').slice(0, 30), por: etiquetaUsuario_(u), estado: 'abierta', avisadaAt: ahora.toISOString() };
+      roturaNueva = r.id;
       mant.roturas.push(r);
       guardarModuloSinLock_('mantenimiento', mant);
       if (r.paro) {
@@ -1873,9 +1876,9 @@ function accionRotura(u, body) {
       }
       try {
         const id = idNuevo_('sol'), f = ahora.toISOString();
-        escribirSolicitud_({ id: id, autor: u.usuario, nombre: u.nombre || u.usuario, tipo: 'rotura', titulo: '🔧 Rotura en la ' + m + ': ' + motivo, detalle: (desc ? desc + ' · ' : '') + (r.paro ? 'La máquina quedó PARADA.' : 'La máquina sigue andando.') + (fotoId ? ' (con foto, ver en Mantenimiento)' : ''), estado: 'pendiente', respuesta: '', respondidoPor: '', fecha: f, actualizado: f, vistoAdmin: false, vistoAutor: true });
+        escribirSolicitud_({ id: id, autor: u.usuario, nombre: u.nombre || u.usuario, tipo: 'rotura', titulo: (esMolde ? '🧩 Rotura de molde en la ' : '🔧 Rotura en la ') + m + ': ' + motivo, detalle: (desc ? desc + ' · ' : '') + (esMolde ? 'Molde ' + (r.pieza || '') + (r.ordNumber ? ' (OP ' + r.ordNumber + ')' : '') + ' fuera del Gantt; la máquina sigue trabajando con otra pieza.' : (r.paro ? 'La máquina quedó PARADA.' : 'La máquina sigue andando.')) + (fotoId ? ' (con foto, ver en Mantenimiento)' : ''), estado: 'pendiente', respuesta: '', respondidoPor: '', fecha: f, actualizado: f, vistoAdmin: false, vistoAutor: true });
       } catch (e) {}
-      auditar_(u, 'avisó', 'mantenimiento', ['Rotura en la ' + m + ': ' + motivo + (r.paro ? ' (máquina parada)' : '') + (fotoId ? ' · con foto' : '')]);
+      auditar_(u, 'avisó', 'mantenimiento', [(esMolde ? 'Rotura de molde ' + (r.pieza || '') + (r.ordNumber ? ' (OP ' + r.ordNumber + ')' : '') + ' en la ' : 'Rotura en la ') + m + ': ' + motivo + (r.paro ? ' (máquina parada)' : '') + (fotoId ? ' · con foto' : '')]);
     } else {
       const r = mant.roturas.filter(function (x) { return x.id === String(body.id); })[0];
       if (!r) return { status: 'error', error: 'No encontré esa rotura.' };
@@ -1889,7 +1892,7 @@ function accionRotura(u, body) {
       auditar_(u, 'resolvió', 'mantenimiento', ['Rotura de la ' + r.maquina + ' (' + r.motivo + ') reparada' + (r.nota ? ': ' + r.nota : '')]);
     }
   } finally { lock.releaseLock(); }
-  const paq = paqueteDatos(u, null); paq.versiones = versiones_();
+  const paq = paqueteDatos(u, null); paq.versiones = versiones_(); if (roturaNueva) paq.roturaId = roturaNueva;
   return paq;
 }
 // Copia diaria de toda la planilla en Google Drive (la llama el disparador inoferRespaldoDiario del Código.gs)

@@ -339,6 +339,39 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.chatEnVentana && r.fab && r.abierto && r.fabFuera, 'el asistente flotante no anda: ' + JSON.stringify(r));
       ok(/Nueva semana/.test(r.items) && /Analizador/.test(r.items) && r.analizador && r.avanzo && r.grilla, 'menú/secciones/flechas: ' + JSON.stringify(r));
     });
+    await prueba('Rotura de molde: la orden sale del Gantt y vuelve sola al reprogramarla', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const hoy = new Date(); const dow = hoy.getDay();
+        const nom = m => GANTT_MACHINES_CONFIG.find(c => c.id === m).name;
+        ganttWeeksData['SEM-ROT'] = { code: 'SEM-ROT', name: 'Semana rotura', startDate: iso(hoy), machines: { '200V': { aux: {}, items: [{ id: 'gi-rot', part: 'PZA-ROT', desc: 'PIEZA ROTURA', totalQty: 700, mat: 'alsi', stdRate: 100, dailyQty: [100, 100, 100, 100, 100, 100, 100] }] }, '200N': { aux: {}, items: [] } } };
+        productionOrders.push({ id: 'ord-rot', ordNumber: '9901', part: 'PZA-ROT', machine: nom('200V'), status: 'En Proceso', qtyTarget: 700, logs: [], gantt: { key: 'pza-rot|200V', desde: iso(hoy) } });
+        saveProductionOrders(); saveGanttWeeks(); await w(2500);
+        inoferAvisarRotura('200V'); await w(300);
+        const m = document.querySelector('#inoferPlantaModal') || document.body;
+        const mot = [...document.querySelectorAll('.ar-mot')].find(b => /^10-/.test(b.dataset.c)); mot.click(); await w(100);
+        const ordBoxVisible = !document.getElementById('arOrdBox').classList.contains('hidden');
+        document.getElementById('arOrd').value = 'ord-rot';
+        document.getElementById('arEnviar').click(); await w(3000);
+        const o = productionOrders.find(x => x.id === 'ord-rot');
+        const it = (ganttWeeksData['SEM-ROT'].machines['200V'].items || []).find(i => i.part === 'PZA-ROT');
+        const quedan = it ? it.dailyQty.slice() : [];
+        const mt = inoferModLocal('mantenimiento') || {}; const rot = (mt.roturas || []).find(x => x.ordId === 'ord-rot') || {};
+        const maqActiva = !((inoferModLocal('setup') || {}).maquinas || {})['200V'] || ((inoferModLocal('setup') || {}).maquinas['200V'].activa !== false);
+        const enCarga = inoferCargaRapida.abierta(o);
+        const det = { ordBoxVisible, status: o.status, quedan, tipo: rot.tipo, paro: rot.paro, maqActiva, enCarga };
+        // la pieza vuelve a aparecer en el Gantt (en otra máquina)
+        ganttWeeksData['SEM-ROT'].machines['200N'].items.push({ id: 'gi-rot2', part: 'PZA-ROT', desc: 'PIEZA ROTURA', totalQty: 300, mat: 'alsi', stdRate: 100, dailyQty: [0, 0, 0, 0, 0, 0, 0].map((x, i) => i >= dow ? 50 : 0) });
+        saveGanttWeeks(); await w(300);
+        return Object.assign(det, { despues: o.status, maq: inoferCargaRapida.maqDeOrden(o), hist: (o.roturasHist || []).length });
+      });
+      const hoyIdx = new Date().getDay();
+      ok(r.ordBoxVisible && r.tipo === 'molde' && r.paro === false && r.maqActiva, 'la rotura de molde no quedó bien: ' + JSON.stringify(r));
+      ok(r.status === 'Detenida por rotura' && r.enCarga === false, 'la orden no quedó detenida: ' + JSON.stringify(r));
+      ok(r.quedan.length === 0 || r.quedan.every((q, i) => i < hoyIdx ? q === 100 : q === 0), 'no sacó bien la pieza del Gantt desde hoy: ' + JSON.stringify(r));
+      ok(r.despues === 'En Proceso' && r.maq === '200N' && r.hist === 1, 'no volvió sola al reprogramarla: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

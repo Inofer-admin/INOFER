@@ -154,7 +154,7 @@
             <div class="mt-2 grid grid-cols-2 gap-1.5 text-center"><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Hoy hecho</div><div class="text-sm font-black text-emerald-300">${n0(h.ok)}</div></div><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Programado</div><div class="text-sm font-black text-white">${p.q ? n0(p.q) : '—'}</div></div></div>
             <div class="mt-2 text-[11px] text-slate-400">${u ? `Último turno: ${esc(u.l.turno || '')} · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} · ${haceTxt(u.l)}` : 'Sin turnos cargados'}</div>
             ${sinCargar.length ? `<div class="mt-1 text-[11px] font-bold text-amber-300">⏰ Falta cargar: ${sinCargar.map(x => esc(x.t.nombre) + ' ' + x.fecha.slice(8, 10) + '/' + x.fecha.slice(5, 7)).join(', ')}</div>` : ''}
-            ${rot.length ? `<div class="mt-1 text-[11px] font-bold text-rose-300">🔧 Rotura avisada: ${esc(rot[0].motivo)} (${esc(rot[0].hora || '')})</div>` : ''}
+            ${rot.length ? `<div class="mt-1 text-[11px] font-bold text-rose-300">${rot[0].tipo === 'molde' ? '🧩 Molde roto' + (rot[0].pieza ? ' ' + esc(rot[0].pieza) : '') : '🔧 Rotura avisada'}: ${esc(rot[0].motivo)} (${esc(rot[0].hora || '')})</div>` : ''}
             <div class="mt-auto flex gap-1.5 pt-2">${puedeCargar ? `<button type="button" class="hoy-cargar flex-1 ${BTN} border-amber-500/50 bg-amber-500/15 text-amber-200" data-m="${esc(m)}" data-o="${o ? esc(o.id) : ''}">📝 Cargar turno</button><button type="button" class="hoy-rotura ${BTN} border-rose-500/40 text-rose-200" data-m="${esc(m)}" title="Avisar rotura">🔧</button>` : ''}</div>
           </div>`;
         }).join('');
@@ -210,7 +210,7 @@
               <div class="mt-2 grid grid-cols-3 gap-2 text-center"><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hechas</div><div class="text-2xl font-black text-emerald-300">${n0(a.ok)}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Faltan</div><div class="text-2xl font-black text-white">${n0(Math.max(0, a.t - a.ok))}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hoy</div><div class="text-2xl font-black text-amber-300">${n0(h.ok)}${p.q ? `<span class="text-sm text-slate-500"> / ${n0(p.q)}</span>` : ''}</div></div></div>`
             : `<div class="py-4 text-center text-xl text-slate-300">No hay ninguna orden abierta en esta máquina.${p.q ? '<div class="mt-1 text-sm text-amber-300">Hay piezas programadas hoy: avisale al supervisor.</div>' : ''}</div>`}
             <div class="mt-3 text-sm text-slate-400">${u ? `Último turno cargado: <b class="text-slate-200">${esc(u.l.turno || '')} del ${esc(u.l.date.slice(8, 10) + '/' + u.l.date.slice(5, 7))}</b> · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} (${haceTxt(u.l)})` : 'Todavía no hay turnos cargados en esta máquina.'}</div>
-            ${rot.length ? `<div class="mt-2 rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">🔧 Rotura avisada ${esc(rot[0].hora || '')}: ${esc(rot[0].motivo)} — mantenimiento ya está avisado</div>` : ''}
+            ${rot.length ? `<div class="mt-2 rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">${rot[0].tipo === 'molde' ? '🧩 Molde roto' + (rot[0].pieza ? ' (' + esc(rot[0].pieza) + ')' : '') : '🔧 Rotura avisada'} ${esc(rot[0].hora || '')}: ${esc(rot[0].motivo)} — mantenimiento ya está avisado</div>` : ''}
           </div>
           ${puede ? `<div class="grid gap-3 sm:grid-cols-3">
             <button type="button" id="mmCargar" class="rounded-3xl bg-emerald-500 px-4 py-8 text-2xl font-black text-slate-950 shadow-xl shadow-emerald-500/20 active:scale-[0.98] sm:col-span-2">📝 CARGAR TURNO</button>
@@ -254,22 +254,46 @@
           <textarea id="arDesc" rows="2" placeholder="Contá brevemente qué pasó (opcional)" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></textarea>
           <label class="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-slate-600 px-3 py-3 text-sm font-bold text-slate-200"><span class="text-2xl">📷</span><span id="arFotoTxt">Sacar o elegir una foto (opcional)</span><input id="arFoto" type="file" accept="image/*" capture="environment" class="hidden"></label>
           <img id="arPrev" class="hidden max-h-48 rounded-xl border border-slate-700" alt="">
-          <label class="flex items-center gap-2 text-sm font-bold text-rose-200"><input id="arParo" type="checkbox" class="h-5 w-5 accent-rose-500" checked> La máquina quedó parada</label>
+          <div><div class="mb-1 text-xs font-bold text-slate-300">¿Qué se rompió?</div><div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button type="button" class="ar-que rounded-xl border-2 px-3 py-2.5 text-left text-sm font-black" data-q="molde">🧩 El molde<span class="block text-[11px] font-semibold text-slate-400">Se baja el molde; la máquina sigue con otra pieza. La orden sale del Gantt.</span></button>
+            <button type="button" class="ar-que rounded-xl border-2 px-3 py-2.5 text-left text-sm font-black" data-q="maquina">⚙️ La máquina<span class="block text-[11px] font-semibold text-slate-400">La inyectora no puede trabajar.</span></button></div></div>
+          <div id="arOrdBox" class="hidden rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-100"><div class="mb-1 font-bold">Orden del molde roto</div><select id="arOrd" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white"></select><div class="mt-1 text-[11px] text-amber-200/80">Sale de la programación desde hoy y vuelve sola a "En Proceso" cuando la pieza aparezca otra vez en el Gantt.</div></div>
+          <label id="arParoBox" class="flex items-center gap-2 text-sm font-bold text-rose-200"><input id="arParo" type="checkbox" class="h-5 w-5 accent-rose-500" checked> La máquina quedó parada</label>
           <button type="button" id="arEnviar" class="w-full rounded-2xl bg-rose-500 px-4 py-4 text-lg font-black text-white">📣 Avisar a mantenimiento</button>
           <p class="text-[11px] text-slate-500">Le llega al administrador y a mantenimiento. Si la máquina quedó parada, el Gantt deja de programarle piezas hasta que la reparen.</p>`);
-        let maq = m || miMaq() || '', motivo = '', foto = '';
+        let maq = m || miMaq() || '', motivo = '', foto = '', que = '';
+        const ordenesDe = mq => ordenes().filter(o => !esDemo(o) && maqDe(o) === mq && o.status !== 'Completada' && !(window.inoferOrdenDetenida && inoferOrdenDetenida(o)) && (!window.inoferCargaRapida || inoferCargaRapida.abierta(o)));
+        function pintarQue() {
+          w.querySelectorAll('.ar-que').forEach(x => { const on = x.dataset.q === que; x.classList.toggle('border-amber-400', on); x.classList.toggle('bg-amber-500/15', on); x.classList.toggle('text-amber-100', on); x.classList.toggle('border-slate-700', !on); x.classList.toggle('text-slate-200', !on); });
+          const molde = que === 'molde';
+          w.querySelector('#arOrdBox').classList.toggle('hidden', !molde);
+          w.querySelector('#arParoBox').classList.toggle('hidden', molde);
+          if (molde) {
+            const L = ordenesDe(maq), act = ordenActual(maq), sel = w.querySelector('#arOrd'), prev = sel.value;
+            sel.innerHTML = L.length ? L.map(o => `<option value="${esc(o.id)}">OP ${esc(o.ordNumber || '')} · ${esc(o.part)}</option>`).join('') + '<option value="">Ninguna (no sacar nada del Gantt)</option>' : '<option value="">No hay órdenes abiertas en esta máquina</option>';
+            sel.value = (prev && L.some(o => o.id === prev)) ? prev : (act && L.some(o => o.id === act.id) ? act.id : (L[0] ? L[0].id : ''));
+          } else w.querySelector('#arParo').checked = true;
+        }
+        pintarQue();
         w.addEventListener('click', async e => {
           let b;
-          if ((b = e.target.closest('.ar-maq'))) { maq = b.dataset.m; w.querySelectorAll('.ar-maq').forEach(x => { const on = x === b; x.className = `ar-maq rounded-xl border-2 px-3 py-2 text-sm font-black ${on ? 'border-amber-400 bg-amber-500/15 text-amber-200' : 'border-slate-700 text-slate-300'}`; }); }
-          if ((b = e.target.closest('.ar-mot'))) { motivo = b.dataset.c; w.querySelectorAll('.ar-mot').forEach(x => { const on = x === b; x.classList.toggle('border-rose-400', on); x.classList.toggle('bg-rose-500/20', on); x.classList.toggle('border-slate-700', !on); }); }
+          if ((b = e.target.closest('.ar-maq'))) { maq = b.dataset.m; w.querySelectorAll('.ar-maq').forEach(x => { const on = x === b; x.className = `ar-maq rounded-xl border-2 px-3 py-2 text-sm font-black ${on ? 'border-amber-400 bg-amber-500/15 text-amber-200' : 'border-slate-700 text-slate-300'}`; }); pintarQue(); }
+          if ((b = e.target.closest('.ar-mot'))) { motivo = b.dataset.c; w.querySelectorAll('.ar-mot').forEach(x => { const on = x === b; x.classList.toggle('border-rose-400', on); x.classList.toggle('bg-rose-500/20', on); x.classList.toggle('border-slate-700', !on); }); if (!que) { const n = parseInt(motivo, 10); que = (window.INOFER_CODIGOS_MOLDE || []).includes(n) ? 'molde' : 'maquina'; pintarQue(); } }
+          if ((b = e.target.closest('.ar-que'))) { que = b.dataset.q; pintarQue(); }
           if (e.target.closest('#arEnviar')) {
             if (!maq) { showToast('Elegí la máquina'); return; }
             if (!motivo) { showToast('Elegí qué pasó'); return; }
+            if (!que) { showToast('Elegí qué se rompió: el molde o la máquina'); return; }
+            const molde = que === 'molde', ordId = molde ? w.querySelector('#arOrd').value : '';
+            const ord = ordId ? ordenes().find(o => o.id === ordId) : null;
             const bt = w.querySelector('#arEnviar'); bt.disabled = true; bt.textContent = 'Enviando…';
             try {
-              const d = await api({ action: 'avisarRotura', maquina: maq, motivo: motivo === 'Otro' ? 'Otro problema' : motivo, descripcion: w.querySelector('#arDesc').value.trim(), parada: w.querySelector('#arParo').checked, foto });
+              const mot = motivo === 'Otro' ? 'Otro problema' : motivo;
+              const d = await api({ action: 'avisarRotura', maquina: maq, motivo: mot, descripcion: w.querySelector('#arDesc').value.trim(), parada: molde ? false : w.querySelector('#arParo').checked, tipo: molde ? 'molde' : 'maquina', ordId: ord ? ord.id : '', pieza: ord ? ord.part : '', ordNumber: ord ? (ord.ordNumber || '') : '', foto });
               try { lastLocalChangeAt = 0; pendingCloudOps = 0; if (d.modules) applyCloudModules(d.modules); } catch (er) { }
-              w.remove(); showToast(`📣 Listo: se avisó la rotura de la ${maq}`); pintarTodo();
+              let extra = '';
+              if (ord && window.inoferDetenerPorRotura) { const r = inoferDetenerPorRotura(ord.id, { motivo: 'Rotura de molde: ' + String(mot).replace(/^\d+\s*-\s*/, ''), roturaId: d.roturaId || '' }); extra = ` · OP ${ord.ordNumber || ''} fuera del Gantt${r && r.total ? ` (${r.total.toLocaleString('es-AR')} piezas)` : ''}; la ${maq} sigue disponible`; }
+              w.remove(); showToast(`📣 Listo: se avisó la rotura de la ${maq}${extra}`); pintarTodo();
             } catch (er) { bt.disabled = false; bt.textContent = '📣 Avisar a mantenimiento'; showToast(navigator.onLine === false ? '📴 Sin internet: avisá por teléfono y probá de nuevo cuando vuelva la conexión' : 'No se pudo avisar: ' + er.message); }
           }
         });
@@ -290,7 +314,7 @@
         const html = `<div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-rose-200">🔧 Roturas avisadas desde las máquinas ${abiertas.length ? `<span class="rounded-full bg-rose-500 px-2 text-[11px] text-white">${abiertas.length} sin resolver</span>` : ''}</span>${can('ordenes', 'edit') || can('gantt', 'edit') ? `<button type="button" class="mr-avisar ${BTN} border-rose-500/50 text-rose-200">+ Avisar rotura</button>` : ''}</div>
           ${abiertas.length ? abiertas.map(r => `<div class="mt-2 flex flex-wrap items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-2.5">
             ${r.fotoId ? `<button type="button" class="mr-foto shrink-0" data-id="${esc(r.fotoId)}"><img data-foto="${esc(r.fotoId)}" class="h-20 w-20 rounded-lg border border-slate-700 object-cover" alt="📷" src="${fotos[r.fotoId] || ''}"></button>` : ''}
-            <div class="min-w-0 flex-1 text-xs text-slate-200"><div class="text-sm font-black text-white">${esc(r.maquina)} · ${esc(r.motivo)}</div>${r.descripcion ? `<div>${esc(r.descripcion)}</div>` : ''}<div class="text-[11px] text-slate-400">${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} ${esc(r.hora || '')} · avisó ${esc(r.por || '')}${r.paro ? ' · <b class="text-rose-300">máquina parada</b>' : ''}</div></div>
+            <div class="min-w-0 flex-1 text-xs text-slate-200"><div class="text-sm font-black text-white">${esc(r.maquina)} · ${esc(r.motivo)}</div>${r.descripcion ? `<div>${esc(r.descripcion)}</div>` : ''}<div class="text-[11px] text-slate-400">${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} ${esc(r.hora || '')} · avisó ${esc(r.por || '')}${r.paro ? ' · <b class="text-rose-300">máquina parada</b>' : ''}${r.tipo === 'molde' ? ` · <b class="text-amber-300">🧩 molde${r.pieza ? ' ' + esc(r.pieza) : ''}${r.ordNumber ? ' (OP ' + esc(r.ordNumber) + ')' : ''}</b> · la máquina sigue trabajando` : ''}</div></div>
             ${(esAdmin() || ((can('gantt', 'edit') || can('ordenes', 'edit')) && pk('mant_editar'))) ? `<button type="button" class="mr-ok ${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200" data-id="${esc(r.id)}">✓ Reparada</button>` : ''}</div>`).join('') : '<div class="mt-1 text-xs text-slate-400">No hay roturas sin resolver.</div>'}
           ${cerradas.length ? `<details class="mt-2 text-[11px] text-slate-400"><summary class="cursor-pointer">Últimas reparadas</summary>${cerradas.map(r => `<div>✓ ${esc(r.maquina)} · ${esc(r.motivo)} · ${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} · reparada por ${esc(String(r.resueltaPor || '').replace(/ \(@.*/, ''))}${r.nota ? ': ' + esc(r.nota) : ''}</div>`).join('')}</details>` : ''}`;
         if (!box || box.parentElement !== raiz) { box = document.createElement('div'); box.id = 'mantRoturas'; box.className = 'rounded-2xl border border-rose-500/30 bg-slate-950/60 p-3'; const ref = raiz.children[1]; raiz.insertBefore(box, ref || null); }
@@ -303,7 +327,9 @@
         if ((b = e.target.closest && e.target.closest('.mr-foto'))) { const src = fotos[b.dataset.id]; if (src) modalBase('📷 Foto de la rotura', `<img src="${src}" class="w-full rounded-xl" alt="">`); }
         if ((b = e.target.closest && e.target.closest('.mr-ok'))) {
           const nota = prompt('¿Qué se hizo? (opcional, queda en el historial de mantenimiento)', ''); if (nota === null) return;
-          const habilitar = confirm('¿La máquina ya puede volver a trabajar?\n\nAceptar = sí, habilitarla en el Gantt · Cancelar = dejarla fuera de servicio');
+          const rr = (mant().roturas || []).find(x => x.id === b.dataset.id) || {};
+          const habilitar = rr.tipo === 'molde' ? true : confirm('¿La máquina ya puede volver a trabajar?\n\nAceptar = sí, habilitarla en el Gantt · Cancelar = dejarla fuera de servicio');
+          if (rr.tipo === 'molde') showToast('Para que la orden vuelva a la producción, programá la pieza de nuevo en el Gantt');
           b.disabled = true;
           try { const d = await api({ action: 'roturaResolver', id: b.dataset.id, nota, habilitar }); try { lastLocalChangeAt = 0; pendingCloudOps = 0; if (d.modules) applyCloudModules(d.modules); } catch (er) { } showToast('✓ Rotura cerrada'); pintarTodo(); }
           catch (er) { b.disabled = false; showToast(er.message); }
@@ -327,7 +353,7 @@
       // avisos en la campana: roturas sin resolver
       window.inoferAvisosExtra = (window.inoferAvisosExtra || []).concat([() => {
         if (!(esAdmin() || ((can('gantt', 'view') || can('ordenes', 'view')) && pk('mant_ver')))) return [];
-        return roturasAbiertas('').map(r => ({ id: 'rot-' + r.id, ico: '🔧', color: 'rose', txt: `Rotura en la <b>${esc(r.maquina)}</b>: ${esc(r.motivo)}`, sub: `${r.fecha.slice(8, 10)}/${r.fecha.slice(5, 7)} ${r.hora || ''} · avisó ${String(r.por || '').replace(/ \(@.*/, '')}${r.paro ? ' · máquina parada' : ''}`, acciones: [['mant', 'Ver']] }));
+        return roturasAbiertas('').map(r => ({ id: 'rot-' + r.id, ico: '🔧', color: 'rose', txt: `${r.tipo === 'molde' ? 'Molde roto' + (r.pieza ? ' ' + esc(r.pieza) : '') + ' en la' : 'Rotura en la'} <b>${esc(r.maquina)}</b>: ${esc(r.motivo)}`, sub: `${r.fecha.slice(8, 10)}/${r.fecha.slice(5, 7)} ${r.hora || ''} · avisó ${String(r.por || '').replace(/ \(@.*/, '')}${r.paro ? ' · máquina parada' : ''}`, acciones: [['mant', 'Ver']] }));
       }]);
 
       // ---------------------------------------------------------------------------------
