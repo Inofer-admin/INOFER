@@ -1520,7 +1520,7 @@ function enviarInformeSemanal(forzar, opc) {
     // Con un alias de "Enviar como" configurado en Gmail, el informe sale desde esa dirección y no desde la cuenta personal
     if (alias) {
       const al = GmailApp.getAliases();
-      if (al.indexOf(alias) === -1) throw new Error('El alias ' + alias + ' no está configurado en "Enviar como" de Gmail.');
+      if (al.indexOf(alias) === -1) throw new Error('El mail ' + alias + ' no está configurado en "Enviar como" de tu Gmail (Configuración → Cuentas e importación). Mientras tanto sale desde la cuenta dueña.');
       GmailApp.sendEmail(emails.join(','), asunto, texto, { htmlBody: html, name: 'INOFER', from: alias, replyTo: alias });
       como = ' (desde ' + alias + ')';
     } else {
@@ -1529,7 +1529,7 @@ function enviarInformeSemanal(forzar, opc) {
     props.deleteProperty('INFORME_ERROR');
   } catch (e) {
     const m0 = String(e.message || e);
-    const sinPermiso = alias && /mail\.google\.com|gmail\.|permiss|permiso/i.test(m0);
+    const sinPermiso = alias && !/no está configurado/.test(m0) && /mail\.google\.com|googleapis\.com\/auth\/gmail|permiss|permiso/i.test(m0);
     const m = sinPermiso ? 'Para mandar desde ' + alias + ' falta dar permiso de Gmail: en Apps Script agregá "https://mail.google.com/" en oauthScopes de appsscript.json y ejecutá activarAutomaticos. Mientras tanto sale desde la cuenta dueña de la planilla. (O borrá el "Enviar desde" en INOFER.)' : m0;
     props.setProperty('INFORME_ERROR', m.slice(0, 400));
     if (!alias) throw e;
