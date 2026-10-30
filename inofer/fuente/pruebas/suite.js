@@ -304,6 +304,33 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.n === 900 && r.fijo, 'no repartió la pieza sin días o no quedó fija: ' + JSON.stringify(r));
       ok(r.sigue === true, 'el Gantt automático movió o borró lo importado: ' + JSON.stringify(r));
     });
+    await prueba('Gantt opción C: barra, tarjetas, menú y asistente flotante', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        switchTab('gantt'); await w(800);
+        const bar = document.getElementById('gtBar'), vg = document.getElementById('viewGantt');
+        const selEnBarra = !!bar && bar.contains(document.getElementById('ganttWeekSelect'));
+        const tiles = (document.getElementById('gtTiles') || {}).innerText || '';
+        const chatEnVentana = document.getElementById('gtDrawer').contains(document.getElementById('inoferGanttChat'));
+        const fab = !document.getElementById('gtFab').classList.contains('gt-cerrado');
+        document.getElementById('gtFab').click(); await w(100);
+        const abierto = !document.getElementById('gtDrawer').classList.contains('gt-cerrado');
+        document.getElementById('gtFab').click();
+        document.getElementById('gtMas').click(); await w(100);
+        const items = [...document.querySelectorAll('#gtMenu button')].map(b => b.textContent);
+        const sec = document.querySelector('#gtMenu [data-gt-sec="autoGanttMonthPanel"]'); if (sec) sec.click(); await w(100);
+        const analizador = !document.getElementById('autoGanttMonthPanel').classList.contains('gt-cerrado') && document.getElementById('gtExtras').contains(document.getElementById('autoGanttMonthPanel'));
+        window.inoferGanttVista.abrirSeccion('autoGanttMonthPanel');
+        const sel = document.getElementById('ganttWeekSelect'), i0 = sel.selectedIndex; document.getElementById('gtNext').click(); await w(200);
+        const avanzo = sel.selectedIndex === Math.min(i0 + 1, sel.options.length - 1);
+        switchTab('dashboard'); await w(200);
+        const fabFuera = document.getElementById('gtFab').classList.contains('gt-cerrado');
+        return { selEnBarra, tiles, chatEnVentana, fab, abierto, items: items.join('|'), analizador, avanzo, fabFuera, grilla: !!document.getElementById('ganttWeeklyContainer') && vg.contains(document.getElementById('ganttWeeklyContainer')) };
+      });
+      ok(r.selEnBarra && /programadas/.test(r.tiles) && /utilización/.test(r.tiles), 'no armó la barra o las tarjetas: ' + JSON.stringify(r));
+      ok(r.chatEnVentana && r.fab && r.abierto && r.fabFuera, 'el asistente flotante no anda: ' + JSON.stringify(r));
+      ok(/Nueva semana/.test(r.items) && /Analizador/.test(r.items) && r.analizador && r.avanzo && r.grilla, 'menú/secciones/flechas: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

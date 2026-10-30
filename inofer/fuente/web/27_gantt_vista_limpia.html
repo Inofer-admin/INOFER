@@ -1,0 +1,245 @@
+  <style>
+    /* ===== Gantt "opción C": barra fija, tarjetas, Gantt grande y asistente flotante ===== */
+    .gt-cerrado { display: none !important; }
+    #gtBar { position: sticky; top: var(--gtTop, 0px); z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .6rem .75rem; border: 1px solid #1e293b; border-radius: 1rem; background: rgba(15, 23, 42, .96); backdrop-filter: blur(6px); box-shadow: 0 10px 25px -10px rgba(0, 0, 0, .6); }
+    #gtBar .gt-grp { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+    #gtBar .gt-sp { flex: 1 1 auto; }
+    .gt-b { display: inline-flex; align-items: center; gap: .35rem; border-radius: .6rem; border: 1px solid #334155; background: #1e293b; padding: .45rem .75rem; font-size: .75rem; font-weight: 700; color: #e2e8f0; white-space: nowrap; cursor: pointer; }
+    .gt-b:hover { background: #273449; color: #fff; }
+    .gt-b.gt-p { background: #10b981; border-color: #10b981; color: #022c22; }
+    .gt-b.gt-p:hover { background: #34d399; }
+    .gt-b.gt-ico { padding: .45rem .6rem; }
+    #gtBar #ganttWeekSelect { min-width: 0; max-width: 260px; border-radius: .6rem; padding: .45rem .6rem; }
+    #gtBar .gt-fechas { font-size: .7rem; color: #94a3b8; white-space: nowrap; }
+    #gtBar .gt-seg { display: inline-flex; border: 1px solid #334155; border-radius: .6rem; overflow: hidden; }
+    #gtBar .gt-seg button { padding: .42rem .7rem; font-size: .72rem; font-weight: 700; color: #cbd5e1; background: #0f172a; }
+    #gtBar .gt-seg button.on { background: #10b981; color: #022c22; }
+    #gtBar .gantt-mach-pill { border-radius: 999px !important; }
+    #gtMenu { position: absolute; right: .5rem; top: calc(100% + .4rem); z-index: 40; width: min(300px, calc(100vw - 2rem)); max-height: 70vh; overflow-y: auto; border: 1px solid #334155; border-radius: .9rem; background: #0f172a; padding: .35rem; box-shadow: 0 20px 40px -10px rgba(0, 0, 0, .7); }
+    #gtMenu button { display: flex; width: 100%; align-items: center; gap: .5rem; border-radius: .55rem; padding: .55rem .65rem; font-size: .78rem; font-weight: 600; color: #e2e8f0; text-align: left; }
+    #gtMenu button:hover { background: #1e293b; }
+    #gtMenu .gt-sep { height: 1px; background: #1e293b; margin: .3rem .2rem; }
+    #gtMenu .gt-tit { padding: .35rem .65rem .15rem; font-size: .65rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+    #gtMenu .gt-ok { margin-left: auto; color: #34d399; font-size: .7rem; }
+    #gtTiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
+    #gtTiles[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .gt-tile { border: 1px solid #1e3a5f; border-radius: .9rem; background: #0f1a30; padding: .7rem .85rem; text-align: left; min-width: 0; }
+    .gt-tile b { display: block; font-size: 1.35rem; line-height: 1.6rem; font-weight: 900; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gt-tile span { display: block; font-size: .7rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gt-tile i { display: block; height: 5px; border-radius: 4px; background: #1e293b; margin-top: .4rem; overflow: hidden; font-style: normal; }
+    .gt-tile i u { display: block; height: 100%; background: #10b981; text-decoration: none; }
+    button.gt-tile:hover { border-color: #10b981; }
+    #gtExtras > * + * { margin-top: 1.25rem; }
+    #gtFab { position: fixed; right: 1rem; bottom: 1rem; z-index: 55; display: inline-flex; align-items: center; gap: .4rem; border-radius: 999px; background: #06b6d4; color: #042f2e; font-weight: 900; font-size: .85rem; padding: .75rem 1.1rem; box-shadow: 0 12px 30px -8px rgba(6, 182, 212, .6); }
+    #gtFab:hover { background: #22d3ee; }
+    #gtDrawer { position: fixed; right: 1rem; bottom: 4.6rem; z-index: 56; width: min(460px, calc(100vw - 2rem)); max-height: calc(100vh - 7rem); overflow-y: auto; border-radius: 1.1rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .8); }
+    #gtDrawer #inoferGanttChat { margin: 0 !important; border-color: rgba(6, 182, 212, .5); background: #0b1324; }
+    #gtDrawerX { position: sticky; top: 0; float: right; margin: .35rem .35rem 0 0; z-index: 2; border-radius: .5rem; border: 1px solid #334155; background: #0f172a; padding: .15rem .5rem; font-size: .75rem; color: #cbd5e1; }
+    body.gt-fab-on #toastNotification { bottom: 4.8rem; }
+    @media (max-width: 760px) {
+      #gtTiles, #gtTiles[data-n="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      #gtBar { position: static; }
+      #gtBar #ganttWeekSelect { max-width: 170px; }
+      #gtFab .gt-txt { display: none; }
+    }
+  </style>
+  <script>
+    // ===== Vista del Gantt "opción C" (la grilla del Gantt no se toca: solo se reordena lo que la rodea) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const CLAVE = 'tablero_inyectoras_gantt_vista_v1';
+      let abiertos = {};
+      try { abiertos = JSON.parse(localStorage.getItem(CLAVE) || '{}') || {}; } catch (e) { abiertos = {}; }
+      const guardar = () => { try { localStorage.setItem(CLAVE, JSON.stringify(abiertos)); } catch (e) { } };
+      // secciones que pasan abajo del Gantt y se abren desde el menú
+      const SECCIONES = [
+        { id: 'ganttFactCard', t: '💲 Facturación de la semana' },
+        { id: 'autoGanttMonthPanel', t: '📊 Analizador de planilla (armado automático)' },
+        { id: 'inoferPanelPistones', t: '⚙️ Pistones por máquina' },
+        { id: 'inoferPanelSetup', t: '⏱️ Set-up y lotes mínimos' }
+      ];
+      const ACCIONES = [
+        { id: 'assignOrderToGanttBtn', t: '➕ Agregar pieza a mano' },
+        { id: 'createNewGanttWeekBtn', t: '🗓️ Nueva semana' },
+        { id: 'duplicateGanttWeekBtn', t: '📋 Duplicar semana' },
+        { id: 'importGanttExcelBtn', t: '📥 Subir mi Gantt de Excel' },
+        { id: 'openGanttCatalogBtn', t: '🗄️ Máquinas por pieza (base de datos)' },
+        { id: 'openGanttPrintModalBtn', t: '🖨️ Imprimir' },
+        { id: 'exportGanttCsvBtn', t: '⬇️ Exportar CSV' },
+        { id: 'toggleGanttThemeBtn', t: null }
+      ];
+      const oculto = el => !el || el.dataset.inoferPermOculto === '1' || el.classList.contains('hidden') || el.disabled;
+      const n1 = v => (Math.round(v * 10) / 10).toLocaleString('es-AR');
+      const plata = v => '$ ' + (v >= 1e6 ? (Math.round(v / 1e5) / 10).toLocaleString('es-AR') + ' M' : Math.round(v).toLocaleString('es-AR'));
+      const num = s => { const m = String(s || '').replace(/,/g, '').match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
+
+      let cabecera = null;
+      function armar() {
+        const vg = $('viewGantt'), sel = $('ganttWeekSelect'), save = $('saveGanttBtn');
+        if (!vg || !sel || !save) return false;
+        if (!$('gtBar')) {
+          cabecera = save.closest('#viewGantt > div') || save.closest('.rounded-2xl');
+          const bar = document.createElement('div'); bar.id = 'gtBar';
+          bar.innerHTML = `
+            <div class="gt-grp" id="gtSemana"><button type="button" class="gt-b gt-ico" id="gtPrev" title="Semana anterior">◀</button><span id="gtSelHueco"></span><button type="button" class="gt-b gt-ico" id="gtNext" title="Semana siguiente">▶</button><span class="gt-fechas" id="gtFechas"></span></div>
+            <div class="gt-grp" id="gtMaqs"></div>
+            <span class="gt-sp"></span>
+            <div class="gt-grp">
+              <span class="gt-seg"><button type="button" id="gtModoSem" class="on">Semana</button><button type="button" id="gtModoMes">Mes</button></span>
+              <button type="button" class="gt-b gt-p" id="gtGuardar">💾 Guardar</button>
+              <button type="button" class="gt-b" id="gtAuto">⚡ Automático</button>
+              <span style="position:relative"><button type="button" class="gt-b" id="gtMas">Más ▾</button><div id="gtMenu" class="gt-cerrado"></div></span>
+            </div>`;
+          const tiles = document.createElement('div'); tiles.id = 'gtTiles';
+          const extras = document.createElement('div'); extras.id = 'gtExtras';
+          vg.insertBefore(tiles, vg.firstChild); vg.insertBefore(bar, tiles);
+          vg.appendChild(extras);
+          $('gtSelHueco').replaceWith(sel);
+          const pills = document.querySelector('#viewGantt .gantt-mach-pill');
+          if (pills && pills.parentElement) { const lab = pills.parentElement.querySelector('span'); if (lab && /Filtrar/i.test(lab.textContent)) lab.remove(); $('gtMaqs').appendChild(pills.parentElement); }
+          if (cabecera) cabecera.classList.add('gt-cerrado');
+          bar.addEventListener('click', clicBarra);
+          tiles.addEventListener('click', e => { if (e.target.closest('#gtTileFact')) abrirSeccion('ganttFactCard', true); });
+          document.addEventListener('click', e => { const m = $('gtMenu'); if (m && !m.classList.contains('gt-cerrado') && !e.target.closest('#gtMenu, #gtMas')) m.classList.add('gt-cerrado'); });
+          sel.addEventListener('change', () => setTimeout(actualizar, 50));
+        }
+        ordenar();
+        return true;
+      }
+      // Mueve las secciones abajo del Gantt y el asistente a la ventanita flotante (se llama cada vez que algún bloque las crea)
+      function ordenar() {
+        const ex = $('gtExtras'); if (!ex) return;
+        SECCIONES.forEach(s => {
+          const el = $(s.id); if (!el) return;
+          if (el.parentElement !== ex) ex.appendChild(el);
+          el.classList.toggle('gt-cerrado', !abiertos[s.id]);
+          if (s.id === 'autoGanttMonthPanel') el.classList.remove('hidden');
+        });
+        const vg = $('viewGantt'), wk = $('ganttWeeklyContainer'), mo = $('ganttMonthlyContainer');
+        if (vg && ex && ex.parentElement === vg && vg.lastElementChild !== ex) vg.appendChild(ex);
+        const chat = $('inoferGanttChat');
+        if (chat) {
+          let dr = $('gtDrawer');
+          if (!dr) {
+            dr = document.createElement('div'); dr.id = 'gtDrawer'; dr.className = 'gt-cerrado';
+            dr.innerHTML = '<button type="button" id="gtDrawerX" title="Cerrar">✕</button>';
+            document.body.appendChild(dr);
+            dr.querySelector('#gtDrawerX').addEventListener('click', () => abrirChat(false));
+            const fab = document.createElement('button'); fab.type = 'button'; fab.id = 'gtFab'; fab.className = 'gt-cerrado';
+            fab.innerHTML = '💬 <span class="gt-txt">Asistente</span>';
+            fab.addEventListener('click', () => abrirChat($('gtDrawer').classList.contains('gt-cerrado')));
+            document.body.appendChild(fab);
+          }
+          if (chat.parentElement !== dr) dr.appendChild(chat);
+        }
+        visibilidadFlotante();
+      }
+      function enGantt() { const vg = $('viewGantt'); return !!vg && !vg.classList.contains('hidden') && vg.offsetParent !== null; }
+      function visibilidadFlotante() {
+        const fab = $('gtFab'), dr = $('gtDrawer'), chat = $('inoferGanttChat'); if (!fab || !dr) return;
+        const ver = enGantt() && chat && !(chat.dataset.inoferPermOculto === '1');
+        fab.classList.toggle('gt-cerrado', !ver); document.body.classList.toggle('gt-fab-on', !!ver);
+        if (!ver) dr.classList.add('gt-cerrado');
+        else dr.classList.toggle('gt-cerrado', !abiertos.chat);
+        const mm = $('mmVolver'); fab.style.bottom = mm && !mm.classList.contains('hidden') && innerWidth < 640 ? '4.5rem' : '';
+      }
+      function abrirChat(si) {
+        abiertos.chat = !!si; guardar(); visibilidadFlotante();
+        if (si) setTimeout(() => { const i = $('inoferGanttChatInput'); if (i) i.focus(); }, 50);
+      }
+      function abrirSeccion(id, forzar) {
+        const el = $(id); if (!el) { if (window.showToast) showToast('Esa sección todavía no está disponible'); return; }
+        abiertos[id] = forzar === true ? true : !abiertos[id]; guardar(); ordenar();
+        if (abiertos[id]) { if (el.tagName === 'DETAILS') el.open = true; setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60); }
+      }
+      function menu() {
+        const m = $('gtMenu'); const items = [];
+        items.push('<div class="gt-tit">Semana</div>');
+        ACCIONES.forEach(a => {
+          const el = $(a.id); if (oculto(el)) return;
+          const t = a.t || ('🎨 ' + (($('ganttThemeBtnLabel') || {}).textContent || 'Cambiar colores').trim());
+          items.push(`<button type="button" data-gt-acc="${a.id}">${t}</button>`);
+        });
+        items.push('<div class="gt-sep"></div><div class="gt-tit">Mostrar abajo del Gantt</div>');
+        SECCIONES.forEach(s => {
+          const el = $(s.id); if (!el || el.dataset.inoferPermOculto === '1') return;
+          if (s.id === 'autoGanttMonthPanel' && oculto($('toggleAutoGanttPanelBtn'))) return;
+          items.push(`<button type="button" data-gt-sec="${s.id}">${s.t}${abiertos[s.id] ? '<span class="gt-ok">✓ visible</span>' : ''}</button>`);
+        });
+        m.innerHTML = items.join('');
+      }
+      function clicBarra(e) {
+        const b = e.target.closest('button'); if (!b) return;
+        const sel = $('ganttWeekSelect');
+        if (b.id === 'gtPrev' || b.id === 'gtNext') {
+          const i = sel.selectedIndex + (b.id === 'gtPrev' ? -1 : 1);
+          if (i < 0 || i >= sel.options.length) { if (window.showToast) showToast(b.id === 'gtPrev' ? 'Es la primera semana cargada' : 'Es la última semana cargada (creá una con Más → Nueva semana)'); return; }
+          sel.selectedIndex = i; sel.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (b.id === 'gtGuardar') $('saveGanttBtn').click();
+        else if (b.id === 'gtAuto') { if (oculto($('toggleAutoGanttPanelBtn'))) { if (window.showToast) showToast('Tu usuario no puede usar el armado automático'); return; } abrirSeccion('autoGanttMonthPanel', true); }
+        else if (b.id === 'gtModoSem') { const o = $('ganttModeWeekBtn'); if (o) o.click(); setTimeout(actualizar, 50); }
+        else if (b.id === 'gtModoMes') { const o = $('ganttModeMonthBtn'); if (o) o.click(); setTimeout(actualizar, 50); }
+        else if (b.id === 'gtMas') { const m = $('gtMenu'); if (m.classList.contains('gt-cerrado')) { menu(); m.classList.remove('gt-cerrado'); } else m.classList.add('gt-cerrado'); }
+        else if (b.dataset.gtAcc) { $('gtMenu').classList.add('gt-cerrado'); const o = $(b.dataset.gtAcc); if (o) o.click(); setTimeout(actualizar, 100); }
+        else if (b.dataset.gtSec) { $('gtMenu').classList.add('gt-cerrado'); abrirSeccion(b.dataset.gtSec); }
+      }
+      function metaDe(w) {
+        if (!w) return 0;
+        if (Number(w.metaFacturacion) > 0) return Number(w.metaFacturacion);
+        try { const ks = Object.keys(ganttWeeksData).filter(k => (ganttWeeksData[k].startDate || '') < (w.startDate || '')).sort((a, b) => String(ganttWeeksData[b].startDate).localeCompare(String(ganttWeeksData[a].startDate))); for (const k of ks) if (Number(ganttWeeksData[k].metaFacturacion) > 0) return Number(ganttWeeksData[k].metaFacturacion); } catch (e) { }
+        return 0;
+      }
+      let firma = '';
+      function actualizar() {
+        const tiles = $('gtTiles'); if (!tiles) return;
+        const txt = id => (($(id) || {}).textContent || '').trim();
+        const horas = num(txt('ganttTotalHoursBadge')), util = num(txt('ganttUtilPctBadge').replace(/^[^\d-]*/, ''));
+        const alsi = num(txt('ganttAlsiKgBadge').replace(/^[^\d-]*/, '')), zamac = num(txt('ganttZamacKgBadge').replace(/^[^\d-]*/, ''));
+        let fact = null;
+        try {
+          const verPrecios = typeof inoferPuede === 'function' ? inoferPuede('precios_ver') : true;
+          const w = typeof getActiveGanttWeek === 'function' ? getActiveGanttWeek() : null;
+          if (verPrecios && w && typeof inoferFacturacion === 'function') { const f = inoferFacturacion(w); fact = { total: f.total || 0, meta: metaDe(w) }; }
+        } catch (e) { fact = null; }
+        const mes = (() => { const b = $('ganttModeMonthBtn'); return !!b && /bg-emerald-500/.test(b.className); })();
+        const f = JSON.stringify([horas, util, alsi, zamac, fact, mes, txt('ganttPeriodDatesBadge')]);
+        if (f === firma) return; firma = f;
+        const t = [];
+        t.push(`<div class="gt-tile"><b>${n1(horas)} h</b><span>programadas en la semana</span></div>`);
+        t.push(`<div class="gt-tile"><b>${n1(util)}%</b><span>utilización</span><i><u style="width:${Math.max(0, Math.min(100, util))}%"></u></i></div>`);
+        if (fact) {
+          const pct = fact.meta ? fact.total / fact.meta * 100 : null;
+          t.push(`<button type="button" class="gt-tile" id="gtTileFact" title="Ver el detalle de la facturación"><b>${plata(fact.total)}</b><span>facturación${pct != null ? ' · ' + Math.round(pct) + '% de la meta' : ' · tocá para ver el detalle'}</span>${pct != null ? `<i><u style="width:${Math.min(100, pct)}%"></u></i>` : ''}</button>`);
+        }
+        t.push(`<div class="gt-tile"><b>${Math.round(alsi + zamac).toLocaleString('es-AR')} kg</b><span>material · ALSI ${Math.round(alsi).toLocaleString('es-AR')} · ZAMAC ${Math.round(zamac).toLocaleString('es-AR')}</span></div>`);
+        tiles.innerHTML = t.join(''); tiles.dataset.n = String(t.length);
+        const fe = $('gtFechas'); if (fe) { const p = txt('ganttPeriodDatesBadge').match(/(\d{4})-(\d{2})-(\d{2}).*?(\d{4})-(\d{2})-(\d{2})/); fe.textContent = p ? `${p[3]}/${p[2]} al ${p[6]}/${p[5]}` : ''; }
+        const ms = $('gtModoSem'), mm = $('gtModoMes'); if (ms && mm) { ms.classList.toggle('on', !mes); mm.classList.toggle('on', mes); }
+      }
+      function topBarra() {
+        const nb = $('nbBar'); const h = nb ? nb.closest('header') || nb.parentElement : null;
+        let top = 0; if (h) { const cs = getComputedStyle(h); if (cs.position === 'sticky' || cs.position === 'fixed') top = h.offsetHeight + 8; }
+        document.documentElement.style.setProperty('--gtTop', top + 'px');
+      }
+      let pend = false;
+      const obs = new MutationObserver(muts => {
+        if (pend) return;
+        if (muts.every(m => m.target && m.target.closest && m.target.closest('#gtTiles, #gtMenu'))) return;
+        pend = true;
+        requestAnimationFrame(() => { pend = false; try { if (armar()) { actualizar(); } else visibilidadFlotante(); } catch (e) { } });
+      });
+      function iniciar() {
+        try { armar(); actualizar(); topBarra(); } catch (e) { }
+        const vg = $('viewGantt'); if (vg) obs.observe(vg, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+        obs.observe(document.body, { childList: true });
+        if (typeof window.switchTab === 'function' && !window.switchTab.__gt) {
+          const sw = window.switchTab; const f = function () { const r = sw.apply(this, arguments); setTimeout(() => { try { armar(); actualizar(); topBarra(); visibilidadFlotante(); } catch (e) { } }, 30); return r; };
+          Object.assign(f, sw); f.__gt = true; window.switchTab = f;
+        }
+        addEventListener('resize', topBarra);
+        setInterval(() => { try { actualizar(); visibilidadFlotante(); } catch (e) { } }, 4000);
+      }
+      window.inoferGanttVista = { abrirSeccion, abrirChat, actualizar };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 400)); else setTimeout(iniciar, 400);
+    })();
+  </script>
