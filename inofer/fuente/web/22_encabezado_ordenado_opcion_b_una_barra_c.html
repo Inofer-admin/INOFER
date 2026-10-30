@@ -11,6 +11,7 @@
         { id: 'prod', nombre: 'Producción', ico: '🏭', items: [
           { tab: 'tabHoyBtn', ico: '🏠', t: 'Hoy', d: 'Máquinas, avance del día, OEE y avisos' },
           { tab: 'tabOrdersBtn', ico: '📋', t: 'Órdenes de producción', d: 'Carga rápida, lista y seguimiento', n: () => cuenta('ordersCountBadge') },
+          { accion: () => window.inoferCierreTurno && inoferCierreTurno(), vis: () => !!sesion() && can('ordenes', 'edit') && pk('ord_turnos'), ico: '🗂️', t: 'Cierre de turno', d: 'Todas las máquinas en una pantalla' },
           { tab: 'tabDashboardBtn', ico: '📊', t: 'Tablero y velocímetros', d: 'Utilización y paradas' },
           { tab: 'tabRecordsBtn', ico: '🕒', t: 'Historial de partes', d: 'Partes de horas cargados', n: () => cuenta('recordCountBadge') },
           { accion: () => window.inoferElegirMiMaquina && inoferElegirMiMaquina(), vis: () => !!sesion() && can('ordenes', 'edit'), ico: '📱', t: 'Modo tablet de máquina', d: 'Fijar este equipo a una inyectora' },

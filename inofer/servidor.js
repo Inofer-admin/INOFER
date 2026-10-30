@@ -1934,7 +1934,7 @@ function fusionarSetup_(stored, incoming, base) {
 function fusionarMant_(stored, incoming, base) {
   const S = stored || {}, I = incoming || {}, B = base || {};
   const out = Object.assign({}, S, I);
-  ['planes', 'trabajos', 'roturas'].forEach(function (k) {
+  ['planes', 'trabajos', 'roturas', 'cronoParadas'].forEach(function (k) {
     if (!Array.isArray(S[k]) && !Array.isArray(I[k])) return;
     out[k] = fusionarLista_('x', S[k] || [], I[k] || [], B[k] || {}).datos;
   });

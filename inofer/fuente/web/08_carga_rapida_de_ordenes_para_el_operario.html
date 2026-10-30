@@ -242,6 +242,19 @@
         }
         box.innerHTML = migas + html;
         if (st.paso === 'turno' && st.editLogId) { try { precargarTurno(); } catch (e) { console.error(e); } }
+        // paradas tomadas con el cronómetro de la máquina (parte 29)
+        if (st.paso === 'turno' && !st.editLogId && window.inoferCronoDelTurno) {
+          try {
+            const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+            const ps = inoferCronoDelTurno(st.maq, st.fecha || hoy(), t);
+            if (ps.length) {
+              st.parada = true; $('crParadaBox').classList.remove('hidden');
+              $('crParadasList').innerHTML = ps.map(p => filaParada({ codigo: p.codigo, min: p.min })).join('');
+              $('crParadaBox').insertAdjacentHTML('afterbegin', '<div class="rounded-lg bg-cyan-500/10 px-2 py-1 text-[11px] font-bold text-cyan-200">⏱ Paradas tomadas con el cronómetro de la máquina (revisalas)</div>');
+              estiloParadas(); totalParadas();
+            }
+          } catch (e) { }
+        }
       }
       function precargarTurno() {
         const o = productionOrders.find(x => x.id === st.ordId);
@@ -464,7 +477,9 @@
         if (editando) {
           Object.assign(editando, datos, { modificadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', modificadoAt: new Date().toISOString() });
         } else {
-          o.logs.push(Object.assign({ id: 'lg-' + Date.now() }, datos, { cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString() }));
+          const lid = 'lg-' + Date.now();
+          o.logs.push(Object.assign({ id: lid }, datos, { cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString() }));
+          try { if (window.inoferCronoUsar) inoferCronoUsar(st.maq, datos.date, { ini: datos.startTime, fin: datos.endTime }, lid); } catch (e) { }
         }
         st.editLogId = ''; st.fecha = '';
         pref.operario = operario; guardarPref();
@@ -646,7 +661,7 @@
         switchOrderSubTab('rapida');
         try { $('orderSubViewRapida').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
       }
-      window.inoferCargaRapida = { estado: st, render, abrir, maqDeOrden, turnos, abierta };
+      window.inoferCargaRapida = { estado: st, render, abrir, maqDeOrden, turnos, abierta, avance, paradasFrecuentes, operariosDe, ultimoTurnoMaq, sugerido, durH, fullDe, nombreOperario };
 
       // Limpiar los valores de ejemplo del formulario viejo (350 / 10 / 8) para que no se carguen datos falsos
       function limpiarFormViejo() {

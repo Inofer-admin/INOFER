@@ -154,6 +154,7 @@
             <div class="mt-2 grid grid-cols-2 gap-1.5 text-center"><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Hoy hecho</div><div class="text-sm font-black text-emerald-300">${n0(h.ok)}</div></div><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Programado</div><div class="text-sm font-black text-white">${p.q ? n0(p.q) : '—'}</div></div></div>
             <div class="mt-2 text-[11px] text-slate-400">${u ? `Último turno: ${esc(u.l.turno || '')} · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} · ${haceTxt(u.l)}` : 'Sin turnos cargados'}</div>
             ${sinCargar.length ? `<div class="mt-1 text-[11px] font-bold text-amber-300">⏰ Falta cargar: ${sinCargar.map(x => esc(x.t.nombre) + ' ' + x.fecha.slice(8, 10) + '/' + x.fecha.slice(5, 7)).join(', ')}</div>` : ''}
+            ${window.inoferCronoBadge ? inoferCronoBadge(m) : ''}
             ${rot.length ? `<div class="mt-1 text-[11px] font-bold text-rose-300">${rot[0].tipo === 'molde' ? '🧩 Molde roto' + (rot[0].pieza ? ' ' + esc(rot[0].pieza) : '') : '🔧 Rotura avisada'}: ${esc(rot[0].motivo)} (${esc(rot[0].hora || '')})</div>` : ''}
             <div class="mt-auto flex gap-1.5 pt-2">${puedeCargar ? `<button type="button" class="hoy-cargar flex-1 ${BTN} border-amber-500/50 bg-amber-500/15 text-amber-200" data-m="${esc(m)}" data-o="${o ? esc(o.id) : ''}">📝 Cargar turno</button><button type="button" class="hoy-rotura ${BTN} border-rose-500/40 text-rose-200" data-m="${esc(m)}" title="Avisar rotura">🔧</button>` : ''}</div>
           </div>`;
@@ -212,6 +213,7 @@
             <div class="mt-3 text-sm text-slate-400">${u ? `Último turno cargado: <b class="text-slate-200">${esc(u.l.turno || '')} del ${esc(u.l.date.slice(8, 10) + '/' + u.l.date.slice(5, 7))}</b> · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} (${haceTxt(u.l)})` : 'Todavía no hay turnos cargados en esta máquina.'}</div>
             ${rot.length ? `<div class="mt-2 rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">${rot[0].tipo === 'molde' ? '🧩 Molde roto' + (rot[0].pieza ? ' (' + esc(rot[0].pieza) + ')' : '') : '🔧 Rotura avisada'} ${esc(rot[0].hora || '')}: ${esc(rot[0].motivo)} — mantenimiento ya está avisado</div>` : ''}
           </div>
+          ${puede && window.inoferCronoBloque ? inoferCronoBloque(m) : ''}
           ${puede ? `<div class="grid gap-3 sm:grid-cols-3">
             <button type="button" id="mmCargar" class="rounded-3xl bg-emerald-500 px-4 py-8 text-2xl font-black text-slate-950 shadow-xl shadow-emerald-500/20 active:scale-[0.98] sm:col-span-2">📝 CARGAR TURNO</button>
             <button type="button" id="mmRotura" class="rounded-3xl border-2 border-rose-500/60 bg-rose-500/15 px-4 py-8 text-xl font-black text-rose-200 active:scale-[0.98]">🔧 AVISAR ROTURA</button></div>` : '<div class="text-center text-sm text-slate-400">Este usuario solo puede ver.</div>'}
@@ -359,6 +361,7 @@
       // ---------------------------------------------------------------------------------
       // Arranque
       // ---------------------------------------------------------------------------------
+      window.inoferPintarHoy = () => pintarTodo();
       function pintarTodo() {
         try { if ($('viewHoy') && !$('viewHoy').classList.contains('hidden')) renderHoy(); } catch (e) { console.error(e); }
         try { if ($('viewMiMaq') && !$('viewMiMaq').classList.contains('hidden')) renderMiMaq(); } catch (e) { console.error(e); }

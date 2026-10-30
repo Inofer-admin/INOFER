@@ -372,6 +372,51 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.quedan.length === 0 || r.quedan.every((q, i) => i < hoyIdx ? q === 100 : q === 0), 'no sacó bien la pieza del Gantt desde hoy: ' + JSON.stringify(r));
       ok(r.despues === 'En Proceso' && r.maq === '200N' && r.hist === 1, 'no volvió sola al reprogramarla: ' + JSON.stringify(r));
     });
+    await prueba('Cronómetro de paradas y cierre de turno de todas las máquinas', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const hoy = new Date(), nom = m => GANTT_MACHINES_CONFIG.find(c => c.id === m).name;
+        const T = inoferCargaRapida.turnos(), am = t => { const p = t.split(':'); return +p[0] * 60 + +p[1]; }, ah = hoy.getHours() * 60 + hoy.getMinutes();
+        const t = T[0], fecha = iso(new Date(Date.now() - 3 * 86400000));
+        const it = (id, part, q) => ({ id, part, desc: part, totalQty: q * 7, mat: 'alsi', stdRate: 100, dailyQty: [q, q, q, q, q, q, q] });
+        ganttWeeksData['SEM-CT'] = { code: 'SEM-CT', name: 'Semana cierre', startDate: fecha, machines: { '200V': { aux: {}, items: [it('c1', 'PZA-CT1', 900)] }, '200N': { aux: {}, items: [it('c2', 'PZA-CT2', 600)] }, '180': { aux: {}, items: [] }, 'H50': { aux: {}, items: [] }, 'Z30': { aux: {}, items: [] } } };
+        productionOrders.push({ id: 'ct-1', ordNumber: '9801', part: 'PZA-CT1', machine: nom('200V'), status: 'En Proceso', qtyTarget: 50000, logs: [] });
+        productionOrders.push({ id: 'ct-2', ordNumber: '9802', part: 'PZA-CT2', machine: nom('200N'), status: 'En Proceso', qtyTarget: 50000, logs: [] });
+        saveProductionOrders(); saveGanttWeeks(); await w(2500);
+        // cronómetro en la tablet de la 200N
+        const crono = document.createElement('div'); crono.innerHTML = inoferCronoBloque('200N'); document.body.appendChild(crono);
+        crono.querySelector('.cro-ini').click(); await w(200);
+        document.querySelector('#croElegir .cro-cod').click(); await w(200);
+        const act = inoferCronoActiva('200N'); const empezo = !!act;
+        const fin = document.createElement('div'); fin.innerHTML = inoferCronoBloque('200N'); document.body.appendChild(fin);
+        fin.querySelector('.cro-fin').click(); await w(200); crono.remove(); fin.remove();
+        const terminado = !inoferCronoActiva('200N');
+        const b0 = new Date(fecha + 'T' + t.ini + ':00').getTime(); act.desde = new Date(b0 + 60 * 60000).toISOString(); act.hasta = new Date(b0 + 90 * 60000).toISOString();
+        inoferCierreTurno({ fecha, turno: t.id }); await w(400);
+        const filas = [...document.querySelectorAll('#ctModal .ct-row')].map(x => x.dataset.m);
+        const ok200V = document.querySelector('#ctModal .ct-row[data-m="200V"] .ct-ok').value;
+        const cronoChip = !!document.querySelector('#ctModal .ct-row[data-m="200N"] .ct-pc.crono');
+        const z = document.querySelector('#ctModal .ct-row[data-m="Z30"]').className;
+        // las demás máquinas (de otras pruebas) se completan para poder guardar todo junto
+        document.querySelectorAll('#ctModal .ct-row').forEach(row => {
+          if (['200V', '200N'].includes(row.dataset.m)) { const op = row.querySelector('.ct-oper'); if (op && !op.value) { op.value = 'Prueba'; op.dispatchEvent(new Event('input', { bubbles: true })); } return; }
+          const ord = row.querySelector('.ct-ord'); if (ord && !ord.value && ord.options[0] && ord.options[0].value) { ord.value = ord.options[0].value; ord.dispatchEvent(new Event('change', { bubbles: true })); }
+        });
+        for (const m of ['180', 'H50', 'Z30']) { const no = document.querySelector(`#ctModal .ct-row[data-m="${m}"] .ct-no`); if (no) no.click(); }
+        for (const m of ['180', 'H50', 'Z30']) { const sel = document.querySelector(`#ctModal .ct-row[data-m="${m}"] .ct-motivo-no`); if (sel) { sel.value = sel.options[1].value; sel.dispatchEvent(new Event('change', { bubbles: true })); } }
+        document.querySelector('#ctModal .ct-guardar').click(); await w(800);
+        const o1 = productionOrders.find(o => o.id === 'ct-1'), o2 = productionOrders.find(o => o.id === 'ct-2');
+        const l2 = (o2.logs || [])[0] || {};
+        const listo = document.querySelectorAll('#ctModal .ct-row.listo').length; const toastTxt = document.getElementById('toastNotification').textContent;
+        const usada = ((inoferModLocal('mantenimiento') || {}).cronoParadas || []).some(x => x.maq === '200N' && x.usada);
+        document.getElementById('ctModal').remove();
+        return { empezo, terminado, filas: filas.join(','), ok200V, cronoChip, z, l1: (o1.logs || []).length, ok1: ((o1.logs || [])[0] || {}).okPcs, par2: (l2.paradas || []).map(p => p.min).join(','), origen: l2.origen, listo, usada, toastTxt };
+      });
+      ok(r.empezo && r.terminado, 'el cronómetro no anduvo: ' + JSON.stringify(r));
+      ok(r.filas.startsWith('200V,200N') && Number(r.ok200V) > 0 && r.cronoChip, 'el cierre no se precargó bien: ' + JSON.stringify(r));
+      ok(r.l1 === 1 && r.ok1 === Number(r.ok200V) && Number(r.par2) === 30 && r.origen === 'cierre' && r.listo >= 2 && r.usada, 'no guardó el cierre: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

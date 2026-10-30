@@ -1046,6 +1046,9 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
       }
       window.inoferAlmacenamiento = abrirAlmacen;
       window.inoferPlantaPerm = { verInforme: () => verInforme() && enNube(), esAdmin };
+      window.inoferModGuardar = k => guardarMod(k);
+      window.inoferMarcarNoTrabajo = (m, fecha, turnoNombre) => { const av = D('avisos'); av.ignorados = av.ignorados || {}; av.ignorados[m + '|' + fecha + '|' + turnoNombre] = { por: quien(), at: new Date().toISOString() }; guardarMod('avisos'); try { programarAvisos(); } catch (e) { } };
+      window.inoferPlanificadoEnGantt = (m, fecha) => { try { return planificadoEnGantt(m, fecha); } catch (e) { return false; } };
       // turnos de órdenes archivadas: se piden una vez por sesión y suman en el tablero
       let archRegs = null, archPidiendo = false, archAt = 0;
       function pedirArch() {

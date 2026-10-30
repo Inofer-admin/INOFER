@@ -11,7 +11,7 @@
       function calcular(k, d) {
         const out = {};
         if (k === 'setup') { Object.keys((d && d.maquinas) || {}).forEach(m => { out[m] = { h: hashObj(d.maquinas[m]) }; }); return out; }
-        if (k === 'mantenimiento') { ['planes', 'trabajos', 'roturas'].forEach(x => { out[x] = {}; ((d && d[x]) || []).forEach(o => { if (o && o.id != null) out[x][String(o.id)] = { h: hashObj(o) }; }); }); return out; }
+        if (k === 'mantenimiento') { ['planes', 'trabajos', 'roturas', 'cronoParadas'].forEach(x => { out[x] = {}; ((d && d[x]) || []).forEach(o => { if (o && o.id != null) out[x][String(o.id)] = { h: hashObj(o) }; }); }); return out; }
         if (k === 'gantt') {
           Object.keys(d || {}).forEach(w => { const m = {}; Object.keys((d[w] && d[w].machines) || {}).forEach(x => { m[x] = hashObj(d[w].machines[x]); }); out[w] = { h: hashObj(d[w]), m }; });
         } else {
