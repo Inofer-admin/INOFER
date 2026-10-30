@@ -243,6 +243,16 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(j.app === 'INOFER' && j.modulos && Array.isArray(j.modulos.orders), 'la copia no tiene los datos');
       await A.evaluate(() => document.getElementById('inoferPlantaModal') && document.getElementById('inoferPlantaModal').remove());
     });
+    await prueba('Gráfico de facturación de la semana en el Gantt', async () => {
+      const r = await A.evaluate(async () => {
+        const w = getActiveGanttWeek(); const it = Object.values(w.machines).flatMap(m => m.items || []).find(i => (i.dailyQty || []).some(q => Number(q) > 0));
+        const c = partsCatalog.find(x => x.part === it.part) || (partsCatalog.push({ id: 'cat-pr', part: it.part, machines: [] }), partsCatalog[partsCatalog.length - 1]); c.precio = 1000;
+        switchTab('gantt'); await new Promise(r => setTimeout(r, 300)); inoferGraficoFacturacion(); await new Promise(r => setTimeout(r, 300));
+        const i = document.getElementById('gfMeta'); i.value = '1.000.000'; i.dispatchEvent(new Event('change', { bubbles: true })); await new Promise(r => setTimeout(r, 300));
+        return { card: !!document.getElementById('ganttFactCard'), canvas: !!document.getElementById('gfCanvas'), meta: getActiveGanttWeek().metaFacturacion, txt: document.getElementById('ganttFactCard').innerText };
+      });
+      ok(r.card && r.canvas && r.meta === 1000000 && /% de la meta/.test(r.txt), 'el gráfico de facturación no quedó bien: ' + JSON.stringify(r).slice(0, 200));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

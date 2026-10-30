@@ -1,0 +1,82 @@
+  <script>
+    // ===== Gráfico de facturación de la semana en el Gantt (opción D: total + avance contra la meta + piezas que más facturan) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const plata = v => '$ ' + Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const corto = v => { v = Number(v) || 0; if (!v) return '$ 0'; return v >= 1e6 ? '$ ' + (Math.round(v / 1e5) / 10).toLocaleString('es-AR') + ' M' : '$ ' + Math.round(v / 1000).toLocaleString('es-AR') + ' mil'; };
+      const ver = () => typeof inoferPuede !== 'function' || inoferPuede('precios_ver');
+      const editar = () => (typeof inoferIsAdmin === 'function' && inoferIsAdmin()) || ((typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && ver());
+      let grafico = null, firma = '';
+      function metaDe(w) {
+        if (!w) return { v: 0, heredada: false };
+        if (Number(w.metaFacturacion) > 0) return { v: Number(w.metaFacturacion), heredada: false };
+        const otras = Object.values(typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {}).filter(x => x && Number(x.metaFacturacion) > 0 && String(x.startDate || '') <= String(w.startDate || '')).sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')));
+        return { v: otras.length ? Number(otras[0].metaFacturacion) : 0, heredada: otras.length > 0 };
+      }
+      function render() {
+        const gv = $('viewGantt'); if (!gv || gv.classList.contains('hidden')) return;
+        let box = $('ganttFactCard');
+        if (!ver()) { if (box) box.remove(); return; }
+        const w = typeof getActiveGanttWeek === 'function' ? getActiveGanttWeek() : null;
+        if (!w || typeof inoferFacturacion !== 'function') return;
+        const f = inoferFacturacion(w), meta = metaDe(w);
+        const top = Object.values(f.piezas).sort((a, b) => b.monto - a.monto).slice(0, 6);
+        const sp = Object.keys(f.sinPrecio);
+        const pct = meta.v ? f.total / meta.v * 100 : null;
+        const nf = JSON.stringify([w.code, Math.round(f.total), meta, top.map(t => [t.part, Math.round(t.monto)]), sp.length, editar()]);
+        if (!box) {
+          box = document.createElement('div'); box.id = 'ganttFactCard';
+          box.className = 'rounded-2xl border border-lime-500/30 bg-slate-900/80 p-4 shadow-xl';
+          const ref = $('inoferGanttChat');
+          if (ref && ref.parentElement) ref.parentElement.insertBefore(box, ref); else gv.appendChild(box);
+          box.addEventListener('change', e => {
+            if (e.target.id !== 'gfMeta' || !editar()) return;
+            const wk = getActiveGanttWeek(); if (!wk) return;
+            const v = Number(String(e.target.value).replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '')) || 0;
+            wk.metaFacturacion = v; saveGanttWeeks(); firma = ''; render();
+            showToast(v ? `💲 Meta de ${wk.code}: ${plata(v)}` : 'Meta borrada');
+          });
+          box.addEventListener('click', e => { if (e.target.closest('#gfMetaTodas') && editar()) { const v = metaDe(getActiveGanttWeek()).v; if (!v) return; Object.values(ganttWeeksData).forEach(x => { if (x && !(Number(x.metaFacturacion) > 0)) x.metaFacturacion = v; }); saveGanttWeeks(); firma = ''; render(); showToast('Meta aplicada a las semanas que no tenían'); } });
+        }
+        if (nf === firma) return;
+        firma = nf;
+        const color = pct == null ? 'from-slate-500 to-slate-400' : (pct >= 100 ? 'from-emerald-500 to-lime-400' : (pct >= 85 ? 'from-amber-500 to-emerald-400' : 'from-rose-500 to-amber-400'));
+        box.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-3">
+            <div><div class="text-sm font-black text-lime-300">💲 Facturación de la semana · ${esc(w.code)}</div><div class="text-[11px] text-slate-400">Lo programado en el Gantt × precio sin IVA de cada pieza</div></div>
+            <label class="flex items-center gap-2 text-[11px] text-slate-400">Meta semanal
+              ${editar() ? `<input id="gfMeta" inputmode="numeric" value="${meta.v ? Math.round(meta.v).toLocaleString('es-AR') : ''}" placeholder="ej: 40.000.000" class="w-36 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-right text-xs font-bold text-white">` : `<b class="text-white">${meta.v ? plata(meta.v) : '—'}</b>`}
+              ${meta.heredada ? '<span class="text-[10px] text-slate-500">(la de la semana anterior)</span>' : ''}${editar() && meta.v && !meta.heredada ? '<button type="button" id="gfMetaTodas" class="text-[10px] text-lime-300 underline">usar en todas</button>' : ''}</label>
+          </div>
+          <div class="mt-3 grid gap-4 lg:grid-cols-5">
+            <div class="lg:col-span-2">
+              <div class="text-[11px] text-slate-400">Total de la semana</div>
+              <div class="text-4xl font-black text-emerald-300">${plata(f.total)}</div>
+              ${meta.v ? `<div class="mt-2 h-4 overflow-hidden rounded-full bg-slate-800"><div class="h-full rounded-full bg-gradient-to-r ${color}" style="width:${Math.min(100, Math.max(2, pct))}%"></div></div>
+                <div class="mt-1 text-[11px] ${pct >= 100 ? 'text-emerald-300' : 'text-slate-400'}">${(Math.round(pct * 10) / 10).toLocaleString('es-AR')}% de la meta · ${pct >= 100 ? 'superada por ' + plata(f.total - meta.v) + ' 🎉' : 'faltan ' + plata(meta.v - f.total)}</div>` : '<div class="mt-2 text-[11px] text-slate-500">Cargá una meta para ver el avance.</div>'}
+              ${sp.length ? `<div class="mt-2 text-[11px] text-amber-300">⚠️ ${sp.length} pieza${sp.length > 1 ? 's' : ''} sin precio (no suman): ${sp.slice(0, 6).map(esc).join(', ')}${sp.length > 6 ? '…' : ''}</div>` : ''}
+            </div>
+            <div class="lg:col-span-3">${top.length ? `<div class="mb-1 text-[11px] font-bold text-slate-400">Piezas que más facturan</div><div class="relative" style="height:${Math.max(120, top.length * 30)}px"><canvas id="gfCanvas"></canvas></div>` : '<div class="py-6 text-center text-xs text-slate-500">No hay piezas con precio programadas en esta semana.</div>'}</div>
+          </div>`;
+        try { if (grafico) grafico.destroy(); } catch (e) { }
+        grafico = null;
+        const cv = $('gfCanvas');
+        if (cv && typeof Chart === 'function') {
+          grafico = new Chart(cv, { type: 'bar', data: { labels: top.map(t => t.part), datasets: [{ data: top.map(t => t.monto), backgroundColor: '#f59e0b', borderRadius: 5 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const t = top[c.dataIndex]; return `${plata(t.monto)} · ${t.qty.toLocaleString('es-AR')} u × ${plata(t.precio)}`; } } } },
+              scales: { x: { ticks: { color: '#94a3b8', callback: v => corto(v) }, grid: { color: '#1e293b' } }, y: { ticks: { color: '#e2e8f0', font: { weight: 'bold' } }, grid: { display: false } } } } });
+        }
+      }
+      window.inoferGraficoFacturacion = () => { firma = ''; render(); };
+      function iniciar() {
+        if (typeof window.renderGanttView === 'function' && !window.renderGanttView.__fact) {
+          const rg = window.renderGanttView; const f = function () { const r = rg.apply(this, arguments); setTimeout(render, 0); return r; }; Object.assign(f, rg); f.__fact = true; window.renderGanttView = f;
+        }
+        if (typeof window.switchTab === 'function' && !window.switchTab.__fact) {
+          const sw = window.switchTab; const f = function () { const r = sw.apply(this, arguments); setTimeout(render, 60); return r; }; Object.assign(f, sw); f.__fact = true; window.switchTab = f;
+        }
+        setInterval(render, 4000);
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 300)); else setTimeout(iniciar, 300);
+    })();
+  </script>

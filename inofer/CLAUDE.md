@@ -182,3 +182,6 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 
 ## Pedidos para el futuro (el usuario pidió recordarlos)
 - Trazabilidad de lotes: etiqueta imprimible por caja/lote con QR (pieza, fecha, turno, operario, máquina, OP) para saber de qué turno salió una pieza si un cliente reclama. Ofrecerlo cuando se retome la lista de mejoras.
+- Gráfico de facturación en el Gantt (parte 25, opción D elegida por el usuario): tarjeta `#ganttFactCard` antes del asistente, solo con precios_ver: total de la semana (`inoferFacturacion`), barra de avance contra la meta semanal (`week.metaFacturacion`, editable por admin o gantt edit con precios; si la semana no tiene, usa la de la semana anterior; "usar en todas"), piezas sin precio y barras horizontales de las 6 piezas que más facturan (Chart.js).
+- Revisión de órdenes del Gantt (parte 23): selección por todo / tipo / máquina / tramo con Shift, contador, "Aplicar las tildadas y descartar el resto".
+- PENDIENTE: importar el Gantt que el usuario ya tenía en Excel (fijar esas piezas y planificar alrededor). Falta que mande el archivo para ver el formato.
