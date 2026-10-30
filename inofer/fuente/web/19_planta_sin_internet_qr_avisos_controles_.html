@@ -779,7 +779,7 @@ function inoferInformeSemanal() { return inoferServidor_().enviarInformeSemanal(
 function inoferRespaldoDiario() { return inoferServidor_().copiaDeSeguridad(); }
 function activarAutomaticos() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (['inoferInformeSemanal', 'inoferRespaldoDiario'].indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('inoferInformeSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
+  ScriptApp.newTrigger('inoferInformeSemanal').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('inoferRespaldoDiario').timeBased().everyDays(1).atHour(3).create();
   MailApp.getRemainingDailyQuota(); DriveApp.getRootFolder();
   const r = inoferServidor_().copiaDeSeguridad() + ' | ' + inoferServidor_().enviarInformeSemanal(true);
@@ -793,6 +793,8 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
         const sem = semana || masDias(lunesDe(hoyIso()), -7);
         const ops = []; for (let i = 0; i < 12; i++) { const l = masDias(lunesDe(hoyIso()), -7 * i); ops.push([l, i === 0 ? 'Esta semana (en curso)' : `Semana del ${fFecha(l)} al ${fFecha(masDias(l, 6))}`]); }
         const cfg = D('informes');
+        const DIAS_INF = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        const hor = { dia: cfg.dia != null && cfg.dia !== '' ? Number(cfg.dia) : 1, hora: cfg.hora != null && cfg.hora !== '' ? Number(cfg.hora) : 7 };
         const w = modal('📄 Informe semanal', `
           <div class="flex flex-wrap items-center gap-2"><select id="infSem" class="${INP}">${ops.map(([l, t]) => `<option value="${l}" ${l === sem ? 'selected' : ''}>${t}</option>`).join('')}</select>
             <button type="button" id="infPrint" class="${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200">🖨️ Imprimir / PDF</button>
@@ -800,11 +802,17 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
             <button type="button" id="infCopy" class="${BTN} border-slate-600 text-slate-200">📋 Copiar resumen</button>
             ${esAdmin() ? `<button type="button" id="infMailCfg" class="${BTN} ml-auto border-cyan-500/50 text-cyan-200">✉️ Enviar por mail</button>` : ''}</div>
           <div id="infMailBox" class="hidden rounded-xl border border-cyan-500/30 bg-slate-950/70 p-3 space-y-2 text-xs text-slate-300">
-            <div class="font-black text-cyan-300">Envío automático por mail (todos los lunes a las 7)</div>
+            <div class="font-black text-cyan-300">Envío automático por mail</div>
+            <div class="flex flex-wrap items-end gap-2"><label>Día<select id="infDia" class="inofer-planta-form ${INP} mt-1 block">${DIAS_INF.map((d, i) => `<option value="${i}" ${hor.dia === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+              <label>Hora<select id="infHora" class="inofer-planta-form ${INP} mt-1 block">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${hor.hora === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select></label>
+              <span class="pb-2 text-[11px] text-slate-400">Manda el informe de la semana anterior (lunes a domingo). Sale dentro de esa hora.</span></div>
             <label class="block">Mails que lo reciben (separados por coma)<input id="infEmails" class="inofer-planta-form ${INP} mt-1 w-full" value="${esc((cfg.emails || []).join(', '))}" placeholder="jefe@empresa.com, produccion@empresa.com"></label>
             <label class="flex items-center gap-2"><input type="checkbox" id="infActivo" ${cfg.activo !== false ? 'checked' : ''}> Enviar automáticamente</label>
-            <button type="button" id="infMailSave" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar mails</button>
-            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"><b>Una sola vez</b>, para que Google deje mandar mails: abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarAutomaticos</b> → <b>Ejecutar</b> → aceptá los permisos. Te llega un mail de prueba, se hace la primera copia de seguridad y desde ahí sale todo solo (informe los lunes, copia todas las noches).</div>
+            <label class="block">Enviar desde (opcional)<input id="infAlias" class="inofer-planta-form ${INP} mt-1 w-full" value="${esc(cfg.alias || '')}" placeholder="inofer.informes@gmail.com"></label>
+            <div class="text-[11px] text-slate-400">El mail siempre llega con el nombre <b>INOFER</b>. Si dejás esto vacío, la dirección que se ve es la de la cuenta de Google dueña de la planilla. Para que no aparezca tu mail, cargá acá una cuenta aparte agregada en Gmail como <b>"Enviar como"</b> (te explico los pasos en el chat).</div>
+            <button type="button" id="infMailSave" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar</button>
+            <div id="infEstado" class="text-[11px] text-slate-400"></div>
+            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"><b>Una sola vez</b>, para que Google deje mandar mails: abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarAutomaticos</b> → <b>Ejecutar</b> → aceptá los permisos. Te llega un mail de prueba, se hace la primera copia de seguridad y desde ahí sale todo solo (informe el día y la hora que elijas arriba, copia todas las noches).</div>
             <pre id="infCodigo" class="max-h-40 overflow-auto rounded-lg bg-slate-950 p-2 text-[10px] text-emerald-200">${esc(CODIGO_GS)}</pre>
             <button type="button" id="infCopyCode" class="${BTN} border-slate-600 text-slate-200">📋 Copiar el código</button>
           </div>
@@ -822,12 +830,24 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           if (id === 'infPrint') { try { const f = w.querySelector('#infFrame'); f.contentWindow.focus(); f.contentWindow.print(); } catch (er) { toast('No se pudo imprimir'); } }
           if (id === 'infWa' && actual) window.open('https://wa.me/?text=' + encodeURIComponent(actual.texto), '_blank');
           if (id === 'infCopy' && actual) { try { await navigator.clipboard.writeText(actual.texto); toast('Resumen copiado'); } catch (er) { toast('No se pudo copiar'); } }
-          if (id === 'infMailCfg') w.querySelector('#infMailBox').classList.toggle('hidden');
+          if (id === 'infMailCfg') {
+            const box = w.querySelector('#infMailBox'); box.classList.toggle('hidden');
+            if (!box.classList.contains('hidden')) api({ action: 'respaldoInfo' }).then(r => {
+              const el = w.querySelector('#infEstado'); if (!el) return;
+              const u = r.informe; const t = [];
+              t.push(u && u.fecha ? `Último envío: ${new Date(u.fecha).toLocaleString('es-AR')}${u.como ? ' ' + esc(u.como) : ''}` : 'Todavía no se envió ningún informe.');
+              if (r.informeError) t.push(`<span class="text-rose-300">⚠️ ${esc(r.informeError)}</span>`);
+              el.innerHTML = t.join('<br>');
+            }).catch(() => { });
+          }
           if (id === 'infCopyCode') { try { await navigator.clipboard.writeText(CODIGO_GS); toast('Código copiado'); } catch (er) { toast('Seleccioná el texto y copialo a mano'); } }
           if (id === 'infMailSave') {
             const emails = w.querySelector('#infEmails').value.split(/[,;\s]+/).map(x => x.trim()).filter(x => /@/.test(x));
-            const c = D('informes'); c.emails = emails; c.activo = w.querySelector('#infActivo').checked; guardarMod('informes');
-            toast(emails.length ? `✓ Se enviará a ${emails.length} mail${emails.length > 1 ? 's' : ''}` : 'Sin mails: no se envía');
+            const alias = w.querySelector('#infAlias').value.trim();
+            if (alias && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(alias)) { toast('El mail de "Enviar desde" no es válido'); return; }
+            const c = D('informes'); c.emails = emails; c.activo = w.querySelector('#infActivo').checked;
+            c.dia = Number(w.querySelector('#infDia').value); c.hora = Number(w.querySelector('#infHora').value); c.alias = alias; guardarMod('informes');
+            toast(emails.length ? `✓ Se enviará los ${DIAS_INF[c.dia].toLowerCase()} a las ${String(c.hora).padStart(2, '0')}:00 a ${emails.length} mail${emails.length > 1 ? 's' : ''}` : 'Sin mails: no se envía');
           }
         });
         cargar(sem);

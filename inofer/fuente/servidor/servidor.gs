@@ -1431,23 +1431,69 @@ function accionInforme(u, body) {
   return armarInforme_(u, lunes);
 }
 // Lo llama el disparador semanal de Apps Script (función inoferInformeSemanal del Código.gs)
+// El disparador del informe corre cada hora y el servidor decide si toca mandar (día y hora elegidos en INOFER)
+function ajustarDisparadores_() {
+  try {
+    const p = PropertiesService.getScriptProperties();
+    const uid = p.getProperty('DISPARADOR_INFORME_UID');
+    const ts = ScriptApp.getProjectTriggers();
+    const inf = ts.filter(function (t) { return t.getHandlerFunction() === 'inoferInformeSemanal'; });
+    if (uid && inf.length === 1 && inf[0].getUniqueId() === uid) return;
+    inf.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+    const nuevo = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().everyHours(1).create();
+    p.setProperty('DISPARADOR_INFORME_UID', nuevo.getUniqueId());
+  } catch (e) {}
+}
+function horarioInforme_(cfg) {
+  const dia = cfg && cfg.dia != null && cfg.dia !== '' ? Math.max(0, Math.min(6, Number(cfg.dia))) : 1;
+  const hora = cfg && cfg.hora != null && cfg.hora !== '' ? Math.max(0, Math.min(23, Number(cfg.hora))) : 7;
+  return { dia: dia, hora: hora };
+}
 function enviarInformeSemanal(forzar) {
+  ajustarDisparadores_();
   const mods = obtenerEstadoModulos();
   const cfg = mods.informes || {};
+  const props = PropertiesService.getScriptProperties();
   const emails = (cfg.emails || []).filter(function (x) { return /@/.test(String(x)); });
   if (!emails.length) return 'No hay mails cargados en INOFER (Informe semanal → Enviar por mail).';
   if (cfg.activo === false && !forzar) return 'El envío por mail está desactivado.';
-  const hoy = isoDia_(new Date());
+  const ahora = new Date(), tz = zonaHoja_();
+  const h = horarioInforme_(cfg);
+  if (!forzar) {
+    const dow = Number(Utilities.formatDate(ahora, tz, 'u')) % 7, hora = Number(Utilities.formatDate(ahora, tz, 'H'));
+    if (dow !== h.dia || hora < h.hora) return 'Todavía no es el día y la hora elegidos.';
+  }
+  const hoy = isoDia_(ahora);
   const lunes = sumarDias_(lunesDe_(hoy), -7);
-  const props = PropertiesService.getScriptProperties();
   if (!forzar && props.getProperty('INFORME_ENVIADO_' + lunes)) return 'El informe de esa semana ya se envió.';
   const admin = { rol: 'admin', usuario: 'sistema', nombre: 'Informe automático', permisos: {} };
   const inf = armarInforme_(admin, lunes);
   const p = lunes.split('-');
-  MailApp.sendEmail({ to: emails.join(','), subject: 'INOFER · Informe semanal ' + p[2] + '/' + p[1] + '/' + p[0], htmlBody: '<div style="background:#fff;padding:12px">' + inf.html + '</div>', body: inf.texto.replace(/\*/g, ''), name: 'INOFER' });
-  props.setProperty('INFORME_ENVIADO_' + lunes, new Date().toISOString());
-  auditar_(admin, 'mail', 'informes', ['Informe semanal enviado a ' + emails.join(', ')]);
-  return 'Informe enviado a ' + emails.join(', ');
+  const asunto = 'INOFER · Informe semanal ' + p[2] + '/' + p[1] + '/' + p[0];
+  const html = '<div style="background:#fff;padding:12px">' + inf.html + '</div>', texto = inf.texto.replace(/\*/g, '');
+  const alias = String(cfg.alias || '').trim();
+  let como = '';
+  try {
+    // Con un alias de "Enviar como" configurado en Gmail, el informe sale desde esa dirección y no desde la cuenta personal
+    if (alias) {
+      const al = GmailApp.getAliases();
+      if (al.indexOf(alias) === -1) throw new Error('El alias ' + alias + ' no está configurado en "Enviar como" de Gmail.');
+      GmailApp.sendEmail(emails.join(','), asunto, texto, { htmlBody: html, name: 'INOFER', from: alias, replyTo: alias });
+      como = ' (desde ' + alias + ')';
+    } else {
+      MailApp.sendEmail({ to: emails.join(','), subject: asunto, htmlBody: html, body: texto, name: 'INOFER' });
+    }
+    props.deleteProperty('INFORME_ERROR');
+  } catch (e) {
+    props.setProperty('INFORME_ERROR', String(e.message || e).slice(0, 300));
+    if (!alias) throw e;
+    MailApp.sendEmail({ to: emails.join(','), subject: asunto, htmlBody: html, body: texto, name: 'INOFER' });
+    como = ' (sin el alias: ' + e.message + ')';
+  }
+  props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
+  props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como }));
+  auditar_(admin, 'mail', 'informes', ['Informe semanal enviado a ' + emails.join(', ') + como]);
+  return 'Informe enviado a ' + emails.join(', ') + como;
 }
 
 // =====================================================================
@@ -1750,7 +1796,7 @@ function accionRotura(u, body) {
   if (body.action === 'respaldoInfo') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
     const p = PropertiesService.getScriptProperties();
-    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '' };
+    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID') };
   }
   if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
   if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };
@@ -1800,6 +1846,7 @@ function accionRotura(u, body) {
 }
 // Copia diaria de toda la planilla en Google Drive (la llama el disparador inoferRespaldoDiario del Código.gs)
 function copiaDeSeguridad() {
+  ajustarDisparadores_();
   const p = PropertiesService.getScriptProperties();
   try {
     const ss = getSs();

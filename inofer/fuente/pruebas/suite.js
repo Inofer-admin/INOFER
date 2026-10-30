@@ -143,6 +143,23 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.inf.status === 'ok' && /Informe semanal/.test(r.inf.html), 'el informe no se armó');
       ok(r.aud.status === 'ok' && r.aud.filas.some(f => /PRUEBA-1/.test(f.detalle)), 'el registro no tiene los cambios');
     });
+    await prueba('Informe por mail: día, hora y remitente configurables', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        inoferInformeSemanal('2026-01-05'); await w(300);
+        document.querySelector('#infMailCfg').click(); await w(200);
+        const dia = document.querySelector('#infDia'), hora = document.querySelector('#infHora');
+        const antes = { dia: dia && dia.value, hora: hora && hora.value };
+        document.querySelector('#infEmails').value = 'a@b.com';
+        dia.value = '5'; hora.value = '15'; document.querySelector('#infAlias').value = 'inofer.informes@gmail.com';
+        document.querySelector('#infMailSave').click(); await w(1500);
+        const c = inoferModLocal('informes') || {};
+        return { antes, dia: c.dia, hora: c.hora, alias: c.alias, emails: c.emails };
+      });
+      ok(r.antes.dia === '1' && r.antes.hora === '7', 'el horario por defecto no es lunes 7: ' + JSON.stringify(r.antes));
+      ok(r.dia === 5 && r.hora === 15 && r.alias === 'inofer.informes@gmail.com' && r.emails.join() === 'a@b.com', 'no guardó el horario: ' + JSON.stringify(r));
+      await A.evaluate(() => { const m = document.getElementById('inoferPlantaModal'); if (m) m.remove(); });
+    });
     await prueba('Órdenes desde el Gantt: propone, aprueba, ajusta y borra', async () => {
       const r = await A.evaluate(async () => {
         const w = ms => new Promise(r => setTimeout(r, ms));
