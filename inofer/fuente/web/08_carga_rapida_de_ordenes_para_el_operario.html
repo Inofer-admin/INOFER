@@ -24,6 +24,13 @@
       const icono = ini => { const h = aMin(ini) / 60; return h >= 4 && h < 11 ? '🌅' : (h >= 11 && h < 17 ? '☀️' : (h >= 17 && h < 21 ? '🌇' : '🌙')); };
       const esquemaActivo = () => cfgTurnos.esquemas.find(e => e.id === cfgTurnos.activo) || cfgTurnos.esquemas[0];
       const turnos = () => (esquemaActivo().turnos || []).map((t, i) => ({ id: 'T' + i, nombre: t.nombre || ('Turno ' + (i + 1)), ini: t.ini || '06:00', fin: t.fin || '14:00', ico: icono(t.ini) }));
+      // Operarios por máquina (módulo de nube "operarios", lo carga el administrador)
+      const OPER_KEY = 'tablero_inyectoras_operarios_v1';
+      let cfgOper = null;
+      try { cfgOper = JSON.parse(localStorage.getItem(OPER_KEY) || 'null'); } catch (e) { }
+      if (!cfgOper || typeof cfgOper.maquinas !== 'object') cfgOper = { maquinas: {} };
+      function guardarOper(subir) { try { localStorage.setItem(OPER_KEY, JSON.stringify(cfgOper)); } catch (e) { } if (subir) { try { pushCloudModuleState('operarios', cfgOper); } catch (e) { } } }
+      const operariosDe = m => (cfgOper.maquinas[m] || []).filter(Boolean);
       function guardarTurnos(subir) {
         try { localStorage.setItem(TURNOS_KEY, JSON.stringify(cfgTurnos)); } catch (e) { }
         if (subir) { try { pushCloudModuleState('turnos', cfgTurnos); } catch (e) { } }
@@ -66,12 +73,39 @@
       }
 
       const BTN = 'rounded-2xl border-2 px-4 py-4 text-left font-bold transition active:scale-[0.98]';
+      function estiloParadas() {
+        document.querySelectorAll('#orderSubViewRapida .cr-parada').forEach(b => {
+          const p1 = b.dataset.p === '1', on = p1 === !!st.parada;
+          b.className = `cr-parada rounded-xl border-2 ${p1 ? 'px-3 py-3 text-xs' : 'px-4 py-3 text-sm'} font-bold ${on ? (p1 ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-emerald-400 bg-emerald-500/15 text-white') : 'border-slate-700 bg-slate-950 text-slate-300'}`;
+        });
+      }
+      const durH = t => ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440) / 60;
+      function sugerido(o, t) {
+        const c = cat().find(x => norm(x.part) === norm(o.part));
+        const uh = Number(o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
+        return uh ? Math.round(uh * durH(t) / 10) * 10 : 0;
+      }
+      function ultimoTurnoMaq(maq) {
+        let best = null;
+        productionOrders.forEach(o => { if (maqDeOrden(o) !== maq) return; (o.logs || []).forEach(l => { const k = String(l.date || '') + ' ' + String(l.startTime || ''); if (!best || k > best.k) best = { k, l }; }); });
+        return best ? best.l : null;
+      }
+      function paradasFrecuentes(maq) {
+        const cnt = {};
+        productionOrders.forEach(o => { if (maqDeOrden(o) !== maq) return; (o.logs || []).forEach(l => (Array.isArray(l.paradas) ? l.paradas : []).forEach(p => { if (p.codigo) cnt[p.codigo] = (cnt[p.codigo] || 0) + 1; })); });
+        const L = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+        const todos = typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : [];
+        ['1-', '31-', '30-', '4-'].forEach(pre => { const c = todos.find(x => String(x).startsWith(pre)); if (c && !L.includes(c)) L.push(c); });
+        return L.slice(0, 4);
+      }
+      const corto = c => String(c || '').replace(/^\d+\s*-\s*/, '').slice(0, 22);
       function render() {
         const box = $('inoferCR');
         if (!box) return;
         try {
           const tag = $('crEsquemaTag'); if (tag) tag.textContent = 'Turnos: ' + esquemaActivo().nombre;
           const cb = $('crTurnosCfgBtn'); if (cb) cb.classList.toggle('hidden', !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()));
+          const ob = $('crOperCfgBtn'); if (ob) ob.classList.toggle('hidden', !(typeof inoferIsAdmin === 'function' && inoferIsAdmin()));
         } catch (e) { }
         if (!puedeEditar()) { box.innerHTML = '<div class="rounded-2xl border border-slate-700 p-6 text-center text-sm text-slate-300">Tu usuario solo puede ver las órdenes. Para cargar avances pedile permiso de edición al administrador.</div>'; return; }
         const pasos = ['maquina', 'orden', 'turno'];
@@ -132,6 +166,10 @@
           const t = turnos().find(x => x.id === st.turno) || turnos()[0];
           const a = avance(o);
           const falta = Math.max(0, (Number(o.qtyTarget) || 0) - a.ok);
+          const sug = Math.min(sugerido(o, t), falta || Infinity) || 0;
+          const ult = ultimoTurnoMaq(st.maq);
+          const frec = paradasFrecuentes(st.maq);
+          const opers = operariosDe(st.maq);
           html = `<div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
               <div><span class="text-base font-black text-amber-300">${esc(o.part)}</span> <span class="text-xs text-slate-400">· ${esc(st.maq)} · OP ${esc(o.ordNumber)}</span></div>
               <div class="text-xs text-slate-300">Van <b>${a.ok.toLocaleString('es-AR')}</b> · faltan <b>${falta.toLocaleString('es-AR')}</b></div>
@@ -146,18 +184,31 @@
                     <input id="crFin" type="time" value="${t.fin}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
                   </div></details>
               </div>
-              <div class="grid grid-cols-2 gap-3">
-                <label class="col-span-2 block sm:col-span-1"><span class="mb-1 block text-sm font-black text-emerald-300">✅ Piezas buenas</span>
-                  <input id="crOk" type="number" inputmode="numeric" min="0" required placeholder="0" class="w-full rounded-xl border-2 border-emerald-500/50 bg-slate-950 px-4 py-4 text-3xl font-black text-emerald-300 focus:border-emerald-400 focus:outline-none"></label>
-                <label class="block"><span class="mb-1 block text-sm font-black text-rose-300">❌ Scrap</span>
-                  <input id="crScrap" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-rose-500/40 bg-slate-950 px-4 py-4 text-2xl font-black text-rose-300 focus:border-rose-400 focus:outline-none"></label>
-                <label class="block"><span class="mb-1 block text-sm font-bold text-amber-300">Arranque en baja</span>
-                  <input id="crBaja" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-4 text-2xl font-black text-amber-300 focus:border-amber-400 focus:outline-none"></label>
+              <div>
+                <div class="mb-1 flex flex-wrap items-baseline justify-between gap-2"><span class="text-sm font-black text-emerald-300">✅ Piezas buenas</span>${sug && !st.editLogId ? `<span class="text-[11px] text-slate-400">sugerido según el turno: ${sug.toLocaleString('es-AR')} · corregilo si hiciste otra cantidad</span>` : ''}</div>
+                <div class="flex items-stretch gap-2">
+                  <button type="button" class="cr-delta w-16 shrink-0 rounded-xl border-2 border-slate-700 bg-slate-950 text-3xl font-black text-slate-200 active:scale-95" data-d="-1">−</button>
+                  <input id="crOk" type="number" inputmode="numeric" min="0" required placeholder="0" value="${sug && !st.editLogId ? sug : ''}" data-auto="${sug && !st.editLogId ? '1' : ''}" class="min-w-0 flex-1 rounded-xl border-2 border-emerald-500/50 bg-slate-950 px-4 py-4 text-center text-4xl font-black text-emerald-300 focus:border-emerald-400 focus:outline-none">
+                  <button type="button" class="cr-delta w-16 shrink-0 rounded-xl border-2 border-slate-700 bg-slate-950 text-3xl font-black text-slate-200 active:scale-95" data-d="1">+</button>
+                </div>
+                <div class="mt-1.5 grid grid-cols-4 gap-1.5">${[-100, -10, 10, 100].map(d => `<button type="button" class="cr-delta rounded-lg border border-slate-700 bg-slate-950 py-2 text-sm font-bold ${d < 0 ? 'text-rose-200' : 'text-emerald-200'} active:scale-95" data-d="${d}">${d > 0 ? '+' : '−'}${Math.abs(d)}</button>`).join('')}</div>
+                <div class="mt-2 grid grid-cols-2 gap-2">
+                  ${ult && !st.editLogId ? `<button type="button" id="crIgual" class="rounded-xl border-2 border-cyan-500/40 bg-cyan-500/10 px-2 py-2.5 text-xs font-bold text-cyan-200">↺ Igual que el turno anterior<span class="block text-[10px] font-normal text-cyan-300/80">${Number(ult.okPcs || 0).toLocaleString('es-AR')} buenas · ${esc(ult.operator || '')}</span></button>` : '<span></span>'}
+                  <button type="button" id="crParadoTodo" class="rounded-xl border-2 border-rose-500/40 bg-rose-500/10 px-2 py-2.5 text-xs font-bold text-rose-200">⛔ Máquina parada todo el turno</button>
+                </div>
               </div>
+              <details id="crMas" class="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2"><summary class="cursor-pointer text-xs font-bold text-slate-300">❌ Scrap y arranque en baja <span class="font-normal text-slate-500">(solo si hubo)</span></summary>
+                <div class="mt-2 grid grid-cols-2 gap-3">
+                  <label class="block"><span class="mb-1 block text-xs font-black text-rose-300">Scrap</span>
+                    <input id="crScrap" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-rose-500/40 bg-slate-950 px-3 py-3 text-2xl font-black text-rose-300 focus:border-rose-400 focus:outline-none"></label>
+                  <label class="block"><span class="mb-1 block text-xs font-bold text-amber-300">Arranque en baja</span>
+                    <input id="crBaja" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-2xl font-black text-amber-300 focus:border-amber-400 focus:outline-none"></label>
+                </div></details>
               <div><span class="mb-1.5 block text-xs font-bold text-slate-300">¿Hubo paradas?</span>
-                <div class="grid grid-cols-2 gap-2">
-                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${!st.parada ? 'border-emerald-400 bg-emerald-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="0">No</button>
-                  <button type="button" class="cr-parada rounded-xl border-2 py-3 text-sm font-bold ${st.parada ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="1">Sí</button>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" class="cr-parada rounded-xl border-2 px-4 py-3 text-sm font-bold ${!st.parada ? 'border-emerald-400 bg-emerald-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="0">No</button>
+                  ${frec.map(c => `<button type="button" class="cr-pchip rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-xs font-bold text-rose-200" data-cod="${esc(c)}">${esc(corto(c))}</button>`).join('')}
+                  <button type="button" class="cr-parada rounded-xl border-2 px-3 py-3 text-xs font-bold ${st.parada ? 'border-rose-400 bg-rose-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="1">Otra…</button>
                 </div>
                 <div id="crParadaBox" class="${st.parada ? '' : 'hidden'} mt-2 space-y-2">
                   <div id="crParadasList" class="space-y-2">${st.parada ? filaParada() : ''}</div>
@@ -168,7 +219,8 @@
                 </div>
               </div>
               <label class="block"><span class="mb-1 block text-xs font-bold text-slate-300">Operario</span>
-                <input id="crOperario" value="${esc(nombreOperario())}" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-base font-bold text-white focus:border-amber-400 focus:outline-none"></label>
+                ${opers.length ? `<span class="mb-2 flex flex-wrap gap-2">${opers.map(n => `<button type="button" class="cr-oper rounded-xl border-2 px-4 py-3 text-sm font-bold ${norm(n) === norm(nombreOperario()) ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-200'}" data-n="${esc(n)}">👷 ${esc(n)}</button>`).join('')}</span>` : ''}
+                <input id="crOperario" value="${esc(opers.length && !opers.some(n => norm(n) === norm(nombreOperario())) ? '' : nombreOperario())}" placeholder="${opers.length ? 'Otro: escribí el nombre' : 'Tu nombre'}" required class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-base font-bold text-white focus:border-amber-400 focus:outline-none"></label>
               <details class="text-xs text-slate-400"><summary class="cursor-pointer">Agregar una observación (opcional)</summary>
                 <input id="crObs" placeholder="Ej: cambié noyo" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></details>
               <button type="submit" class="w-full rounded-2xl bg-emerald-500 px-4 py-4 text-lg font-black text-slate-950 hover:bg-emerald-400">${st.editLogId ? '💾 Guardar cambios' : '💾 Guardar turno'}</button>
@@ -199,6 +251,7 @@
         $('crIni').value = l.startTime || ''; $('crFin').value = l.endTime || '';
         $('crOk').value = Number(l.okPcs) || 0; $('crScrap').value = Number(l.scrapPcs) || ''; $('crBaja').value = Number(l.lowStartPcs) || '';
         $('crOperario').value = l.operator || '';
+        if ((Number(l.scrapPcs) || Number(l.lowStartPcs)) && $('crMas')) $('crMas').open = true;
         if ($('crObs')) $('crObs').value = l.obsUsuario != null ? l.obsUsuario : '';
         const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
         if (ps.length) {
@@ -206,7 +259,7 @@
           $('crParadaBox').classList.remove('hidden');
           $('crParadasList').innerHTML = ps.map(p => filaParada(p)).join('');
           const v = $('orderSubViewRapida');
-          v.querySelectorAll('.cr-parada').forEach(b => { const on = b.dataset.p === '1'; const c = on ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+          estiloParadas();
           totalParadas();
         }
       }
@@ -223,6 +276,26 @@
         switchOrderSubTab('rapida');
         try { $('orderSubViewRapida').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { }
       };
+
+      // ---------- operarios por máquina (solo administrador) ----------
+      function renderOperCfg() {
+        const c = $('crOperCfg'); if (!c) return;
+        c.innerHTML = `<div class="space-y-3 rounded-xl border border-amber-500/30 bg-slate-950/70 p-3">
+          <div class="flex items-center justify-between"><span class="text-sm font-black text-amber-300">👷 Operarios por máquina</span><button type="button" class="cro-cerrar text-xs text-slate-400 hover:text-white">✕ Cerrar</button></div>
+          <p class="text-[11px] text-slate-400">Escribí un nombre por renglón. En la carga del turno aparecen como botones para tocar, en vez de escribir. Se guarda solo y llega a todos los equipos.</p>
+          <div class="grid gap-2 sm:grid-cols-5">${MAQ.map(m => `<label class="block text-xs font-bold text-white">${m.id}<textarea class="cro-txt mt-1 h-28 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-normal text-white" data-m="${m.id}" placeholder="Juan\nPedro">${esc(operariosDe(m.id).join('\n'))}</textarea></label>`).join('')}</div>
+        </div>`;
+      }
+      function montarOperCfg() {
+        const c = $('crOperCfg'), b = $('crOperCfgBtn'); if (!c || !b) return;
+        b.addEventListener('click', () => { if (!(typeof inoferIsAdmin === 'function' && inoferIsAdmin())) return; c.classList.toggle('hidden'); if (!c.classList.contains('hidden')) renderOperCfg(); });
+        c.addEventListener('click', e => { if (e.target.closest('.cro-cerrar')) c.classList.add('hidden'); });
+        c.addEventListener('change', e => {
+          const t = e.target; if (!t.classList.contains('cro-txt')) return;
+          const L = []; t.value.split(/\n|,/).map(x => x.trim()).filter(Boolean).forEach(x => { if (!L.some(y => norm(y) === norm(x))) L.push(x.slice(0, 40)); });
+          cfgOper.maquinas[t.dataset.m] = L; guardarOper(true); render(); showToast(`👷 ${t.dataset.m}: ${L.length} operario${L.length === 1 ? '' : 's'}`);
+        });
+      }
 
       // ---------- editor de turnos (solo administrador) ----------
       function renderCfgTurnos() {
@@ -287,6 +360,11 @@
         window.applyCloudModules = function (mods) {
           const out = _amT.apply(this, arguments);
           try {
+            if (mods && mods.operarios && typeof mods.operarios.maquinas === 'object' && JSON.stringify(mods.operarios) !== JSON.stringify(cfgOper)) {
+              cfgOper = mods.operarios; guardarOper(false);
+              const a2 = document.activeElement;
+              if (!(a2 && a2.closest && (a2.closest('#crOperCfg') || a2.closest('#crTurnoForm')))) { if ($('crOperCfg') && !$('crOperCfg').classList.contains('hidden')) renderOperCfg(); render(); }
+            }
             if (mods && mods.turnos && Array.isArray(mods.turnos.esquemas) && mods.turnos.esquemas.length && JSON.stringify(mods.turnos) !== JSON.stringify(cfgTurnos)) {
               cfgTurnos = mods.turnos; guardarTurnos(false);
               if (!turnos().some(t => t.id === st.turno)) st.turno = turnoActual();
@@ -434,9 +512,10 @@
         }
         const v = document.createElement('div');
         v.id = 'orderSubViewRapida'; v.className = 'hidden';
-        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="flex items-center gap-2"><span id="crEsquemaTag" class="text-[11px] text-slate-500"></span><button type="button" id="crTurnosCfgBtn" class="hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">⚙️ Horarios de turnos</button></span></div><div id="crTurnosCfg" class="hidden mb-4"></div><div id="inoferCR"></div></div>';
+        v.innerHTML = '<div class="mx-auto max-w-3xl rounded-2xl border border-amber-500/30 bg-slate-900/90 p-4 shadow-xl sm:p-6"><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-amber-300">⚡ Carga rápida en máquina</span><span class="flex items-center gap-2"><span id="crEsquemaTag" class="text-[11px] text-slate-500"></span><button type="button" id="crOperCfgBtn" class="hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">👷 Operarios</button><button type="button" id="crTurnosCfgBtn" class="hidden rounded-lg border border-slate-700 px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white">⚙️ Horarios de turnos</button></span></div><div id="crTurnosCfg" class="hidden mb-4"></div><div id="crOperCfg" class="hidden mb-4"></div><div id="inoferCR"></div></div>';
         eff.parentElement.insertBefore(v, eff);
         montarCfgTurnos();
+        montarOperCfg();
 
         v.addEventListener('click', e => {
           if (e.target.closest('#crTurnosCfg')) return;
@@ -448,17 +527,55 @@
           else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
           else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
+          else if ((el = g('.cr-delta'))) {
+            const i = $('crOk'); i.value = Math.max(0, (Number(i.value) || 0) + Number(el.dataset.d)); i.dataset.auto = '';
+          }
+          else if (g('#crIgual')) {
+            const l = ultimoTurnoMaq(st.maq); if (!l) return;
+            $('crOk').value = Number(l.okPcs) || 0; $('crOk').dataset.auto = '';
+            if (Number(l.scrapPcs) || Number(l.lowStartPcs)) { $('crScrap').value = Number(l.scrapPcs) || ''; $('crBaja').value = Number(l.lowStartPcs) || ''; $('crMas').open = true; }
+            if (l.operator) $('crOperario').value = l.operator;
+            v.querySelectorAll('.cr-oper').forEach(b => { const on = norm(b.dataset.n) === norm(l.operator); b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); });
+            showToast('Copiado del turno anterior: revisá y guardá');
+          }
+          else if (g('#crParadoTodo')) {
+            const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+            const dur = (((aMin($('crFin').value || t.fin) - aMin($('crIni').value || t.ini)) + 1440) % 1440) || 1440;
+            $('crOk').value = 0; $('crOk').dataset.auto = '';
+            st.parada = true; $('crParadaBox').classList.remove('hidden');
+            $('crParadasList').innerHTML = filaParada({ codigo: '', min: dur });
+            estiloParadas();
+            totalParadas();
+            const sel = v.querySelector('#crParadasList .cr-pcod'); if (sel) { sel.focus(); sel.classList.add('border-rose-400'); }
+            showToast('Elegí el motivo de la parada');
+          }
+          else if ((el = g('.cr-pchip'))) {
+            st.parada = true; $('crParadaBox').classList.remove('hidden');
+            const vacia = [...document.querySelectorAll('#crParadasList .cr-prow')].find(r => !r.querySelector('.cr-pcod').value && !minFila(r));
+            if (vacia) vacia.remove();
+            $('crParadasList').insertAdjacentHTML('beforeend', filaParada({ codigo: el.dataset.cod }));
+            estiloParadas();
+            totalParadas();
+            showToast('Tocá cuánto duró: +15 min, +30 min o +1 h');
+          }
+          else if ((el = g('.cr-oper'))) {
+            $('crOperario').value = el.dataset.n;
+            v.querySelectorAll('.cr-oper').forEach(b => { const on = b === el; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); });
+          }
           else if ((el = g('.cr-turno'))) {
             st.turno = el.dataset.t; const t = turnos().find(x => x.id === st.turno);
+            const o2 = productionOrders.find(x => x.id === st.ordId); const okI = $('crOk');
+            if (o2 && okI && okI.dataset.auto === '1') { const a2 = avance(o2); const f2 = Math.max(0, (Number(o2.qtyTarget) || 0) - a2.ok); okI.value = Math.min(sugerido(o2, t), f2 || Infinity) || ''; }
             v.querySelectorAll('.cr-turno').forEach(b => { const on = b.dataset.t === st.turno; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); b.classList.toggle('bg-slate-950', !on); b.classList.toggle('text-slate-300', !on); });
             $('crIni').value = t.ini; $('crFin').value = t.fin;
           }
           else if ((el = g('.cr-parada'))) {
             st.parada = el.dataset.p === '1';
+            if (!st.parada) $('crParadasList').innerHTML = '';
             $('crParadaBox').classList.toggle('hidden', !st.parada);
             if (st.parada && !document.querySelector('#crParadasList .cr-prow')) $('crParadasList').insertAdjacentHTML('beforeend', filaParada());
             totalParadas();
-            v.querySelectorAll('.cr-parada').forEach(b => { const on = (b.dataset.p === '1') === st.parada; const c = b.dataset.p === '1' ? 'rose' : 'emerald'; b.className = `cr-parada rounded-xl border-2 py-3 text-sm font-bold ${on ? `border-${c}-400 bg-${c}-500/15 text-white` : 'border-slate-700 bg-slate-950 text-slate-300'}`; });
+            estiloParadas();
           }
           else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
           else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
@@ -478,7 +595,7 @@
           }
           else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
         });
-        v.addEventListener('input', e => { if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
+        v.addEventListener('input', e => { if (e.target.id === 'crOk') e.target.dataset.auto = ''; if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
         v.addEventListener('change', e => { if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
         v.addEventListener('submit', e => {
           e.preventDefault();

@@ -413,6 +413,7 @@
         if (avisosCarga()) turnosSinCargar().forEach(x => L.push({ id: 'c-' + x.key, ico: '⏰', color: 'amber', txt: `Falta cargar el turno <b>${esc(x.t.nombre)}</b> de la <b>${esc(x.m)}</b> · ${fDia(x.fecha)}`, sub: 'Estaba programada en el Gantt', acciones: [['cargar', 'Cargar'], ['ignorar', 'No se trabajó']], x }));
         if (verMant()) preventivosPendientes().forEach(x => L.push({ id: 'p-' + x.p.id, ico: '🔧', color: x.falta != null && x.falta < 0 ? 'rose' : 'sky', txt: `Preventivo <b>${esc(x.p.tarea)}</b> · ${esc(x.p.maquina)}`, sub: x.falta == null ? 'Nunca registrado' : (x.falta < 0 ? `Vencido hace ${-x.falta} día${x.falta < -1 ? 's' : ''}` : (x.falta === 0 ? 'Vence hoy' : `Vence en ${x.falta} día${x.falta > 1 ? 's' : ''} (${fFecha(x.prox)})`)), acciones: [['mant', 'Ver']] }));
         if (verStock()) { try { calcStock().materiales.forEach(s => { if (s.alerta) L.push({ id: 's-' + s.nombre, ico: '📦', color: s.nivel === 'rojo' ? 'rose' : 'amber', txt: `<b>${esc(s.nombre)}</b>: ${esc(s.alerta)}`, sub: s.stock != null ? `Stock ${n0(s.stock)} kg` : '', acciones: [['stock', 'Ver']] }); }); } catch (e) { } }
+        (window.inoferAvisosExtra || []).forEach(f => { try { (f() || []).forEach(x => L.push(x)); } catch (e) { } });
         if (esAdmin()) {
           const P = porcentajes();
           if (P.max >= 70) L.push({ id: 'esp', ico: '💾', color: P.max >= 85 ? 'rose' : 'amber', txt: `Espacio de almacenamiento al <b>${n1(P.max)}%</b>`, sub: P.loc >= P.cel && P.loc >= P.prp ? 'En este equipo: conviene archivar órdenes viejas' : 'En la nube: conviene archivar órdenes viejas', acciones: [['almacen', 'Ver']] });
@@ -468,6 +469,7 @@
         else if (acc === 'mant') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('mant'); }
         else if (acc === 'stock') { $('inoferAvisosPanel').classList.add('hidden'); switchTab('stock'); }
         else if (acc === 'informe') { $('inoferAvisosPanel').classList.add('hidden'); abrirInforme(); }
+        else if (acc === 'gantt') { $('inoferAvisosPanel').classList.add('hidden'); window.inoferRevisarGantt && inoferRevisarGantt(); }
         else if (acc === 'almacen') { $('inoferAvisosPanel').classList.add('hidden'); abrirAlmacen(); }
       }
 

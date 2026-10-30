@@ -143,6 +143,56 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.inf.status === 'ok' && /Informe semanal/.test(r.inf.html), 'el informe no se armó');
       ok(r.aud.status === 'ok' && r.aud.filas.some(f => /PRUEBA-1/.test(f.detalle)), 'el registro no tiene los cambios');
     });
+    await prueba('Órdenes desde el Gantt: propone, aprueba, ajusta y borra', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const hoy = iso(new Date());
+        let wk = Object.values(ganttWeeksData).find(x => [0, 1, 2, 3, 4, 5, 6].some(d => inoferFechaDia(x, d) === hoy));
+        if (!wk) { const l = new Date(); l.setDate(l.getDate() - ((l.getDay() + 6) % 7)); wk = { code: 'SEM-PR', name: 'Prueba', startDate: iso(l), machines: {} }; ganttWeeksData['SEM-PR'] = wk; }
+        const d = [0, 1, 2, 3, 4, 5, 6].find(x => inoferFechaDia(wk, x) === hoy);
+        wk.machines['Z30'] = wk.machines['Z30'] || { aux: {}, items: [] };
+        const q = [0, 0, 0, 0, 0, 0, 0]; q[d] = 777;
+        wk.machines['Z30'].items.push({ id: 'gi-pr', part: 'GANTT-PR', dailyQty: q, stdRate: 100, totalQty: 777 });
+        saveGanttWeeks(); await w(600);
+        const p1 = inoferPropuestasGantt().filter(p => p.x && p.x.part === 'GANTT-PR').map(p => p.tipo);
+        inoferRevisarGantt(); await w(200);
+        document.querySelector('#inoferPlantaModal .gp-ok').click(); await w(800);
+        const o = productionOrders.find(o => o.part === 'GANTT-PR');
+        const creada = !!o && o.qtyTarget === 777 && !!o.gantt;
+        wk.machines['Z30'].items.find(i => i.id === 'gi-pr').dailyQty[d] = 900; saveGanttWeeks(); await w(600);
+        const p2 = inoferPropuestasGantt().filter(p => p.o === o).map(p => p.tipo + ':' + p.qty);
+        inoferRevisarGantt(); await w(200); document.querySelector('#inoferPlantaModal .gp-ok').click(); await w(500);
+        wk.machines['Z30'].items = wk.machines['Z30'].items.filter(i => i.id !== 'gi-pr'); saveGanttWeeks(); await w(600);
+        const p3 = inoferPropuestasGantt().filter(p => p.o && p.o.part === 'GANTT-PR').map(p => p.tipo);
+        inoferRevisarGantt(); await w(200); document.querySelector('#inoferPlantaModal .gp-ok').click(); await w(500);
+        return { p1, creada, p2, qty: o && o.qtyTarget, p3, borrada: !productionOrders.some(x => x.part === 'GANTT-PR') };
+      });
+      ok(r.p1.includes('nueva') && r.creada, 'no creó la orden: ' + JSON.stringify(r));
+      ok(r.p2[0] === 'ajuste:900' && r.qty === 900, 'no ajustó la cantidad: ' + JSON.stringify(r));
+      ok(r.p3[0] === 'borrar' && r.borrada, 'no la borró al sacarla del Gantt: ' + JSON.stringify(r));
+    });
+    await prueba('Turno en 3 toques con operarios y parada frecuente', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        inoferCargaRapida.abrir({ maq: '200V' }); await w(300);
+        document.getElementById('crOperCfgBtn').click(); await w(150);
+        const ta = document.querySelector('#crOperCfg .cro-txt[data-m="200V"]'); ta.value = 'Juan\nPedro'; ta.dispatchEvent(new Event('change', { bubbles: true })); await w(200);
+        const o = productionOrders.find(x => x.part === 'PRUEBA-1');
+        inoferCargaRapida.abrir({ maq: '200V', ordId: o.id }); await w(400);
+        const sugerido = Number(document.getElementById('crOk').value);
+        document.querySelector('.cr-delta[data-d="-10"]').click();
+        const chip = document.querySelector('.cr-pchip'); chip.click(); await w(100);
+        document.querySelector('#crParadasList .cr-prow:last-child .cr-padd[data-m="30"]').click();
+        [...document.querySelectorAll('.cr-oper')].find(b => b.dataset.n === 'Pedro').click();
+        const antes = o.logs.length;
+        document.getElementById('crTurnoForm').requestSubmit(); await w(600);
+        const l = o.logs[o.logs.length - 1];
+        return { sugerido, n: o.logs.length - antes, ok: l.okPcs, op: l.operator, par: (l.paradas || []).map(p => p.codigo + ':' + p.min).join(','), chip: chip.dataset.cod };
+      });
+      ok(r.sugerido > 0, 'no vino la cantidad sugerida');
+      ok(r.n === 1 && r.ok === r.sugerido - 10 && r.op === 'Pedro' && r.par === r.chip + ':30', 'el turno no quedó bien: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

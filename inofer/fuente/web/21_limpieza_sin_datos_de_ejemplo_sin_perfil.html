@@ -64,6 +64,7 @@
           const txt = k === 'detalle' && o ? `📄 OP ${esc(o.ordNumber)} · ${esc(o.part || '')}` : t;
           return `<button type="button" data-on="${k}" class="rounded-xl px-3 py-2 text-sm font-semibold transition ${on ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}">${txt}</button>`;
         }).join('');
+        try { window.inoferOrdNavExtra && window.inoferOrdNavExtra(); } catch (e) { }
         $('ordDetNav').innerHTML = DETALLE.filter(d => visible(d[0])).map(([k, t]) => `<button type="button" data-on="${k}" class="rounded-lg px-3 py-1.5 text-xs font-semibold ${s === k ? 'bg-amber-500 text-slate-950' : 'text-slate-300 hover:text-white'}">${t}</button>`).join('');
       }
       function iniciar() {

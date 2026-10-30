@@ -1,0 +1,163 @@
+  <script>
+    // ===== Órdenes desde el Gantt: al guardar el Gantt se preparan las órdenes y el administrador las aprueba =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const pad = n => String(n).padStart(2, '0');
+      const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoy = () => isoD(new Date());
+      const lunesDe = iso => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoD(d); };
+      const fF = iso => { const p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; };
+      const FULL = { '200V': 'Italpresse 200 Tn (V)', '200N': 'Italpresse 200 Tn (N)', '180': 'Italpresse 180 Tn', 'H50': 'H-50', 'Z30': 'Italpresse 30 Tn (Z-30)' };
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const puedeAprobar = () => !!sesion() && (sesion().rol === 'admin' || ((typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('ord_crear'))));
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
+      const cat = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
+      const hechas = o => (o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0);
+      const IGN_KEY = 'tablero_inyectoras_gantt_ordenes_ign_v1';
+      let ign = {}; try { ign = JSON.parse(localStorage.getItem(IGN_KEY) || '{}') || {}; } catch (e) { }
+      const guardarIgn = () => { try { localStorage.setItem(IGN_KEY, JSON.stringify(ign)); } catch (e) { } };
+
+      // lo programado en el Gantt desde una fecha: { "pieza|maq": { part, maq, qty, dias:[iso] } }
+      function programado(desde) {
+        const out = {}; const W = typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {};
+        Object.values(W).forEach(w => {
+          if (!w || !w.startDate) return;
+          Object.keys(w.machines || {}).forEach(m => ((w.machines[m] || {}).items || []).forEach(it => {
+            if (it.isSharedCompanion || (window.inoferEsPiezaR && inoferEsPiezaR(it.part))) return;
+            (it.dailyQty || []).forEach((q, d) => {
+              q = Number(q) || 0; if (!q) return;
+              const f = window.inoferFechaDia ? inoferFechaDia(w, d) : ''; if (!f || f < desde) return;
+              const k = norm(it.part) + '|' + m;
+              const x = out[k] = out[k] || { part: it.part, maq: m, qty: 0, dias: [] };
+              x.qty += q; x.dias.push(f);
+            });
+          }));
+        });
+        Object.values(out).forEach(x => x.dias.sort());
+        return out;
+      }
+      const abierta = o => o.status !== 'Completada' && !(window.inoferCargaRapida && !inoferCargaRapida.abierta(o));
+      function propuestas() {
+        const desdeNueva = lunesDe(hoy());
+        const P = programado(desdeNueva);
+        const L = [];
+        const usadas = new Set();
+        // órdenes abiertas que ya cubren una pieza+máquina del Gantt
+        Object.keys(P).forEach(k => {
+          const x = P[k];
+          const o = ordenes().find(o => !usadas.has(o.id) && abierta(o) && norm(o.part) === norm(x.part) && maqDe(o) === x.maq && (!o.gantt || o.gantt.key === k));
+          if (!o) return;
+          usadas.add(o.id);
+          if (!o.gantt) { L.push({ tipo: 'vincular', k, o, x, qty: Math.max(Number(o.qtyTarget) || 0, x.qty) }); return; }
+          const desde = o.gantt.desde || desdeNueva;
+          const prog = (programado(desde)[k] || {}).qty || 0;
+          if (prog && prog !== Number(o.qtyTarget)) L.push({ tipo: 'ajuste', k, o, x, qty: prog });
+        });
+        Object.keys(P).forEach(k => {
+          const x = P[k];
+          if (ordenes().some(o => usadas.has(o.id) && o.gantt && o.gantt.key === k) || L.some(p => p.k === k)) return;
+          L.push({ tipo: 'nueva', k, x, qty: x.qty });
+        });
+        // órdenes del Gantt que ya no están programadas
+        ordenes().forEach(o => {
+          if (!o.gantt || !abierta(o) || usadas.has(o.id) || P[o.gantt.key]) return;
+          const otra = L.find(p => p.tipo === 'nueva' && norm(p.x.part) === norm(o.part) && !hechas(o));
+          if (otra) { otra.tipo = 'mover'; otra.o = o; return; }
+          L.push({ tipo: hechas(o) ? 'aviso' : 'borrar', k: o.gantt.key, o });
+        });
+        L.forEach(p => { p.firma = [p.tipo, p.k, p.qty || '', p.o ? p.o.id : ''].join('|'); });
+        return L.filter(p => !ign[p.firma]);
+      }
+      window.inoferPropuestasGantt = propuestas;
+      function siguienteNumero() {
+        const n = ordenes().map(o => parseInt(String(o.ordNumber).replace(/\D/g, ''), 10) || 0);
+        return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0');
+      }
+      function crear(p) {
+        const c = cat(p.x.part) || {};
+        const d = hoy(), rate = Number(c.unitsPerHour) || 180, w = Number(c.weightWithSprueKg) || 0;
+        return {
+          id: 'ord-' + Date.now() + '-' + Math.floor(Math.random() * 1000), ordNumber: siguienteNumero(), date: d, machine: FULL[p.x.maq] || p.x.maq,
+          mold: c.mold || '', part: c.part || p.x.part, cavities: Number(c.cavities) || 1, unitsPerHour: rate,
+          material: c.material || (['200V', '200N'].includes(p.x.maq) ? 'ALSI' : 'ZAMAC'), weightWithSprueKg: w, weightOkGrs: Number(c.weightOkGrs) || 0,
+          qtyTarget: p.qty, hoursToUse: Number((p.qty / rate).toFixed(2)), kgTotal: Number((p.qty * w).toFixed(1)), status: 'En Proceso', logs: [],
+          back: { date: d, moldVersion: c.mold || '', dieCut: c.dieCut || '', machiningDev: c.machiningDev || '', endDate: '', endTime: '', unmountDate: '', unmountStart: '', unmountEnd: '', upSupervisor: '', upStaff: '', downSupervisor: '', downStaff: '', daterExists: 'SI', daterPos: 'LADO FIJO', daterYear: d.slice(0, 4), daterMonth: d.slice(5, 7), eyeboltExists: 'SI', coolClamps: '', coolBridges: '', coolHoses: '', comments: '' },
+          gantt: { key: p.k, desde: lunesDe(hoy()) },
+          creadaPor: (typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '') + ' · desde el Gantt'
+        };
+      }
+      function texto(p) {
+        const dias = p.x && p.x.dias && p.x.dias.length ? ` · ${fF(p.x.dias[0])}${p.x.dias.length > 1 ? ' al ' + fF(p.x.dias[p.x.dias.length - 1]) : ''}` : '';
+        if (p.tipo === 'nueva') return { ico: '🆕', t: `Nueva orden: <b>${esc(p.x.part)}</b> en la <b>${esc(p.x.maq)}</b> · ${n0(p.qty)} u${dias}` };
+        if (p.tipo === 'ajuste') return { ico: '✏️', t: `OP ${esc(p.o.ordNumber)} · <b>${esc(p.o.part)}</b> (${esc(p.x.maq)}): cantidad ${n0(p.o.qtyTarget)} → <b>${n0(p.qty)}</b> u` };
+        if (p.tipo === 'vincular') return { ico: '🔗', t: `OP ${esc(p.o.ordNumber)} · <b>${esc(p.o.part)}</b> (${esc(p.x.maq)}) ya existe: se vincula al Gantt${p.qty !== Number(p.o.qtyTarget) ? ` y pasa a ${n0(p.qty)} u` : ''}` };
+        if (p.tipo === 'mover') return { ico: '↔️', t: `OP ${esc(p.o.ordNumber)} · <b>${esc(p.o.part)}</b>: pasa de la ${esc(maqDe(p.o))} a la <b>${esc(p.x.maq)}</b> · ${n0(p.qty)} u` };
+        if (p.tipo === 'borrar') return { ico: '🗑️', t: `OP ${esc(p.o.ordNumber)} · <b>${esc(p.o.part)}</b> (${esc(maqDe(p.o))}) ya no está en el Gantt y no tiene producción: se borra` };
+        return { ico: '⚠️', t: `OP ${esc(p.o.ordNumber)} · <b>${esc(p.o.part)}</b> (${esc(maqDe(p.o))}) salió del Gantt pero ya tiene ${n0(hechas(p.o))} piezas hechas. Si la aprobás, queda como Completada.` };
+      }
+      function aplicar(lista) {
+        let n = 0;
+        lista.forEach(p => {
+          if (p.tipo === 'nueva') { productionOrders.unshift(crear(p)); n++; }
+          else if (p.tipo === 'ajuste' || p.tipo === 'vincular') { p.o.qtyTarget = p.qty; p.o.gantt = p.o.gantt || { key: p.k, desde: lunesDe(hoy()) }; const r = Number(p.o.unitsPerHour) || 0; if (r) p.o.hoursToUse = Number((p.qty / r).toFixed(2)); n++; }
+          else if (p.tipo === 'mover') { p.o.machine = FULL[p.x.maq] || p.x.maq; p.o.qtyTarget = p.qty; p.o.gantt = { key: p.k, desde: p.o.gantt ? p.o.gantt.desde : lunesDe(hoy()) }; n++; }
+          else if (p.tipo === 'borrar') { productionOrders = productionOrders.filter(o => o !== p.o); n++; }
+          else if (p.tipo === 'aviso') { p.o.status = 'Completada'; n++; }
+        });
+        if (n) { saveProductionOrders(); try { renderProductionOrdersView(); } catch (e) { } }
+        return n;
+      }
+      function revisar() {
+        const L = propuestas();
+        const w0 = $('inoferPlantaModal'); if (w0) w0.remove();
+        const w = document.createElement('div'); w.id = 'inoferPlantaModal';
+        w.className = 'fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full max-w-3xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+          <div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">📅 Órdenes según el Gantt</h3><button type="button" class="gp-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕ Cerrar</button></div>
+          ${L.length ? `<p class="text-xs text-slate-400">INOFER comparó el Gantt (desde esta semana) con las órdenes. Destildá lo que no quieras y tocá <b>Aprobar</b>. Lo que descartes no se vuelve a proponer hasta que cambie el Gantt.</p>
+          <div class="space-y-1.5">${L.map((p, i) => { const t = texto(p); return `<label class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2.5 text-xs text-slate-200 hover:border-amber-400/60"><input type="checkbox" class="gp-chk mt-0.5 h-4 w-4 accent-amber-500" data-i="${i}" ${p.tipo === 'aviso' ? '' : 'checked'}><span class="text-base leading-none">${t.ico}</span><span class="flex-1">${t.t}</span></label>`; }).join('')}</div>
+          <div class="flex flex-wrap justify-end gap-2"><button type="button" class="gp-desc rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">Descartar las destildadas</button><button type="button" class="gp-ok rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950">✓ Aprobar seleccionadas</button></div>`
+          : '<div class="py-6 text-center text-sm text-slate-300">✅ Las órdenes están al día con el Gantt.</div>'}</div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => {
+          if (e.target === w || e.target.closest('.gp-cerrar')) { w.remove(); return; }
+          const sel = () => [...w.querySelectorAll('.gp-chk')].map(c => ({ c, p: L[Number(c.dataset.i)] }));
+          if (e.target.closest('.gp-ok')) {
+            const n = aplicar(sel().filter(x => x.c.checked).map(x => x.p));
+            w.remove(); pintar(); showToast(n ? `✓ ${n} cambio${n > 1 ? 's' : ''} aplicado${n > 1 ? 's' : ''} en las órdenes` : 'No se aplicó nada');
+          }
+          if (e.target.closest('.gp-desc')) {
+            sel().filter(x => !x.c.checked).forEach(x => { ign[x.p.firma] = Date.now(); }); guardarIgn();
+            w.remove(); pintar(); showToast('Listo, no se vuelven a proponer');
+          }
+        });
+      }
+      window.inoferRevisarGantt = revisar;
+      window.inoferOrdNavExtra = () => pintar();
+      // botón en la barra de Órdenes y aviso en la campana
+      let cuenta = 0;
+      function pintar() {
+        cuenta = puedeAprobar() ? propuestas().length : 0;
+        const nav = $('ordNav'); if (!nav) return;
+        let b = $('ordGanttBtn');
+        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'ordGanttBtn'; b.className = 'ml-auto rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20'; b.addEventListener('click', revisar); }
+        if (b.parentElement !== nav) nav.appendChild(b);
+        b.classList.toggle('hidden', !puedeAprobar());
+        b.innerHTML = `📅 Del Gantt${cuenta ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[11px] font-black text-white">${cuenta}</span>` : ''}`;
+      }
+      window.inoferAvisosExtra = (window.inoferAvisosExtra || []).concat([() => (cuenta ? [{ id: 'gantt-ord', ico: '📅', color: 'emerald', txt: `Hay <b>${cuenta}</b> cambio${cuenta > 1 ? 's' : ''} de órdenes según el Gantt para revisar`, sub: 'Órdenes nuevas, cantidades o piezas que salieron', acciones: [['gantt', 'Revisar']] }] : [])]);
+      function iniciar() {
+        if (typeof window.saveGanttWeeks === 'function' && !window.saveGanttWeeks.__ord) {
+          const sg = window.saveGanttWeeks;
+          const f = function () { const r = sg.apply(this, arguments); setTimeout(() => { const antes = cuenta; pintar(); if (cuenta > antes && puedeAprobar()) showToast(`📅 El Gantt cambió: hay ${cuenta} cambio${cuenta > 1 ? 's' : ''} de órdenes para revisar (Órdenes → Del Gantt)`); }, 300); return r; };
+          f.__ord = true; window.saveGanttWeeks = f;
+        }
+        pintar(); setInterval(pintar, 5000);
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 200)); else setTimeout(iniciar, 200);
+    })();
+  </script>
