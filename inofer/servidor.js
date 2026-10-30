@@ -43,6 +43,33 @@ function fechaTexto_(v) {
   if (m2) return m2[3] + '-' + ('0' + m2[2]).slice(-2) + '-' + ('0' + m2[1]).slice(-2);
   return s;
 }
+// Fecha de una celda: si Sheets la guardó como fecha, se usa lo que MUESTRA la hoja (el Date que da Apps Script
+// puede venir corrido un día cuando la zona del script y la de la planilla no coinciden).
+function fechaCelda_(v, mostrado) {
+  if (v instanceof Date) {
+    const t = fechaTexto_(String(mostrado || '').trim());
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    return fechaTexto_(v);
+  }
+  return fechaTexto_(v);
+}
+// Escribe una fila de partes con la fecha (col B) como texto, para que Sheets no la convierta
+function filaParteTexto_(sheet, fila, vals) {
+  sheet.getRange(fila, 2, 1, 1).setNumberFormat('@');
+  sheet.getRange(fila, 1, 1, vals.length).setValues([vals]);
+}
+function agregarFilaParte_(sheet, vals) { filaParteTexto_(sheet, sheet.getLastRow() + 1, vals); }
+// Arregla las fechas que hayan quedado como fecha de Sheets: las pasa a texto con el día que muestra la hoja
+function repararFechasPartes_(sheet, rows, mostr) {
+  try {
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][1] instanceof Date) {
+        const t = fechaCelda_(rows[i][1], mostr[i] && mostr[i][0]);
+        const c = sheet.getRange(i + 1, 2); c.setNumberFormat('@'); c.setValue(t);
+      }
+    }
+  } catch (e) {}
+}
 // Una sola vez: pasa la columna de fechas a texto plano para que no se vuelva a convertir
 function fechasComoTexto_(sheet) {
   const props = PropertiesService.getScriptProperties();
@@ -120,13 +147,15 @@ function obtenerRegistros() {
   const sheet = getDbSheet();
   const rows = sheet.getDataRange().getValues();
   if (rows.length <= 1) return [];
+  const mostr = sheet.getRange(1, 2, rows.length, 1).getDisplayValues();
+  if (rows.some(function (r, i) { return i > 0 && r[1] instanceof Date; })) repararFechasPartes_(sheet, rows, mostr);
   const list = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r[0]) continue;
     list.unshift({
       id: String(r[0]),
-      date: fechaTexto_(r[1]),
+      date: fechaCelda_(r[1], mostr[i] && mostr[i][0]),
       machine: String(r[2]),
       shift: String(r[3]),
       available: Number(r[4]) || 0,
@@ -172,7 +201,7 @@ function guardarRegistro(entry) {
   try {
     const sheet = getDbSheet();
     const ahora = new Date().toISOString();
-    sheet.appendRow([
+    agregarFilaParte_(sheet, [
       entry.id || ('rec-' + new Date().getTime()),
       fechaTexto_(entry.date), entry.machine, entry.shift,
       Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
@@ -197,7 +226,7 @@ function editarRegistro(entry) {
     const rows = sheet.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][0]) === String(entry.id)) {
-        sheet.getRange(i + 1, 1, 1, 18).setValues([[
+        filaParteTexto_(sheet, i + 1, [
           entry.id, fechaTexto_(entry.date), entry.machine, entry.shift,
           Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
           Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
@@ -205,14 +234,14 @@ function editarRegistro(entry) {
           Number(entry.falta_material) || 0, Number(entry.falta_operario) || 0,
           Number(entry.otros) || 0, new Date().toISOString(),
           String(rows[i][14] || entry.cargadoPor || ''), USUARIO_ACTUAL || entry.modificadoPor || '', String(rows[i][16] || ''), paradasJson_(entry)
-        ]]);
+        ]);
         found = true;
         break;
       }
     }
     if (!found) {
       const ahora = new Date().toISOString();
-      sheet.appendRow([
+      agregarFilaParte_(sheet, [
         entry.id, fechaTexto_(entry.date), entry.machine, entry.shift,
         Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
         Number(entry.setup_molde) || 0, Number(entry.puesta_punto) || 0,
@@ -260,7 +289,7 @@ function reemplazarRegistros(entries) {
       'falta_operario', 'otros', 'updated_at', 'cargado_por', 'modificado_por', 'cargado_at', 'paradas'
     ]);
     (entries || []).slice().reverse().forEach(entry => {
-      sheet.appendRow([
+      agregarFilaParte_(sheet, [
         entry.id || ('rec-' + new Date().getTime()),
         fechaTexto_(entry.date), entry.machine, entry.shift,
         Number(entry.available) || 0, Number(entry.parada_maquina) || 0,
@@ -1725,6 +1754,7 @@ function fusionarRegistros_(entries, borrados) {
   try {
     const sheet = getDbSheet();
     const rows = sheet.getDataRange().getValues();
+    const mostrF = rows.length ? sheet.getRange(1, 2, rows.length, 1).getDisplayValues() : [];
     const fila = {};
     for (let i = 1; i < rows.length; i++) if (rows[i][0] !== '' && rows[i][0] != null) fila[String(rows[i][0])] = i + 1;
     const fBorrar = [];
@@ -1740,11 +1770,11 @@ function fusionarRegistros_(entries, borrados) {
         Number(entry.otros) || 0, entry.actualizado || ahora, entry.cargadoPor || USUARIO_ACTUAL || '', entry.modificadoPor || '', entry.cargadoAt || ahora, paradasJson_(entry)];
       if (f) {
         const v = rows[f - 1];
-        const igual = vals.every(function (x, j) { return j === 13 || String(x) === String(v[j] == null ? '' : (j === 1 ? fechaTexto_(v[j]) : v[j])); });
-        if (!igual) sheet.getRange(f, 1, 1, 18).setValues([vals]);
+        const igual = vals.every(function (x, j) { return j === 13 || String(x) === String(v[j] == null ? '' : (j === 1 ? fechaCelda_(v[j], mostrF[f - 1] && mostrF[f - 1][0]) : v[j])); });
+        if (!igual) filaParteTexto_(sheet, f, vals);
       } else nuevos.push(vals);
     });
-    if (nuevos.length) sheet.getRange(sheet.getLastRow() + 1, 1, nuevos.length, 18).setValues(nuevos.slice().reverse());
+    if (nuevos.length) { const f0 = sheet.getLastRow() + 1; sheet.getRange(f0, 2, nuevos.length, 1).setNumberFormat('@'); sheet.getRange(f0, 1, nuevos.length, 18).setValues(nuevos.slice().reverse()); }
     fBorrar.sort(function (a, b) { return b - a; }).forEach(function (f) { sheet.deleteRow(f); });
     marcarVersion_('records');
     return obtenerRegistros();

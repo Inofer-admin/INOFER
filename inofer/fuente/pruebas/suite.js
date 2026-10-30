@@ -143,6 +143,20 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.inf.status === 'ok' && /Informe semanal/.test(r.inf.html), 'el informe no se armó');
       ok(r.aud.status === 'ok' && r.aud.filas.some(f => /PRUEBA-1/.test(f.detalle)), 'el registro no tiene los cambios');
     });
+    await prueba('Editar la fecha de un parte no la corre un día', async () => {
+      const r = await A.evaluate(async () => {
+        const t = inoferAuthToken(), e = { id: 'rec-fecha', date: '2026-10-25', machine: 'H-50', shift: 'Mañana', available: 8 };
+        await inoferCloudPost({ action: 'add', token: t, entry: e });
+        const ed = await inoferCloudPost({ action: 'edit', token: t, entry: Object.assign({}, e, { date: '2026-10-27' }) });
+        const rep = await inoferCloudPost({ action: 'replace', token: t, records: [Object.assign({}, e, { id: 'rec-fecha2', date: '2026-10-28' })], borrados: [] });
+        const n = await (await fetch(cloudApiUrl + '?action=json&t=' + Date.now() + inoferTokenParam())).json();
+        const L = n.records || n.registros || [];
+        const f = id => (L.find(x => x.id === id) || {}).date;
+        await inoferCloudPost({ action: 'replace', token: t, records: [], borrados: ['rec-fecha', 'rec-fecha2'] });
+        return { a: f('rec-fecha'), b: f('rec-fecha2'), ed: ed.status || ed.error };
+      });
+      ok(r.a === '2026-10-27' && r.b === '2026-10-28', 'la fecha cambió: ' + JSON.stringify(r));
+    });
     await prueba('Informe por mail: día, hora y remitente configurables', async () => {
       const r = await A.evaluate(async () => {
         const w = ms => new Promise(r => setTimeout(r, ms));
