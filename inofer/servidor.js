@@ -1528,10 +1528,13 @@ function enviarInformeSemanal(forzar, opc) {
     }
     props.deleteProperty('INFORME_ERROR');
   } catch (e) {
-    props.setProperty('INFORME_ERROR', String(e.message || e).slice(0, 300));
+    const m0 = String(e.message || e);
+    const sinPermiso = alias && /mail\.google\.com|gmail\.|permiss|permiso/i.test(m0);
+    const m = sinPermiso ? 'Para mandar desde ' + alias + ' falta dar permiso de Gmail: en Apps Script agregá "https://mail.google.com/" en oauthScopes de appsscript.json y ejecutá activarAutomaticos. Mientras tanto sale desde la cuenta dueña de la planilla. (O borrá el "Enviar desde" en INOFER.)' : m0;
+    props.setProperty('INFORME_ERROR', m.slice(0, 400));
     if (!alias) throw e;
     MailApp.sendEmail({ to: emails.join(','), subject: asunto, htmlBody: html, body: texto, name: 'INOFER' });
-    como = ' (sin el alias: ' + e.message + ')';
+    como = sinPermiso ? ' (desde la cuenta dueña: falta el permiso de Gmail para el alias)' : ' (sin el alias: ' + m0 + ')';
   }
   // el envío a mano no cuenta como el automático (el programado sale igual en su día y hora)
   if (!opc.manual) props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
