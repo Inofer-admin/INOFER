@@ -55,6 +55,9 @@ const ctx = {
     getUuid: () => crypto.randomUUID(), sleep() {}, formatDate: d => d.toISOString().slice(0, 10)
   },
   Session: { getScriptTimeZone: () => 'America/Buenos_Aires' },
+  MailApp: { sendEmail: o => { (globalThis.__mails = globalThis.__mails || []).push(o); }, getRemainingDailyQuota: () => 100 },
+  GmailApp: { getAliases: () => [], sendEmail: (to, a, b, o) => { (globalThis.__mails = globalThis.__mails || []).push(Object.assign({ to, subject: a }, o)); } },
+  ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create: () => ({ getUniqueId: () => 'x' }) }) }) }) },
   ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ s, setMimeType() { return this; } }) },
   HtmlService: { createHtmlOutput: s => ({ s }) },
   Logger: { log: (...a) => console.log('[GAS]', ...a) },

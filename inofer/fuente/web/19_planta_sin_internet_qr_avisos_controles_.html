@@ -800,9 +800,10 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
             <button type="button" id="infPrint" class="${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200">🖨️ Imprimir / PDF</button>
             <button type="button" id="infWa" class="${BTN} border-green-500/50 bg-green-500/15 text-green-200">📲 WhatsApp</button>
             <button type="button" id="infCopy" class="${BTN} border-slate-600 text-slate-200">📋 Copiar resumen</button>
-            ${esAdmin() ? `<button type="button" id="infMailCfg" class="${BTN} ml-auto border-cyan-500/50 text-cyan-200">✉️ Enviar por mail</button>` : ''}</div>
+            ${esAdmin() ? `<button type="button" id="infEnviar" class="${BTN} ml-auto border-cyan-400 bg-cyan-500 text-slate-950">📤 Enviar ahora por mail</button><button type="button" id="infMailCfg" class="${BTN} border-cyan-500/50 text-cyan-200">⚙️ Envío automático</button>` : ''}</div>
           <div id="infMailBox" class="hidden rounded-xl border border-cyan-500/30 bg-slate-950/70 p-3 space-y-2 text-xs text-slate-300">
             <div class="font-black text-cyan-300">Envío automático por mail</div>
+            <div class="text-[11px] text-slate-400">Además del envío programado, podés mandarlo cuando quieras con <b>📤 Enviar ahora por mail</b> (manda la semana elegida arriba).</div>
             <div class="flex flex-wrap items-end gap-2"><label>Día<select id="infDia" class="inofer-planta-form ${INP} mt-1 block">${DIAS_INF.map((d, i) => `<option value="${i}" ${hor.dia === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
               <label>Hora<select id="infHora" class="inofer-planta-form ${INP} mt-1 block">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${hor.hora === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select></label>
               <span class="pb-2 text-[11px] text-slate-400">Manda el informe de la semana anterior (lunes a domingo). Sale dentro de esa hora.</span></div>
@@ -830,6 +831,16 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           if (id === 'infPrint') { try { const f = w.querySelector('#infFrame'); f.contentWindow.focus(); f.contentWindow.print(); } catch (er) { toast('No se pudo imprimir'); } }
           if (id === 'infWa' && actual) window.open('https://wa.me/?text=' + encodeURIComponent(actual.texto), '_blank');
           if (id === 'infCopy' && actual) { try { await navigator.clipboard.writeText(actual.texto); toast('Resumen copiado'); } catch (er) { toast('No se pudo copiar'); } }
+          if (id === 'infEnviar') {
+            const c = D('informes'); const emails = (c.emails || []).filter(x => /@/.test(x));
+            if (!emails.length) { toast('Primero cargá a qué mails se manda (⚙️ Envío automático → Mails)'); w.querySelector('#infMailBox').classList.remove('hidden'); const i = w.querySelector('#infEmails'); if (i) i.focus(); return; }
+            const l = w.querySelector('#infSem').value;
+            if (!confirm(`¿Enviar ahora el informe de la semana del ${fFecha(l)} al ${fFecha(masDias(l, 6))}?\n\nVa a: ${emails.join(', ')}`)) return;
+            const b = w.querySelector('#infEnviar'); b.disabled = true; const t0 = b.textContent; b.textContent = '⏳ Enviando…';
+            try { const r = await api({ action: 'informeEnviarAhora', semana: l }); toast('✓ ' + (r.mensaje || 'Informe enviado')); }
+            catch (er) { toast('⚠️ ' + er.message); }
+            finally { b.disabled = false; b.textContent = t0; }
+          }
           if (id === 'infMailCfg') {
             const box = w.querySelector('#infMailBox'); box.classList.toggle('hidden');
             if (!box.classList.contains('hidden')) api({ action: 'respaldoInfo' }).then(r => {

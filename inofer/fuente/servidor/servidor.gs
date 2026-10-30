@@ -1453,6 +1453,18 @@ function armarInforme_(u, lunes) {
   return { status: 'ok', semana: lunes, html: htmlInforme_(R, P, verPrecios, { generado: generado, fueraServicio: fueraServicio, stockBajo: stockBajo }), texto: textoInforme_(R, P, verPrecios), resumen: { ok: R.ok, scrapPct: R.scrapPct, util: R.util, facturado: verPrecios ? R.facturado : null, programado: R.programado } };
 }
 function accionInforme(u, body) {
+  if (body.action === 'informeEnviarAhora') {
+    if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede enviar el informe por mail.' };
+    const sem = /^\d{4}-\d{2}-\d{2}$/.test(String(body.semana || '')) ? lunesDe_(String(body.semana)) : '';
+    try {
+      const r = enviarInformeSemanal(true, { semana: sem, manual: true, por: u });
+      return { status: /^Informe enviado/.test(r) ? 'ok' : 'error', mensaje: r, error: /^Informe enviado/.test(r) ? '' : r };
+    } catch (e) {
+      const m = String(e.message || e);
+      const permiso = /permiso|permission|authoriz|autoriz|scope/i.test(m);
+      return { status: 'error', error: permiso ? 'Google no dejó mandar el mail desde INOFER: falta autorizar el envío. En Apps Script ejecutá una vez "activarAutomaticos" y aceptá los permisos. (' + m + ')' : 'No se pudo enviar: ' + m };
+    }
+  }
   if (body.action !== 'informeSemanal') return null;
   if (!(u.rol === 'admin' || puede(u, 'indicadores', 'view') || puede(u, 'ordenes', 'view'))) return { status: 'error', error: 'Tu usuario no puede ver el informe.' };
   const hoy = isoDia_(new Date());
@@ -1478,8 +1490,9 @@ function horarioInforme_(cfg) {
   const hora = cfg && cfg.hora != null && cfg.hora !== '' ? Math.max(0, Math.min(23, Number(cfg.hora))) : 7;
   return { dia: dia, hora: hora };
 }
-function enviarInformeSemanal(forzar) {
-  ajustarDisparadores_();
+function enviarInformeSemanal(forzar, opc) {
+  opc = opc || {};
+  if (!opc.manual) ajustarDisparadores_();
   const mods = obtenerEstadoModulos();
   const cfg = mods.informes || {};
   const props = PropertiesService.getScriptProperties();
@@ -1493,9 +1506,10 @@ function enviarInformeSemanal(forzar) {
     if (dow !== h.dia || hora < h.hora) return 'Todavía no es el día y la hora elegidos.';
   }
   const hoy = isoDia_(ahora);
-  const lunes = sumarDias_(lunesDe_(hoy), -7);
+  const lunes = opc.semana || sumarDias_(lunesDe_(hoy), -7);
   if (!forzar && props.getProperty('INFORME_ENVIADO_' + lunes)) return 'El informe de esa semana ya se envió.';
   const admin = { rol: 'admin', usuario: 'sistema', nombre: 'Informe automático', permisos: {} };
+  const quien = opc.por ? (opc.por.nombre || opc.por.usuario) : '';
   const inf = armarInforme_(admin, lunes);
   const p = lunes.split('-');
   const asunto = 'INOFER · Informe semanal ' + p[2] + '/' + p[1] + '/' + p[0];
@@ -1519,9 +1533,10 @@ function enviarInformeSemanal(forzar) {
     MailApp.sendEmail({ to: emails.join(','), subject: asunto, htmlBody: html, body: texto, name: 'INOFER' });
     como = ' (sin el alias: ' + e.message + ')';
   }
-  props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
-  props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como }));
-  auditar_(admin, 'mail', 'informes', ['Informe semanal enviado a ' + emails.join(', ') + como]);
+  // el envío a mano no cuenta como el automático (el programado sale igual en su día y hora)
+  if (!opc.manual) props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
+  props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como + (opc.manual ? ' · enviado a mano' + (quien ? ' por ' + quien : '') : ''), semana: lunes }));
+  auditar_(opc.por || admin, 'mail', 'informes', ['Informe semanal (semana del ' + lunes.split('-').reverse().join('/') + ') enviado' + (opc.manual ? ' a mano' : '') + ' a ' + emails.join(', ') + como]);
   return 'Informe enviado a ' + emails.join(', ') + como;
 }
 

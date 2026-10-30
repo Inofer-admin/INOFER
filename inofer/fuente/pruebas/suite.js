@@ -170,6 +170,14 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const c = inoferModLocal('informes') || {};
         return { antes, dia: c.dia, hora: c.hora, alias: c.alias, emails: c.emails };
       });
+      const env = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const b = document.querySelector('#infEnviar'); if (!b) return { boton: false };
+        b.click(); await w(2500);
+        const t = document.getElementById('toastNotification');
+        return { boton: true, toast: t ? t.textContent : '', ult: (await inoferCloudPost({ action: 'respaldoInfo', token: inoferAuthToken() })).informe };
+      });
+      ok(env.boton && /Informe enviado a a@b\.com/.test(env.toast) && env.ult && /a mano/.test(env.ult.como), 'no envió el informe en el momento: ' + JSON.stringify(env));
       ok(r.antes.dia === '1' && r.antes.hora === '7', 'el horario por defecto no es lunes 7: ' + JSON.stringify(r.antes));
       ok(r.dia === 5 && r.hora === 15 && r.alias === 'inofer.informes@gmail.com' && r.emails.join() === 'a@b.com', 'no guardó el horario: ' + JSON.stringify(r));
       await A.evaluate(() => { const m = document.getElementById('inoferPlantaModal'); if (m) m.remove(); });
