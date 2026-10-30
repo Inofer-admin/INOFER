@@ -2,7 +2,7 @@
     // ===== Guardado sin pisarse: cada equipo recuerda qué versión de la nube conocía ("base") =====
     (function () {
       const KEY = 'tablero_inyectoras_base_v1';
-      const CLAVES = ['orders', 'catalog', 'gantt'];
+      const CLAVES = ['orders', 'catalog', 'gantt', 'setup', 'mantenimiento'];
       const hashTxt = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + '.' + s.length.toString(36); };
       const hashObj = o => hashTxt(JSON.stringify(o === undefined ? null : o));
       let base = {};
@@ -10,6 +10,8 @@
       const guardar = () => { try { localStorage.setItem(KEY, JSON.stringify(base)); } catch (e) { } };
       function calcular(k, d) {
         const out = {};
+        if (k === 'setup') { Object.keys((d && d.maquinas) || {}).forEach(m => { out[m] = { h: hashObj(d.maquinas[m]) }; }); return out; }
+        if (k === 'mantenimiento') { ['planes', 'trabajos', 'roturas'].forEach(x => { out[x] = {}; ((d && d[x]) || []).forEach(o => { if (o && o.id != null) out[x][String(o.id)] = { h: hashObj(o) }; }); }); return out; }
         if (k === 'gantt') {
           Object.keys(d || {}).forEach(w => { const m = {}; Object.keys((d[w] && d[w].machines) || {}).forEach(x => { m[x] = hashObj(d[w].machines[x]); }); out[w] = { h: hashObj(d[w]), m }; });
         } else {
@@ -19,7 +21,7 @@
       }
       function recordar(k, d) { if (!CLAVES.includes(k) || d == null) return; base[k] = calcular(k, d); guardar(); }
       window.inoferBaseDe = k => (CLAVES.includes(k) && base[k] ? base[k] : undefined);
-      const local = k => k === 'orders' ? (typeof productionOrders !== 'undefined' ? productionOrders : null) : (k === 'catalog' ? (typeof partsCatalog !== 'undefined' ? partsCatalog : null) : (k === 'gantt' ? (typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : null) : null));
+      const local = k => k === 'setup' ? (window.inoferSetupCfg ? inoferSetupCfg() : null) : k === 'mantenimiento' ? (window.inoferModLocal ? inoferModLocal('mantenimiento') : null) : k === 'orders' ? (typeof productionOrders !== 'undefined' ? productionOrders : null) : (k === 'catalog' ? (typeof partsCatalog !== 'undefined' ? partsCatalog : null) : (k === 'gantt' ? (typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : null) : null));
       // después de guardar, el equipo se queda con lo que quedó en la nube (incluye lo que cargaron otros)
       window.inoferAdoptar = function (k, enviado, d) {
         if (!d || d.status !== 'ok' || !d.modules || d.modules[k] === undefined || !CLAVES.includes(k)) return;

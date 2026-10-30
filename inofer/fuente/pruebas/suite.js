@@ -9,7 +9,7 @@ const PUERTO_NUBE = 18900 + Math.floor(Math.random() * 500), PUERTO_WEB = PUERTO
 const NUBE = `http://127.0.0.1:${PUERTO_NUBE}/exec`;
 const resultados = [];
 const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'inofer-pruebas-'));
-fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal };\n');
+fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal, copiaDeSeguridad: copiaDeSeguridad };\n');
 const html = fs.readFileSync(path.join(FUENTE, 'res', 'web', 'index.html'), 'utf8');
 
 function web() {
@@ -192,6 +192,56 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       });
       ok(r.sugerido > 0, 'no vino la cantidad sugerida');
       ok(r.n === 1 && r.ok === r.sugerido - 10 && r.op === 'Pedro' && r.par === r.chip + ':30', 'el turno no quedó bien: ' + JSON.stringify(r));
+    });
+    await prueba('Pantalla Hoy y OEE', async () => {
+      const r = await A.evaluate(async () => {
+        switchTab('hoy'); await new Promise(r => setTimeout(r, 400));
+        const t = document.getElementById('viewHoy').innerText;
+        const reg = [{ fromOrder: true, ordId: 'x', part: 'NOEXISTE', machine: 'H-50', available: 8, okPcs: 900, scrapPcs: 100, parada_maquina: 2 }];
+        const o = inoferOEE(reg);
+        switchTab('dashboard'); await new Promise(r => setTimeout(r, 400));
+        return { hoy: /Hoy ·/.test(t) && /Producido hoy/i.test(t) && /200V/.test(t), D: o.D, C: o.C, tablero: !!document.getElementById('oeeTablero') };
+      });
+      ok(r.hoy, 'la pantalla Hoy no se dibujó');
+      ok(Math.abs(r.D - 0.75) < 1e-9 && Math.abs(r.C - 0.9) < 1e-9, 'el OEE calcula mal: ' + JSON.stringify(r));
+      ok(r.tablero, 'falta el OEE en el tablero');
+    });
+    await prueba('Avisar rotura con foto: para la máquina, avisa y se resuelve', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const c = document.createElement('canvas'); c.width = 40; c.height = 30; c.getContext('2d').fillRect(0, 0, 20, 20);
+        const foto = c.toDataURL('image/jpeg', 0.6);
+        const d = await inoferCloudPost({ action: 'avisarRotura', token: inoferAuthToken(), maquina: 'H50', motivo: '4-Rotura hidráulica', descripcion: 'pierde aceite', parada: true, foto });
+        applyCloudModules(d.modules); await w(300);
+        const parada = !inoferMaquinaEstado('H50').activa;
+        const rot = (d.modules.mantenimiento.roturas || []).find(x => x.maquina === 'H50' && x.estado === 'abierta');
+        const f = await inoferCloudPost({ action: 'fotoLeer', token: inoferAuthToken(), id: rot.fotoId });
+        const sol = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() });
+        switchTab('mant'); await w(500);
+        const seccion = !!document.getElementById('mantRoturas') && /pierde aceite/.test(document.getElementById('mantRoturas').innerText);
+        const d2 = await inoferCloudPost({ action: 'roturaResolver', token: inoferAuthToken(), id: rot.id, nota: 'cambio de manguera', habilitar: true });
+        applyCloudModules(d2.modules); await w(25000);
+        return { parada, foto: (f.foto || '').startsWith('data:image/jpeg'), sol: (sol.solicitudes || []).some(s => /Rotura en la H50/.test(s.titulo)), seccion, habilitada: inoferMaquinaEstado('H50').activa, trabajo: (d2.modules.mantenimiento.trabajos || []).some(t => t.roturaId === rot.id) };
+      });
+      ok(r.parada && r.foto && r.sol, 'el aviso no hizo todo: ' + JSON.stringify(r));
+      ok(r.seccion, 'no aparece en Mantenimiento');
+      ok(r.habilitada && r.trabajo, 'al resolver no habilitó la máquina o no registró el trabajo: ' + JSON.stringify(r));
+    });
+    await prueba('Modo tablet "Mi máquina"', async () => {
+      const T = await equipo(b, { width: 800, height: 1100 }); await ingresar(T, 'admin', 'abcd');
+      await T.goto(`http://127.0.0.1:${PUERTO_WEB}/index.html?mimaquina=200V`); await T.waitForTimeout(4500);
+      const r = await T.evaluate(() => ({ vis: !document.getElementById('viewMiMaq').classList.contains('hidden'), txt: document.getElementById('viewMiMaq').innerText }));
+      ok(r.vis && /200V/.test(r.txt) && /CARGAR TURNO/.test(r.txt), 'no entró a la pantalla de la máquina');
+      await T.evaluate(() => document.getElementById('mmCargar').click()); await T.waitForTimeout(500);
+      const r2 = await T.evaluate(() => ({ cr: !document.getElementById('orderSubViewRapida').classList.contains('hidden'), maq: inoferCargaRapida.estado.maq, volver: !document.getElementById('mmVolver').classList.contains('hidden') }));
+      ok(r2.cr && r2.maq === '200V' && r2.volver, 'el botón Cargar turno no llevó a la carga: ' + JSON.stringify(r2));
+      ok(!T._errs.length, 'errores: ' + T._errs.slice(0, 2).join(' | '));
+    });
+    await prueba('Copia de seguridad descargable', async () => {
+      const [dl] = await Promise.all([A.waitForEvent('download', { timeout: 15000 }), A.evaluate(async () => { inoferAlmacenamiento(); await new Promise(r => setTimeout(r, 1500)); document.getElementById('almBajar').click(); })]);
+      const p = await dl.path(); const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      ok(j.app === 'INOFER' && j.modulos && Array.isArray(j.modulos.orders), 'la copia no tiene los datos');
+      await A.evaluate(() => document.getElementById('inoferPlantaModal') && document.getElementById('inoferPlantaModal').remove());
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {

@@ -52,6 +52,7 @@
       };
       Object.keys(MOD).forEach(k => { let v = null; try { v = JSON.parse(localStorage.getItem(MOD[k].key) || 'null'); } catch (e) { } MOD[k].val = v && typeof v === 'object' ? Object.assign(MOD[k].def(), v) : MOD[k].def(); MOD[k].cambio = 0; });
       const D = k => MOD[k].val;
+      window.inoferModLocal = k => (MOD[k] ? MOD[k].val : null);
       function guardarMod(k, subir) {
         try { localStorage.setItem(MOD[k].key, JSON.stringify(MOD[k].val)); } catch (e) { }
         if (subir !== false) { MOD[k].cambio = Date.now(); try { pushCloudModuleState(k, MOD[k].val); } catch (e) { } }
@@ -108,6 +109,8 @@
         p.textContent = off ? `📴 Sin internet${n ? ' · ' + n + ' sin subir' : ''}` : `⏳ ${n} cambio${n > 1 ? 's' : ''} por subir`;
       }
       window.inoferOfflineUI = ui;
+      window.inoferAvisosLista = () => avisosCache;
+      window.inoferTurnosSinCargarDe = m => { try { return avisosCarga() ? turnosSinCargar().filter(x => x.m === m) : []; } catch (e) { return []; } };
       window.inoferModsPendientes = () => Object.keys(pend);
       setInterval(ui, 5000);
       function instalarFiltroNube() {
@@ -771,14 +774,17 @@
       // 7) Informe semanal
       // ---------------------------------------------------------------------------------
       const lunesDe = iso => { const d = new Date(iso + 'T12:00:00'); return masDias(iso, -((d.getDay() + 6) % 7)); };
-      const CODIGO_GS = `// ===== INOFER · Informe semanal por mail (pegar al final, una sola vez) =====
+      const CODIGO_GS = `// ===== INOFER · Informe semanal por mail y copia de seguridad diaria (pegar al final, una sola vez) =====
 function inoferInformeSemanal() { return inoferServidor_().enviarInformeSemanal(false); }
-function activarInformePorMail() {
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'inoferInformeSemanal') ScriptApp.deleteTrigger(t); });
+function inoferRespaldoDiario() { return inoferServidor_().copiaDeSeguridad(); }
+function activarAutomaticos() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (['inoferInformeSemanal', 'inoferRespaldoDiario'].indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('inoferInformeSemanal').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(7).create();
-  MailApp.getRemainingDailyQuota();
-  return inoferServidor_().enviarInformeSemanal(true);
+  ScriptApp.newTrigger('inoferRespaldoDiario').timeBased().everyDays(1).atHour(3).create();
+  MailApp.getRemainingDailyQuota(); DriveApp.getRootFolder();
+  return inoferServidor_().copiaDeSeguridad() + ' | ' + inoferServidor_().enviarInformeSemanal(true);
 }`;
+      window.inoferCodigoGs = CODIGO_GS;
       async function abrirInforme(semana) {
         if (!enNube()) { toast('El informe semanal necesita la conexión con la nube'); return; }
         const sem = semana || masDias(lunesDe(hoyIso()), -7);
@@ -795,7 +801,7 @@ function activarInformePorMail() {
             <label class="block">Mails que lo reciben (separados por coma)<input id="infEmails" class="inofer-planta-form ${INP} mt-1 w-full" value="${esc((cfg.emails || []).join(', '))}" placeholder="jefe@empresa.com, produccion@empresa.com"></label>
             <label class="flex items-center gap-2"><input type="checkbox" id="infActivo" ${cfg.activo !== false ? 'checked' : ''}> Enviar automáticamente</label>
             <button type="button" id="infMailSave" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar mails</button>
-            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"><b>Una sola vez</b>, para que Google deje mandar mails: abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarInformePorMail</b> → <b>Ejecutar</b> → aceptá los permisos. Te llega un mail de prueba y desde ahí sale solo cada lunes.</div>
+            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100"><b>Una sola vez</b>, para que Google deje mandar mails: abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarAutomaticos</b> → <b>Ejecutar</b> → aceptá los permisos. Te llega un mail de prueba, se hace la primera copia de seguridad y desde ahí sale todo solo (informe los lunes, copia todas las noches).</div>
             <pre id="infCodigo" class="max-h-40 overflow-auto rounded-lg bg-slate-950 p-2 text-[10px] text-emerald-200">${esc(CODIGO_GS)}</pre>
             <button type="button" id="infCopyCode" class="${BTN} border-slate-600 text-slate-200">📋 Copiar el código</button>
           </div>
@@ -946,11 +952,22 @@ function activarInformePorMail() {
             <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">📁 Órdenes archivadas ${archivadas ? '(' + archivadas.length + ')' : ''}</span><input id="almBuscar" value="${esc(buscar)}" placeholder="Buscar OP o pieza…" class="${INP} w-48"></div>
               ${archivadas == null ? '<div class="text-slate-400">Cargando…</div>' : (arch.length ? `<div class="max-h-64 overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-950"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">OP</th><th class="pr-2">Pieza</th><th class="pr-2">Máquina</th><th class="pr-2">Último turno</th><th class="pr-2 text-right">Buenas</th><th></th></tr></thead><tbody>
                 ${arch.slice(0, 300).map(a => `<tr class="border-t border-slate-800"><td class="py-1 pr-2 font-bold text-white">${esc(a.ordNumber)}</td><td class="pr-2">${esc(a.part)}</td><td class="pr-2 text-slate-400">${esc(maqId(a.machine))}</td><td class="pr-2 text-slate-400">${a.ultima ? fFecha(a.ultima) + '/' + a.ultima.slice(0, 4) : '—'}</td><td class="pr-2 text-right">${n0(a.ok)} / ${n0(a.qty)}</td><td class="text-right"><button type="button" class="alm-rest ${BTN} border-slate-600 text-slate-200" data-id="${esc(a.id)}">↩ Sacar del archivo</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-slate-400">No hay órdenes archivadas.</div>')}</div>
+            <div class="rounded-xl border border-emerald-500/30 bg-slate-950/60 p-3 space-y-2"><div class="text-sm font-black text-emerald-300">🛟 Copias de seguridad</div>
+              <div id="almResp" class="text-[11px] text-slate-400">Consultando…</div>
+              <div class="flex flex-wrap gap-2"><button type="button" id="almBajar" class="${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200">⬇ Descargar una copia completa ahora</button><button type="button" id="almCodigo" class="${BTN} border-slate-600 text-slate-200">Activar la copia diaria automática</button></div>
+              <div id="almCodigoBox" class="hidden space-y-2 text-[11px] text-slate-300"><div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-amber-100"><b>Una sola vez</b> (sirve también para el mail del informe): abrí tu proyecto de Apps Script → archivo <b>Código.gs</b> → pegá esto <b>al final</b> → Guardar → arriba elegí <b>activarAutomaticos</b> → <b>Ejecutar</b> → aceptá los permisos. Desde ahí, todas las noches se guarda una copia de toda la planilla en tu Google Drive (carpeta "INOFER respaldos", últimas 30).</div><pre class="max-h-40 overflow-auto rounded-lg bg-slate-950 p-2 text-[10px] text-emerald-200">${esc(CODIGO_GS)}</pre><button type="button" id="almCopiarCodigo" class="${BTN} border-slate-600 text-slate-200">📋 Copiar el código</button></div></div>
             <p class="text-[11px] text-slate-500">Cuando algo pase del 70% te aparece un aviso en la 🔔. Esta ventana y los avisos de espacio los ve solo el administrador.</p>`;
           if (document.activeElement && document.activeElement.id === 'almBuscar') { }
         };
+        const respaldo = async () => {
+          try {
+            const r = await api({ action: 'respaldoInfo' }); const el = w.querySelector('#almResp'); if (!el) return;
+            el.innerHTML = r.ultimo ? `✓ Última copia automática: <b class="text-white">${fFecha(r.ultimo.slice(0, 10))}/${r.ultimo.slice(0, 4)}</b> · ${r.lista.length} guardadas en Drive.${r.lista.slice(0, 5).map(x => ` <a href="${esc(x.url)}" target="_blank" rel="noopener" class="text-cyan-300 underline">${esc(x.nombre.replace('INOFER respaldo ', ''))}</a>`).join(' ·')}`
+              : (r.error ? `<span class="text-rose-300">La copia automática dio error: ${esc(r.error)}</span>` : 'La copia diaria automática todavía no está activada. Mientras tanto podés descargar una copia completa cuando quieras.');
+          } catch (e) { }
+        };
         const cargar = async () => {
-          pintar();
+          pintar(); respaldo();
           try { await pedirUsoNube(meses); } catch (e) { toast('No se pudo consultar la nube: ' + e.message); }
           try { archivadas = (await api({ action: 'archivoListar' })).archivadas || []; } catch (e) { archivadas = []; }
           pintar();
@@ -959,6 +976,20 @@ function activarInformePorMail() {
         w.addEventListener('input', e => { if (e.target.id === 'almBuscar') { buscar = e.target.value; pintar(); const i = w.querySelector('#almBuscar'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
         w.addEventListener('click', async e => {
           const b = e.target.closest('button'); if (!b) return;
+          if (b.id === 'almCodigo') { w.querySelector('#almCodigoBox').classList.toggle('hidden'); return; }
+          if (b.id === 'almCopiarCodigo') { try { await navigator.clipboard.writeText(CODIGO_GS); toast('Código copiado'); } catch (er) { toast('Seleccioná el texto y copialo a mano'); } return; }
+          if (b.id === 'almBajar') {
+            b.disabled = true; b.textContent = 'Armando la copia…';
+            try {
+              const d = await (await fetch(cloudApiUrl + (cloudApiUrl.includes('?') ? '&' : '?') + 'action=json&t=' + Date.now() + inoferTokenParam())).json();
+              let arch = []; try { arch = (await api({ action: 'archivoListar' })).archivadas || []; } catch (er) { }
+              const copia = { app: 'INOFER', tipo: 'copia completa', fecha: new Date().toISOString(), version: window.inoferVersionActual || '', partes: d.records || [], modulos: d.modules || {}, ordenesArchivadas: arch };
+              const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(copia)], { type: 'application/json' })); a.download = 'INOFER_copia_' + hoyIso() + '.json'; a.click();
+              toast('✓ Copia descargada: guardala en un lugar seguro');
+            } catch (er) { toast('No se pudo armar la copia: ' + er.message); }
+            b.disabled = false; b.textContent = '⬇ Descargar una copia completa ahora';
+            return;
+          }
           if (b.id === 'almArchivar') {
             if (!confirm(`¿Archivar ${usoNube.candidatas} órdenes completadas?\n\nSiguen contando en el tablero y en el informe, y las podés sacar del archivo cuando quieras.`)) return;
             b.disabled = true; b.textContent = 'Archivando…';

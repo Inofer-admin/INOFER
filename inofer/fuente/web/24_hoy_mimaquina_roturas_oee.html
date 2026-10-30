@@ -1,0 +1,372 @@
+  <script>
+    // ===== Pantalla "Hoy", modo tablet "Mi máquina", avisar rotura con foto y OEE =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const pad = n => String(n).padStart(2, '0');
+      const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoy = () => isoD(new Date());
+      const masDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoD(d); };
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const n1 = v => (Math.round((Number(v) || 0) * 10) / 10).toLocaleString('es-AR');
+      const pct = v => v == null || isNaN(v) ? '—' : n1(v * 100) + '%';
+      const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+      const horasEntre = (a, b) => ((((aMin(b) - aMin(a)) + 1440) % 1440) || 1440) / 60;
+      const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const can = (a, n) => typeof inoferCan !== 'function' || inoferCan(a, n);
+      const pk = k => typeof inoferPuede !== 'function' || inoferPuede(k);
+      const api = async body => { const d = await inoferCloudPost(Object.assign({ token: inoferAuthToken() }, body)); if (!d || d.status === 'error') throw new Error((d && d.error) || 'Sin respuesta de la nube'); return d; };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
+      const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
+      const esDemo = o => window.inoferEsDemo && inoferEsDemo({ fromOrder: true, ordId: o.id });
+      const catDe = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const mant = () => (window.inoferModLocal && inoferModLocal('mantenimiento')) || { roturas: [] };
+      const BTN = 'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition';
+
+      // ---------------------------------------------------------------------------------
+      // OEE = Disponibilidad × Rendimiento × Calidad (solo turnos de órdenes, que tienen piezas)
+      // ---------------------------------------------------------------------------------
+      function oee(regs) {
+        let disp = 0, par = 0, ok = 0, tot = 0, teorico = 0; const porMaq = {};
+        (regs || []).filter(r => r && r.fromOrder).forEach(r => {
+          const cats = (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).reduce((a, c) => a + (Number(r[c.key]) || 0), 0);
+          const o = ordenes().find(x => x.id === r.ordId); const c = catDe(r.part);
+          const uh = Number(o && o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
+          const d = Number(r.available) || 0, andando = Math.max(0, d - cats), t = (Number(r.okPcs) || 0) + (Number(r.scrapPcs) || 0);
+          disp += d; par += Math.min(d, cats); ok += Number(r.okPcs) || 0; tot += t; if (uh) teorico += uh * andando;
+          const m = window.inoferMaqId ? inoferMaqId(r.machine) : r.machine;
+          const x = porMaq[m] = porMaq[m] || { disp: 0, par: 0, ok: 0, tot: 0, teorico: 0 };
+          x.disp += d; x.par += Math.min(d, cats); x.ok += Number(r.okPcs) || 0; x.tot += t; if (uh) x.teorico += uh * andando;
+        });
+        const calc = x => { const D = x.disp ? (x.disp - x.par) / x.disp : null; const R = x.teorico ? Math.min(1, x.tot / x.teorico) : null; const C = x.tot ? x.ok / x.tot : null; return { D, R, C, OEE: D != null && R != null && C != null ? D * R * C : null, horas: x.disp }; };
+        const out = calc({ disp, par, ok, tot, teorico });
+        out.maquinas = {}; Object.keys(porMaq).forEach(m => { out.maquinas[m] = calc(porMaq[m]); });
+        return out;
+      }
+      window.inoferOEE = oee;
+      window.inoferMaqId = txt => { const t = norm(txt); if (/\(v\)/.test(t)) return '200V'; if (/\(n\)/.test(t)) return '200N'; if (/180/.test(t)) return '180'; if (/h-?50/.test(t)) return 'H50'; if (/z-?30|30 tn/.test(t)) return 'Z30'; return String(txt || ''); };
+      const regsDe = (desde, hasta) => (window.inoferRegistrosDeOrdenes ? inoferRegistrosDeOrdenes() : []).filter(r => !(window.inoferEsDemo && inoferEsDemo(r)) && r.date >= desde && r.date <= hasta);
+      const colorOee = v => v == null ? 'text-slate-400' : (v >= 0.85 ? 'text-emerald-300' : (v >= 0.6 ? 'text-amber-300' : 'text-rose-300'));
+      // tarjeta de OEE en el Tablero (usa los filtros del tablero)
+      function oeeTablero() {
+        const v = $('viewDashboard'); if (!v || v.classList.contains('hidden')) return;
+        let box = $('oeeTablero');
+        if (!box) { box = document.createElement('div'); box.id = 'oeeTablero'; const ref = $('inoferTableroAviso'); if (ref && ref.parentElement === v) ref.after(box); else v.insertBefore(box, v.firstChild); }
+        const r = oee(typeof getFilteredRecords === 'function' ? getFilteredRecords() : []);
+        const tile = (t, x, ayuda) => `<div class="rounded-xl bg-slate-950/70 px-3 py-2" title="${ayuda}"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">${t}</div><div class="text-xl font-black ${colorOee(x)}">${pct(x)}</div></div>`;
+        box.innerHTML = `<div class="rounded-2xl border border-cyan-500/30 bg-slate-900/80 p-3 shadow-xl"><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">⚙️ OEE <span class="text-[11px] font-normal text-slate-400">· eficiencia total de los equipos (turnos de órdenes con los filtros de arriba)</span></span>
+          <span class="text-[11px] text-slate-500">${r.horas ? n1(r.horas) + ' h analizadas' : 'sin turnos de órdenes en el período'}</span></div>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">${tile('OEE', r.OEE, 'Disponibilidad × Rendimiento × Calidad. Clase mundial: 85%')}${tile('Disponibilidad', r.D, 'Tiempo andando ÷ tiempo disponible (descuenta todas las paradas)')}${tile('Rendimiento', r.R, 'Piezas hechas ÷ piezas que daba la máquina a su velocidad (u/h) en el tiempo andando')}${tile('Calidad', r.C, 'Piezas buenas ÷ piezas hechas')}</div>
+          ${Object.keys(r.maquinas).length > 1 ? `<div class="mt-2 flex flex-wrap gap-1.5 text-[11px]">${Object.keys(r.maquinas).sort().map(m => `<span class="rounded-lg bg-slate-950/60 px-2 py-1 text-slate-300">${esc(m)}: <b class="${colorOee(r.maquinas[m].OEE)}">${pct(r.maquinas[m].OEE)}</b></span>`).join('')}</div>` : ''}</div>`;
+      }
+
+      // ---------------------------------------------------------------------------------
+      // Orden actual de una máquina y datos del día
+      // ---------------------------------------------------------------------------------
+      function programadoDia(m, fecha) {
+        let q = 0; const piezas = [];
+        Object.values(typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {}).forEach(w => {
+          if (!w || !w.startDate) return;
+          for (let d = 0; d < 7; d++) {
+            if ((window.inoferFechaDia ? inoferFechaDia(w, d) : '') !== fecha) continue;
+            (((w.machines || {})[m] || {}).items || []).forEach(it => { const x = Number((it.dailyQty || [])[d]) || 0; if (x && !it.isSharedCompanion) { q += x; piezas.push(it.part); } });
+          }
+        });
+        return { q, piezas };
+      }
+      function ordenActual(m) {
+        const abiertas = ordenes().filter(o => !esDemo(o) && maqDe(o) === m && o.status !== 'Completada' && (!window.inoferCargaRapida || inoferCargaRapida.abierta(o)));
+        if (!abiertas.length) return null;
+        const prog = programadoDia(m, hoy()).piezas.map(norm);
+        const ult = o => (o.logs || []).reduce((a, l) => { const k = String(l.date || '') + String(l.startTime || ''); return k > a ? k : a; }, '');
+        return abiertas.slice().sort((a, b) => (prog.includes(norm(b.part)) - prog.includes(norm(a.part))) || ult(b).localeCompare(ult(a)))[0];
+      }
+      const avance = o => { const ok = (o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0); const t = Number(o.qtyTarget) || 0; return { ok, t, pct: t ? Math.min(100, Math.round(ok / t * 100)) : 0 }; };
+      function ultimoTurno(m) {
+        let best = null;
+        ordenes().forEach(o => { if (esDemo(o) || maqDe(o) !== m) return; (o.logs || []).forEach(l => { const k = String(l.date || '') + ' ' + String(l.startTime || ''); if (!best || k > best.k) best = { k, l, o }; }); });
+        return best;
+      }
+      function producidoDia(m, fecha) { let ok = 0, sc = 0; ordenes().forEach(o => { if (esDemo(o) || (m && maqDe(o) !== m)) return; (o.logs || []).forEach(l => { if (l.date === fecha) { ok += Number(l.okPcs) || 0; sc += Number(l.scrapPcs) || 0; } }); }); return { ok, sc }; }
+      const haceTxt = l => { if (!l) return ''; const t = new Date(l.date + 'T' + (l.endTime || l.startTime || '00:00') + ':00').getTime(); const h = (Date.now() - t) / 3600000; return h < 1 ? 'hace menos de 1 h' : (h < 48 ? `hace ${Math.round(h)} h` : `el ${l.date.slice(8, 10)}/${l.date.slice(5, 7)}`); };
+      const estadoMaq = m => (window.inoferMaquinaEstado ? inoferMaquinaEstado(m) : { activa: true });
+      const roturasAbiertas = m => (mant().roturas || []).filter(r => r.estado !== 'resuelta' && (!m || r.maquina === m));
+
+      // ---------------------------------------------------------------------------------
+      // Pestañas propias: Hoy y Mi máquina
+      // ---------------------------------------------------------------------------------
+      const VISTAS = {};
+      function crearVista(nombre) {
+        const ref = $('viewGantt'); if (!ref || $('view' + nombre)) return $('view' + nombre);
+        const v = document.createElement('div'); v.id = 'view' + nombre; v.className = 'hidden space-y-4';
+        ref.parentNode.insertBefore(v, ref);
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'tab' + nombre + 'Btn'; b.className = 'hidden';
+        const tr = $('tabDashboardBtn'); if (tr) tr.parentNode.insertBefore(b, tr);
+        b.addEventListener('click', () => switchTab(nombre.toLowerCase()));
+        VISTAS[nombre.toLowerCase()] = v;
+        return v;
+      }
+      function instalarTabs() {
+        if (window.switchTab.__hoy) return;
+        const sw = window.switchTab;
+        const f = function (tab) {
+          if (VISTAS[tab]) {
+            sw('ai');
+            Array.from(VISTAS[tab].parentElement.children).forEach(el => { if (el !== VISTAS[tab] && /^view/.test(el.id)) el.classList.add('hidden'); });
+            VISTAS[tab].classList.remove('hidden');
+            pintarTab(tab);
+            return;
+          }
+          Object.values(VISTAS).forEach(v => v.classList.add('hidden'));
+          return sw.apply(this, arguments);
+        };
+        Object.assign(f, sw); f.__hoy = true; window.switchTab = f;
+      }
+      function pintarTab(t) { try { if (t === 'hoy') renderHoy(); else if (t === 'mimaq') renderMiMaq(); } catch (e) { console.error(e); } }
+      window.inoferVerHoy = () => verHoy();
+      const verHoy = () => esAdmin() || can('partes', 'view') || can('ordenes', 'view') || can('gantt', 'view');
+
+      // ---------------------------------------------------------------------------------
+      // 🏠 HOY
+      // ---------------------------------------------------------------------------------
+      function renderHoy() {
+        const v = $('viewHoy'); if (!v || v.classList.contains('hidden')) return;
+        const f = hoy(), ayer = masDias(f, -1), dia = new Date();
+        const prodHoy = producidoDia('', f), progHoy = MAQS().reduce((a, m) => a + programadoDia(m, f).q, 0);
+        const oAyer = oee(regsDe(ayer, ayer)), oSem = oee(regsDe(masDias(f, -7), ayer));
+        const avisos = window.inoferAvisosLista ? inoferAvisosLista() : [];
+        const t = window.inoferCargaRapida ? (inoferCargaRapida.turnos().find(x => { const n = dia.getHours() * 60 + dia.getMinutes(), a = aMin(x.ini), b = aMin(x.fin); return a <= b ? (n >= a && n < b) : (n >= a || n < b); }) || null) : null;
+        const puedeCargar = can('ordenes', 'edit');
+        const tile = (titulo, valor, sub, color) => `<div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">${titulo}</div><div class="mt-0.5 text-2xl font-black ${color || 'text-white'}">${valor}</div><div class="text-[11px] text-slate-400">${sub || ''}</div></div>`;
+        const tarjetas = MAQS().map(m => {
+          const e = estadoMaq(m), o = ordenActual(m), a = o ? avance(o) : null, p = programadoDia(m, f), h = producidoDia(m, f), u = ultimoTurno(m), rot = roturasAbiertas(m);
+          const sinCargar = (window.inoferTurnosSinCargarDe ? inoferTurnosSinCargarDe(m) : []);
+          return `<div class="flex flex-col rounded-2xl border ${!e.activa ? 'border-rose-500/60 bg-rose-500/5' : 'border-slate-700 bg-slate-900/80'} p-3">
+            <div class="flex items-center justify-between gap-2"><span class="text-2xl font-black text-amber-300">${esc(m)}</span>${e.activa ? '<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">● En servicio</span>' : `<span class="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-200">⛔ Parada</span>`}</div>
+            ${!e.activa ? `<div class="mt-1 text-[11px] text-rose-200">${esc(e.motivo || 'Fuera de servicio')}</div>` : ''}
+            ${o ? `<div class="mt-2 text-sm font-bold text-white">${esc(o.part)} <span class="text-[11px] font-normal text-slate-400">OP ${esc(o.ordNumber)}</span></div>
+              <div class="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div class="h-full bg-amber-400" style="width:${a.pct}%"></div></div>
+              <div class="mt-0.5 text-[11px] text-slate-400">${n0(a.ok)} de ${n0(a.t)} u · ${a.pct}%</div>` : `<div class="mt-2 text-xs text-slate-500">${p.q ? 'Programada hoy, sin orden abierta' : 'Sin orden abierta'}</div>`}
+            <div class="mt-2 grid grid-cols-2 gap-1.5 text-center"><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Hoy hecho</div><div class="text-sm font-black text-emerald-300">${n0(h.ok)}</div></div><div class="rounded-lg bg-slate-950/70 p-1.5"><div class="text-[9px] uppercase text-slate-500">Programado</div><div class="text-sm font-black text-white">${p.q ? n0(p.q) : '—'}</div></div></div>
+            <div class="mt-2 text-[11px] text-slate-400">${u ? `Último turno: ${esc(u.l.turno || '')} · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} · ${haceTxt(u.l)}` : 'Sin turnos cargados'}</div>
+            ${sinCargar.length ? `<div class="mt-1 text-[11px] font-bold text-amber-300">⏰ Falta cargar: ${sinCargar.map(x => esc(x.t.nombre) + ' ' + x.fecha.slice(8, 10) + '/' + x.fecha.slice(5, 7)).join(', ')}</div>` : ''}
+            ${rot.length ? `<div class="mt-1 text-[11px] font-bold text-rose-300">🔧 Rotura avisada: ${esc(rot[0].motivo)} (${esc(rot[0].hora || '')})</div>` : ''}
+            <div class="mt-auto flex gap-1.5 pt-2">${puedeCargar ? `<button type="button" class="hoy-cargar flex-1 ${BTN} border-amber-500/50 bg-amber-500/15 text-amber-200" data-m="${esc(m)}" data-o="${o ? esc(o.id) : ''}">📝 Cargar turno</button><button type="button" class="hoy-rotura ${BTN} border-rose-500/40 text-rose-200" data-m="${esc(m)}" title="Avisar rotura">🔧</button>` : ''}</div>
+          </div>`;
+        }).join('');
+        const ayerFilas = MAQS().map(m => { const p = programadoDia(m, ayer).q, h = producidoDia(m, ayer), x = oAyer.maquinas[m] || {}; return `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(m)}</td><td class="pr-2 text-right text-slate-300">${p ? n0(p) : '—'}</td><td class="pr-2 text-right text-emerald-300">${n0(h.ok)}</td><td class="pr-2 text-right ${p ? (h.ok / p >= 0.9 ? 'text-emerald-300' : (h.ok / p >= 0.7 ? 'text-amber-300' : 'text-rose-300')) : 'text-slate-500'}">${p ? Math.round(h.ok / p * 100) + '%' : '—'}</td><td class="pr-2 text-right text-rose-300">${h.sc ? n0(h.sc) : ''}</td><td class="text-right font-bold ${colorOee(x.OEE)}">${pct(x.OEE)}</td></tr>`; }).join('');
+        const rots = roturasAbiertas('');
+        v.innerHTML = `<div class="space-y-4">
+          <div class="flex flex-wrap items-end justify-between gap-2"><div><h2 class="text-xl font-black text-white">🏠 Hoy · ${DIAS[dia.getDay()]} ${f.slice(8, 10)}/${f.slice(5, 7)}</h2><p class="text-xs text-slate-400">${t ? `Turno ${esc(t.nombre)} (${t.ini} a ${t.fin}) · ` : ''}actualizado ${pad(dia.getHours())}:${pad(dia.getMinutes())}</p></div>
+            ${can('ordenes', 'edit') ? `<button type="button" id="hoyMiMaq" class="${BTN} border-slate-600 text-slate-300">📱 Usar este equipo como tablet de máquina</button>` : ''}</div>
+          <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            ${tile('Producido hoy', n0(prodHoy.ok), progHoy ? `de ${n0(progHoy)} programadas (${Math.round(prodHoy.ok / progHoy * 100)}%)` : 'nada programado hoy', 'text-emerald-300')}
+            ${tile('OEE de ayer', pct(oAyer.OEE), `D ${pct(oAyer.D)} · R ${pct(oAyer.R)} · C ${pct(oAyer.C)}`, colorOee(oAyer.OEE))}
+            ${tile('OEE últimos 7 días', pct(oSem.OEE), oSem.horas ? n1(oSem.horas) + ' h de turnos' : 'sin turnos', colorOee(oSem.OEE))}
+            ${tile('Avisos', avisos.length, avisos.length ? 'tocá 🔔 arriba para verlos' : 'todo en orden', avisos.length ? 'text-amber-300' : 'text-emerald-300')}
+          </div>
+          ${rots.length ? `<div class="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3"><div class="mb-1 text-sm font-black text-rose-200">🔧 Roturas avisadas sin resolver</div>${rots.map(r => `<div class="text-xs text-rose-100">• <b>${esc(r.maquina)}</b> · ${esc(r.motivo)}${r.descripcion ? ' — ' + esc(r.descripcion) : ''} · ${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} ${esc(r.hora || '')} · avisó ${esc(String(r.por || '').replace(/ \(@.*/, ''))}${r.fotoId ? ' · 📷' : ''}</div>`).join('')}<button type="button" id="hoyIrMant" class="mt-2 ${BTN} border-rose-400/60 text-rose-100">Ver en Mantenimiento</button></div>` : ''}
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">${tarjetas}</div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-1 text-sm font-black text-white">📆 Ayer (${ayer.slice(8, 10)}/${ayer.slice(5, 7)}): programado vs. producido</div>
+            <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">Máquina</th><th class="pr-2 text-right">Programado</th><th class="pr-2 text-right">Buenas</th><th class="pr-2 text-right">Cumplimiento</th><th class="pr-2 text-right">Scrap</th><th class="text-right">OEE</th></tr></thead><tbody>${ayerFilas}</tbody></table></div></div>
+        </div>`;
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 📱 MI MÁQUINA (modo tablet)
+      // ---------------------------------------------------------------------------------
+      const MIMAQ_KEY = 'tablero_inyectoras_mimaquina_v1';
+      const miMaq = () => { try { return localStorage.getItem(MIMAQ_KEY) || ''; } catch (e) { return ''; } };
+      function fijarMaq(m) { try { if (m) localStorage.setItem(MIMAQ_KEY, m); else localStorage.removeItem(MIMAQ_KEY); } catch (e) { } botonVolver(); }
+      function elegirMaq() {
+        const w = modalBase('📱 Usar este equipo como tablet de máquina', `<p class="text-xs text-slate-400">Este equipo va a mostrar siempre la pantalla de la máquina elegida: la orden que está corriendo, cuánto falta y botones grandes para cargar el turno o avisar una rotura. Se puede cambiar o salir cuando quieras.</p>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-5">${MAQS().map(m => `<button type="button" class="mm-elegir rounded-2xl border-2 ${m === miMaq() ? 'border-amber-400 bg-amber-500/15' : 'border-slate-700 bg-slate-950'} px-3 py-4 text-2xl font-black text-amber-300" data-m="${m}">${m}</button>`).join('')}</div>
+          ${miMaq() ? '<button type="button" class="mm-salir w-full rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">Dejar de usar este equipo como tablet</button>' : ''}`);
+        w.addEventListener('click', e => {
+          const b = e.target.closest('.mm-elegir'); if (b) { fijarMaq(b.dataset.m); w.remove(); switchTab('mimaq'); }
+          if (e.target.closest('.mm-salir')) { fijarMaq(''); w.remove(); switchTab(verHoy() ? 'hoy' : 'orders'); showToast('Este equipo ya no está fijo a una máquina'); }
+        });
+      }
+      window.inoferElegirMiMaquina = elegirMaq;
+      function renderMiMaq() {
+        const v = $('viewMiMaq'); if (!v || v.classList.contains('hidden')) return;
+        const m = miMaq(); if (!m) { v.innerHTML = '<div class="p-8 text-center text-slate-300">Este equipo no tiene máquina asignada.</div>'; return; }
+        const e = estadoMaq(m), o = ordenActual(m), a = o ? avance(o) : null, u = ultimoTurno(m), p = programadoDia(m, hoy()), h = producidoDia(m, hoy()), rot = roturasAbiertas(m);
+        const dia = new Date();
+        const t = window.inoferCargaRapida ? (inoferCargaRapida.turnos().find(x => { const n = dia.getHours() * 60 + dia.getMinutes(), a1 = aMin(x.ini), b1 = aMin(x.fin); return a1 <= b1 ? (n >= a1 && n < b1) : (n >= a1 || n < b1); }) || null) : null;
+        const puede = can('ordenes', 'edit');
+        v.innerHTML = `<div class="mx-auto max-w-3xl space-y-4">
+          <div class="flex items-center justify-between gap-3 rounded-3xl border ${e.activa ? 'border-slate-700 bg-slate-900/90' : 'border-rose-500/60 bg-rose-500/10'} p-5">
+            <div><div class="text-6xl font-black tracking-tight text-amber-300">${esc(m)}</div><div class="text-sm text-slate-400">${t ? `Turno ${esc(t.nombre)} · ${t.ini} a ${t.fin}` : ''} · ${pad(dia.getHours())}:${pad(dia.getMinutes())}</div></div>
+            <div class="text-right">${e.activa ? '<div class="rounded-2xl bg-emerald-500/15 px-4 py-2 text-lg font-black text-emerald-300">● EN SERVICIO</div>' : `<div class="rounded-2xl bg-rose-500/20 px-4 py-2 text-lg font-black text-rose-200">⛔ PARADA</div><div class="mt-1 text-xs text-rose-200">${esc(e.motivo || '')}</div>`}</div>
+          </div>
+          <div class="rounded-3xl border border-slate-700 bg-slate-900/90 p-5">
+            ${o ? `<div class="text-xs font-bold uppercase tracking-wider text-slate-500">Orden en curso</div><div class="mt-1 flex flex-wrap items-baseline justify-between gap-2"><span class="text-4xl font-black text-white">${esc(o.part)}</span><span class="text-lg text-slate-400">OP ${esc(o.ordNumber)}</span></div>
+              <div class="mt-3 h-6 overflow-hidden rounded-full bg-slate-800"><div class="flex h-full items-center justify-end bg-gradient-to-r from-amber-500 to-emerald-400 pr-2 text-xs font-black text-slate-950" style="width:${Math.max(6, a.pct)}%">${a.pct}%</div></div>
+              <div class="mt-2 grid grid-cols-3 gap-2 text-center"><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hechas</div><div class="text-2xl font-black text-emerald-300">${n0(a.ok)}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Faltan</div><div class="text-2xl font-black text-white">${n0(Math.max(0, a.t - a.ok))}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hoy</div><div class="text-2xl font-black text-amber-300">${n0(h.ok)}${p.q ? `<span class="text-sm text-slate-500"> / ${n0(p.q)}</span>` : ''}</div></div></div>`
+            : `<div class="py-4 text-center text-xl text-slate-300">No hay ninguna orden abierta en esta máquina.${p.q ? '<div class="mt-1 text-sm text-amber-300">Hay piezas programadas hoy: avisale al supervisor.</div>' : ''}</div>`}
+            <div class="mt-3 text-sm text-slate-400">${u ? `Último turno cargado: <b class="text-slate-200">${esc(u.l.turno || '')} del ${esc(u.l.date.slice(8, 10) + '/' + u.l.date.slice(5, 7))}</b> · ${n0(u.l.okPcs)} buenas · ${esc(u.l.operator || '')} (${haceTxt(u.l)})` : 'Todavía no hay turnos cargados en esta máquina.'}</div>
+            ${rot.length ? `<div class="mt-2 rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">🔧 Rotura avisada ${esc(rot[0].hora || '')}: ${esc(rot[0].motivo)} — mantenimiento ya está avisado</div>` : ''}
+          </div>
+          ${puede ? `<div class="grid gap-3 sm:grid-cols-3">
+            <button type="button" id="mmCargar" class="rounded-3xl bg-emerald-500 px-4 py-8 text-2xl font-black text-slate-950 shadow-xl shadow-emerald-500/20 active:scale-[0.98] sm:col-span-2">📝 CARGAR TURNO</button>
+            <button type="button" id="mmRotura" class="rounded-3xl border-2 border-rose-500/60 bg-rose-500/15 px-4 py-8 text-xl font-black text-rose-200 active:scale-[0.98]">🔧 AVISAR ROTURA</button></div>` : '<div class="text-center text-sm text-slate-400">Este usuario solo puede ver.</div>'}
+          <div class="text-center"><button type="button" id="mmCambiar" class="text-xs text-slate-500 underline">Cambiar de máquina o salir del modo tablet</button></div>
+        </div>`;
+      }
+      function botonVolver() {
+        let b = $('mmVolver');
+        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'mmVolver'; b.className = 'fixed bottom-4 left-4 z-[60] hidden rounded-2xl border border-amber-500/50 bg-slate-900/95 px-4 py-3 text-sm font-black text-amber-300 shadow-2xl'; document.body.appendChild(b); b.addEventListener('click', () => switchTab('mimaq')); }
+        const m = miMaq(), v = $('viewMiMaq');
+        b.textContent = '⬅ Volver a la ' + m;
+        b.classList.toggle('hidden', !m || !sesion() || !v || !v.classList.contains('hidden'));
+      }
+
+      // ---------------------------------------------------------------------------------
+      // 🔧 AVISAR ROTURA (con foto)
+      // ---------------------------------------------------------------------------------
+      function modalBase(titulo, cuerpo) {
+        const w0 = $('inoferPlantaModal'); if (w0) w0.remove();
+        const w = document.createElement('div'); w.id = 'inoferPlantaModal';
+        w.className = 'fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full max-w-xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl"><div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">${titulo}</h3><button type="button" class="pm-x rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕</button></div>${cuerpo}</div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => { if (e.target === w || e.target.closest('.pm-x')) w.remove(); });
+        return w;
+      }
+      function achicarFoto(file) {
+        return new Promise((res, rej) => {
+          const img = new Image(); const url = URL.createObjectURL(file);
+          img.onload = () => { const max = 1024, k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.62)); };
+          img.onerror = () => rej(new Error('No se pudo leer la foto'));
+          img.src = url;
+        });
+      }
+      function avisarRotura(m) {
+        const codigos = (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).filter(c => ['mant_correctivo', 'parada_maquina'].includes((window.INOFER_CODIGO_CATEGORIA || {})[parseInt(c, 10)]));
+        const w = modalBase('🔧 Avisar rotura', `
+          <div class="flex flex-wrap gap-2">${MAQS().map(x => `<button type="button" class="ar-maq rounded-xl border-2 px-3 py-2 text-sm font-black ${x === m ? 'border-amber-400 bg-amber-500/15 text-amber-200' : 'border-slate-700 text-slate-300'}" data-m="${x}">${x}</button>`).join('')}</div>
+          <div><div class="mb-1 text-xs font-bold text-slate-300">¿Qué pasó?</div><div class="flex flex-wrap gap-1.5">${codigos.slice(0, 14).map(c => `<button type="button" class="ar-mot rounded-xl border border-slate-700 px-2.5 py-2 text-xs font-bold text-rose-200" data-c="${esc(c)}">${esc(String(c).replace(/^\d+\s*-\s*/, ''))}</button>`).join('')}<button type="button" class="ar-mot rounded-xl border border-slate-700 px-2.5 py-2 text-xs font-bold text-slate-300" data-c="Otro">Otro</button></div></div>
+          <textarea id="arDesc" rows="2" placeholder="Contá brevemente qué pasó (opcional)" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></textarea>
+          <label class="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-slate-600 px-3 py-3 text-sm font-bold text-slate-200"><span class="text-2xl">📷</span><span id="arFotoTxt">Sacar o elegir una foto (opcional)</span><input id="arFoto" type="file" accept="image/*" capture="environment" class="hidden"></label>
+          <img id="arPrev" class="hidden max-h-48 rounded-xl border border-slate-700" alt="">
+          <label class="flex items-center gap-2 text-sm font-bold text-rose-200"><input id="arParo" type="checkbox" class="h-5 w-5 accent-rose-500" checked> La máquina quedó parada</label>
+          <button type="button" id="arEnviar" class="w-full rounded-2xl bg-rose-500 px-4 py-4 text-lg font-black text-white">📣 Avisar a mantenimiento</button>
+          <p class="text-[11px] text-slate-500">Le llega al administrador y a mantenimiento. Si la máquina quedó parada, el Gantt deja de programarle piezas hasta que la reparen.</p>`);
+        let maq = m || miMaq() || '', motivo = '', foto = '';
+        w.addEventListener('click', async e => {
+          let b;
+          if ((b = e.target.closest('.ar-maq'))) { maq = b.dataset.m; w.querySelectorAll('.ar-maq').forEach(x => { const on = x === b; x.className = `ar-maq rounded-xl border-2 px-3 py-2 text-sm font-black ${on ? 'border-amber-400 bg-amber-500/15 text-amber-200' : 'border-slate-700 text-slate-300'}`; }); }
+          if ((b = e.target.closest('.ar-mot'))) { motivo = b.dataset.c; w.querySelectorAll('.ar-mot').forEach(x => { const on = x === b; x.classList.toggle('border-rose-400', on); x.classList.toggle('bg-rose-500/20', on); x.classList.toggle('border-slate-700', !on); }); }
+          if (e.target.closest('#arEnviar')) {
+            if (!maq) { showToast('Elegí la máquina'); return; }
+            if (!motivo) { showToast('Elegí qué pasó'); return; }
+            const bt = w.querySelector('#arEnviar'); bt.disabled = true; bt.textContent = 'Enviando…';
+            try {
+              const d = await api({ action: 'avisarRotura', maquina: maq, motivo: motivo === 'Otro' ? 'Otro problema' : motivo, descripcion: w.querySelector('#arDesc').value.trim(), parada: w.querySelector('#arParo').checked, foto });
+              try { lastLocalChangeAt = 0; pendingCloudOps = 0; if (d.modules) applyCloudModules(d.modules); } catch (er) { }
+              w.remove(); showToast(`📣 Listo: se avisó la rotura de la ${maq}`); pintarTodo();
+            } catch (er) { bt.disabled = false; bt.textContent = '📣 Avisar a mantenimiento'; showToast(navigator.onLine === false ? '📴 Sin internet: avisá por teléfono y probá de nuevo cuando vuelva la conexión' : 'No se pudo avisar: ' + er.message); }
+          }
+        });
+        w.addEventListener('change', async e => {
+          if (e.target.id !== 'arFoto' || !e.target.files || !e.target.files[0]) return;
+          try { foto = await achicarFoto(e.target.files[0]); const p = w.querySelector('#arPrev'); p.src = foto; p.classList.remove('hidden'); w.querySelector('#arFotoTxt').textContent = '✓ Foto lista (tocá para cambiarla)'; } catch (er) { showToast(er.message); }
+        });
+      }
+      window.inoferAvisarRotura = avisarRotura;
+      // Mantenimiento: roturas avisadas con foto y botón "Reparada"
+      const fotos = {};
+      function seccionRoturas() {
+        const v = $('viewMant'); if (!v || v.classList.contains('hidden')) return;
+        const raiz = v.firstElementChild; if (!raiz) return;
+        let box = $('mantRoturas');
+        const L = (mant().roturas || []).slice().sort((a, b) => String(b.avisadaAt || '').localeCompare(String(a.avisadaAt || '')));
+        const abiertas = L.filter(r => r.estado !== 'resuelta'), cerradas = L.filter(r => r.estado === 'resuelta').slice(0, 5);
+        const html = `<div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-rose-200">🔧 Roturas avisadas desde las máquinas ${abiertas.length ? `<span class="rounded-full bg-rose-500 px-2 text-[11px] text-white">${abiertas.length} sin resolver</span>` : ''}</span>${can('ordenes', 'edit') || can('gantt', 'edit') ? `<button type="button" class="mr-avisar ${BTN} border-rose-500/50 text-rose-200">+ Avisar rotura</button>` : ''}</div>
+          ${abiertas.length ? abiertas.map(r => `<div class="mt-2 flex flex-wrap items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-2.5">
+            ${r.fotoId ? `<button type="button" class="mr-foto shrink-0" data-id="${esc(r.fotoId)}"><img data-foto="${esc(r.fotoId)}" class="h-20 w-20 rounded-lg border border-slate-700 object-cover" alt="📷" src="${fotos[r.fotoId] || ''}"></button>` : ''}
+            <div class="min-w-0 flex-1 text-xs text-slate-200"><div class="text-sm font-black text-white">${esc(r.maquina)} · ${esc(r.motivo)}</div>${r.descripcion ? `<div>${esc(r.descripcion)}</div>` : ''}<div class="text-[11px] text-slate-400">${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} ${esc(r.hora || '')} · avisó ${esc(r.por || '')}${r.paro ? ' · <b class="text-rose-300">máquina parada</b>' : ''}</div></div>
+            ${(esAdmin() || ((can('gantt', 'edit') || can('ordenes', 'edit')) && pk('mant_editar'))) ? `<button type="button" class="mr-ok ${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200" data-id="${esc(r.id)}">✓ Reparada</button>` : ''}</div>`).join('') : '<div class="mt-1 text-xs text-slate-400">No hay roturas sin resolver.</div>'}
+          ${cerradas.length ? `<details class="mt-2 text-[11px] text-slate-400"><summary class="cursor-pointer">Últimas reparadas</summary>${cerradas.map(r => `<div>✓ ${esc(r.maquina)} · ${esc(r.motivo)} · ${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} · reparada por ${esc(String(r.resueltaPor || '').replace(/ \(@.*/, ''))}${r.nota ? ': ' + esc(r.nota) : ''}</div>`).join('')}</details>` : ''}`;
+        if (!box || box.parentElement !== raiz) { box = document.createElement('div'); box.id = 'mantRoturas'; box.className = 'rounded-2xl border border-rose-500/30 bg-slate-950/60 p-3'; const ref = raiz.children[1]; raiz.insertBefore(box, ref || null); }
+        if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
+        box.querySelectorAll('img[data-foto]').forEach(img => { const id = img.dataset.foto; if (fotos[id] || img.__pidiendo) return; img.__pidiendo = 1; api({ action: 'fotoLeer', id }).then(d => { fotos[id] = d.foto; document.querySelectorAll(`img[data-foto="${id}"]`).forEach(i => { i.src = d.foto; }); }).catch(() => { }); });
+      }
+      document.addEventListener('click', async e => {
+        let b;
+        if (e.target.closest && e.target.closest('.mr-avisar')) avisarRotura('');
+        if ((b = e.target.closest && e.target.closest('.mr-foto'))) { const src = fotos[b.dataset.id]; if (src) modalBase('📷 Foto de la rotura', `<img src="${src}" class="w-full rounded-xl" alt="">`); }
+        if ((b = e.target.closest && e.target.closest('.mr-ok'))) {
+          const nota = prompt('¿Qué se hizo? (opcional, queda en el historial de mantenimiento)', ''); if (nota === null) return;
+          const habilitar = confirm('¿La máquina ya puede volver a trabajar?\n\nAceptar = sí, habilitarla en el Gantt · Cancelar = dejarla fuera de servicio');
+          b.disabled = true;
+          try { const d = await api({ action: 'roturaResolver', id: b.dataset.id, nota, habilitar }); try { lastLocalChangeAt = 0; pendingCloudOps = 0; if (d.modules) applyCloudModules(d.modules); } catch (er) { } showToast('✓ Rotura cerrada'); pintarTodo(); }
+          catch (er) { b.disabled = false; showToast(er.message); }
+        }
+        if (e.target.closest && e.target.closest('#mmCargar')) { const m = miMaq(), o = ordenActual(m); inoferCargaRapida.abrir({ maq: m, ordId: o ? o.id : '' }); }
+        if (e.target.closest && e.target.closest('#mmRotura')) avisarRotura(miMaq());
+        if (e.target.closest && e.target.closest('#mmCambiar')) elegirMaq();
+        if (e.target.closest && e.target.closest('#hoyMiMaq')) elegirMaq();
+        if (e.target.closest && e.target.closest('#hoyIrMant')) switchTab('mant');
+        if ((b = e.target.closest && e.target.closest('.hoy-cargar'))) inoferCargaRapida.abrir({ maq: b.dataset.m, ordId: b.dataset.o });
+        if ((b = e.target.closest && e.target.closest('.hoy-rotura'))) avisarRotura(b.dataset.m);
+        if (e.target.closest && e.target.closest('#crRoturaBtn')) avisarRotura((window.inoferCargaRapida && inoferCargaRapida.estado.maq) || '');
+      });
+      // botón "Avisar rotura" en la Carga rápida
+      function botonCarga() {
+        const ref = $('crOperCfgBtn'); if (!ref || $('crRoturaBtn')) return;
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'crRoturaBtn';
+        b.className = 'rounded-lg border border-rose-500/50 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-200'; b.textContent = '🔧 Avisar rotura';
+        ref.parentElement.insertBefore(b, ref);
+      }
+      // avisos en la campana: roturas sin resolver
+      window.inoferAvisosExtra = (window.inoferAvisosExtra || []).concat([() => {
+        if (!(esAdmin() || ((can('gantt', 'view') || can('ordenes', 'view')) && pk('mant_ver')))) return [];
+        return roturasAbiertas('').map(r => ({ id: 'rot-' + r.id, ico: '🔧', color: 'rose', txt: `Rotura en la <b>${esc(r.maquina)}</b>: ${esc(r.motivo)}`, sub: `${r.fecha.slice(8, 10)}/${r.fecha.slice(5, 7)} ${r.hora || ''} · avisó ${String(r.por || '').replace(/ \(@.*/, '')}${r.paro ? ' · máquina parada' : ''}`, acciones: [['mant', 'Ver']] }));
+      }]);
+
+      // ---------------------------------------------------------------------------------
+      // Arranque
+      // ---------------------------------------------------------------------------------
+      function pintarTodo() {
+        try { if ($('viewHoy') && !$('viewHoy').classList.contains('hidden')) renderHoy(); } catch (e) { console.error(e); }
+        try { if ($('viewMiMaq') && !$('viewMiMaq').classList.contains('hidden')) renderMiMaq(); } catch (e) { console.error(e); }
+        try { seccionRoturas(); } catch (e) { console.error(e); }
+        try { oeeTablero(); } catch (e) { console.error(e); }
+        try { botonCarga(); botonVolver(); } catch (e) { }
+      }
+      let primera = true;
+      function alIngresar() {
+        if (!sesion() || !primera) return;
+        primera = false;
+        const pantalla = sesion().permisos && sesion().permisos.detalle && sesion().permisos.detalle.pantalla && !esAdmin();
+        if (pantalla) return;
+        let q = null; try { q = sessionStorage.getItem('inoferQrPend'); } catch (e) { }
+        if (q) return;
+        setTimeout(() => {
+          if (miMaq() && can('ordenes', 'view')) switchTab('mimaq');
+          else if (verHoy() && (esAdmin() || can('partes', 'view') || can('indicadores', 'view') || can('gantt', 'edit'))) switchTab('hoy');
+        }, 400);
+      }
+      function iniciar() {
+        crearVista('Hoy'); crearVista('MiMaq'); instalarTabs();
+        // con ?mimaquina=200V el equipo queda fijo a esa máquina
+        try { const p = new URLSearchParams(location.search); const m = p.get('mimaquina'); if (m) { fijarMaq(m.toUpperCase()); p.delete('mimaquina'); history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '')); } } catch (e) { }
+        if (typeof window.inoferApplyPermissions === 'function' && !window.inoferApplyPermissions.__hoy) {
+          const ap = window.inoferApplyPermissions; const f = function () { const r = ap.apply(this, arguments); try { alIngresar(); pintarTodo(); } catch (e) { } return r; }; Object.assign(f, ap); f.__hoy = true; window.inoferApplyPermissions = f;
+        }
+        if (typeof window.switchTab === 'function') { const sw = window.switchTab; if (!sw.__hoy2) { const f = function () { const r = sw.apply(this, arguments); setTimeout(pintarTodo, 50); return r; }; Object.assign(f, sw); f.__hoy2 = true; window.switchTab = f; } }
+        setInterval(pintarTodo, 15000);
+        setTimeout(() => { alIngresar(); pintarTodo(); }, 1500);
+        try { const mo = new MutationObserver(() => { if ($('viewMant') && !$('viewMant').classList.contains('hidden') && !$('mantRoturas')) seccionRoturas(); }); const vm = $('viewMant'); if (vm) mo.observe(vm, { childList: true }); } catch (e) { }
+        if (typeof window.saveProductionOrders === 'function' && !window.saveProductionOrders.__hoy) { const sp = window.saveProductionOrders; const f = function () { const r = sp.apply(this, arguments); setTimeout(pintarTodo, 50); return r; }; Object.assign(f, sp); f.__hoy = true; window.saveProductionOrders = f; }
+        if (typeof window.renderMainSpeedometer === 'function' && !window.renderMainSpeedometer.__hoy) { const rm = window.renderMainSpeedometer; const f = function () { const r = rm.apply(this, arguments); setTimeout(oeeTablero, 0); return r; }; f.__hoy = true; window.renderMainSpeedometer = f; }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 250)); else setTimeout(iniciar, 250);
+    })();
+  </script>

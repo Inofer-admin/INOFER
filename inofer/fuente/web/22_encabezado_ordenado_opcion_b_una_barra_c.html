@@ -9,9 +9,11 @@
       const cuenta = id => { const e = $(id); const n = e ? parseInt(e.textContent, 10) : NaN; return isNaN(n) ? '' : n; };
       const GRUPOS = [
         { id: 'prod', nombre: 'Producción', ico: '🏭', items: [
+          { tab: 'tabHoyBtn', ico: '🏠', t: 'Hoy', d: 'Máquinas, avance del día, OEE y avisos' },
           { tab: 'tabOrdersBtn', ico: '📋', t: 'Órdenes de producción', d: 'Carga rápida, lista y seguimiento', n: () => cuenta('ordersCountBadge') },
           { tab: 'tabDashboardBtn', ico: '📊', t: 'Tablero y velocímetros', d: 'Utilización y paradas' },
           { tab: 'tabRecordsBtn', ico: '🕒', t: 'Historial de partes', d: 'Partes de horas cargados', n: () => cuenta('recordCountBadge') },
+          { accion: () => window.inoferElegirMiMaquina && inoferElegirMiMaquina(), vis: () => !!sesion() && can('ordenes', 'edit'), ico: '📱', t: 'Modo tablet de máquina', d: 'Fijar este equipo a una inyectora' },
           { accion: () => $('openNewEntryModalBtn') && $('openNewEntryModalBtn').click(), vis: () => !!sesion() && !!$('openNewEntryModalBtn') && can('partes', 'edit') && pk('partes_cargar'), ico: '➕', t: 'Cargar horas', d: 'Parte de horas manual' }
         ] },
         { id: 'plan', nombre: 'Planificación', ico: '📅', items: [
@@ -32,11 +34,11 @@
           { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }
         ] }
       ];
-      const VISTAS = { viewDashboard: 'tabDashboardBtn', viewSimulator: 'tabSimulatorBtn', viewRecords: 'tabRecordsBtn', viewOrders: 'tabOrdersBtn', viewGantt: 'tabGanttBtn', viewAi: 'tabAiBtn', viewKpi: 'tabKpiBtn', viewPapelera: 'tabPapeleraBtn', viewMant: 'tabMantBtn', viewStock: 'tabStockBtn', viewAud: 'tabAudBtn' };
+      const VISTAS = { viewHoy: 'tabHoyBtn', viewMiMaq: 'tabMiMaqBtn', viewDashboard: 'tabDashboardBtn', viewSimulator: 'tabSimulatorBtn', viewRecords: 'tabRecordsBtn', viewOrders: 'tabOrdersBtn', viewGantt: 'tabGanttBtn', viewAi: 'tabAiBtn', viewKpi: 'tabKpiBtn', viewPapelera: 'tabPapeleraBtn', viewMant: 'tabMantBtn', viewStock: 'tabStockBtn', viewAud: 'tabAudBtn' };
       // las solapas originales a veces pierden la clase "hidden" al cambiar de pestaña: se decide por permisos
       const can = (a, n) => typeof inoferCan !== 'function' || inoferCan(a, n);
       const pk = k => typeof inoferPuede !== 'function' || inoferPuede(k);
-      const PERM = { tabDashboardBtn: () => can('partes', 'view'), tabRecordsBtn: () => can('partes', 'view'), tabSimulatorBtn: () => can('partes', 'view') && pk('partes_simulador'),
+      const PERM = { tabHoyBtn: () => !!(window.inoferVerHoy && inoferVerHoy()), tabMiMaqBtn: () => false, tabDashboardBtn: () => can('partes', 'view'), tabRecordsBtn: () => can('partes', 'view'), tabSimulatorBtn: () => can('partes', 'view') && pk('partes_simulador'),
         tabOrdersBtn: () => can('ordenes', 'view') || can('catalogo', 'view'), tabGanttBtn: () => can('gantt', 'view'), tabAiBtn: () => can('ia', 'view'), tabKpiBtn: () => can('indicadores', 'view'), tabPapeleraBtn: () => esAdmin() };
       const itemVisible = it => it.tab ? (!!$(it.tab) && (PERM[it.tab] ? PERM[it.tab]() : visibleBtn(it.tab))) : (it.vis ? it.vis() : true);
       function tabActiva() { for (const v of Object.keys(VISTAS)) { const e = $(v); if (e && !e.classList.contains('hidden')) return VISTAS[v]; } return ''; }
@@ -61,7 +63,7 @@
         header.insertBefore(bar, viejo);
         viejo.classList.add('hidden');
         viejo.id = viejo.id || 'nbViejo';
-        $('nbLogo').addEventListener('click', () => { try { switchTab(visibleBtn('tabDashboardBtn') ? 'dashboard' : 'orders'); } catch (e) { } });
+        $('nbLogo').addEventListener('click', () => { try { switchTab(window.inoferVerHoy && inoferVerHoy() ? 'hoy' : 'orders'); } catch (e) { } });
         // menú desplegable (uno solo, flotante)
         const menu = document.createElement('div');
         menu.id = 'nbMenu';

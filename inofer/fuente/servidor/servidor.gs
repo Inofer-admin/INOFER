@@ -1716,6 +1716,133 @@ function versiones_() {
   return out;
 }
 
+// =====================================================================
+// ROTURAS AVISADAS DESDE LA MÁQUINA (con foto) Y COPIAS DE SEGURIDAD
+// Fotos: hoja BD_Fotos (id | fecha | autor | dataURL partido desde la col D)
+// =====================================================================
+function hojaFotos_() {
+  const ss = getSs();
+  let sh = ss.getSheetByName('BD_Fotos');
+  if (!sh) { sh = ss.insertSheet('BD_Fotos'); sh.appendRow(['id', 'fecha', 'autor', 'foto']); sh.getRange('A:C').setNumberFormat('@'); }
+  return sh;
+}
+function guardarFoto_(u, dataUrl) {
+  const s = String(dataUrl || '');
+  if (!/^data:image\/(jpeg|png|webp);base64,/.test(s) || s.length > 1500000) return '';
+  const id = idNuevo_('foto');
+  const partes = []; for (let p = 0; p < s.length; p += CHUNK) partes.push(s.substring(p, p + CHUNK));
+  const sh = hojaFotos_();
+  const fila = [id, new Date().toISOString(), etiquetaUsuario_(u)].concat(partes);
+  sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
+  return id;
+}
+function leerFoto_(id) {
+  const sh = getSs().getSheetByName('BD_Fotos'); if (!sh) return '';
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) if (String(rows[i][0]) === String(id)) { let s = ''; for (let c = 3; c < rows[i].length; c++) s += String(rows[i][c] || ''); return s; }
+  return '';
+}
+function puedeMantSrv_(u) { return u.rol === 'admin' || ((puede(u, 'gantt', 'edit') || puede(u, 'ordenes', 'edit')) && !(u.permisos && u.permisos.detalle && u.permisos.detalle.mant_editar === false)); }
+function accionRotura(u, body) {
+  const A = ['avisarRotura', 'fotoLeer', 'roturaResolver', 'respaldoInfo'];
+  if (A.indexOf(body.action) === -1) return null;
+  if (body.action === 'fotoLeer') return { status: 'ok', foto: leerFoto_(body.id) };
+  if (body.action === 'respaldoInfo') {
+    if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
+    const p = PropertiesService.getScriptProperties();
+    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '' };
+  }
+  if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
+  if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };
+  const fotoId = body.action === 'avisarRotura' && body.foto ? guardarFoto_(u, body.foto) : '';
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const mods = obtenerEstadoModulos();
+    const mant = mods.mantenimiento && typeof mods.mantenimiento === 'object' ? mods.mantenimiento : { planes: [], trabajos: [] };
+    mant.roturas = Array.isArray(mant.roturas) ? mant.roturas : [];
+    mant.trabajos = Array.isArray(mant.trabajos) ? mant.trabajos : [];
+    const setup = mods.setup && typeof mods.setup === 'object' ? mods.setup : { maquinas: {} };
+    setup.maquinas = setup.maquinas || {};
+    const ahora = new Date();
+    const fecha = isoDia_(ahora), hora = Utilities.formatDate(ahora, zonaHoja_(), 'HH:mm');
+    if (body.action === 'avisarRotura') {
+      const m = String(body.maquina || '').slice(0, 20);
+      if (!m) return { status: 'error', error: 'Falta la máquina.' };
+      const motivo = String(body.motivo || 'Rotura').slice(0, 120), desc = String(body.descripcion || '').slice(0, 600);
+      const r = { id: idNuevo_('rot'), maquina: m, fecha: fecha, hora: hora, motivo: motivo, descripcion: desc, fotoId: fotoId, paro: body.parada !== false, por: etiquetaUsuario_(u), estado: 'abierta', avisadaAt: ahora.toISOString() };
+      mant.roturas.push(r);
+      guardarModuloSinLock_('mantenimiento', mant);
+      if (r.paro) {
+        setup.maquinas[m] = Object.assign({}, setup.maquinas[m] || {}, { activa: false, motivo: 'Rotura: ' + motivo, desde: '', hasta: '' });
+        guardarModuloSinLock_('setup', setup);
+      }
+      try {
+        const id = idNuevo_('sol'), f = ahora.toISOString();
+        escribirSolicitud_({ id: id, autor: u.usuario, nombre: u.nombre || u.usuario, tipo: 'rotura', titulo: '🔧 Rotura en la ' + m + ': ' + motivo, detalle: (desc ? desc + ' · ' : '') + (r.paro ? 'La máquina quedó PARADA.' : 'La máquina sigue andando.') + (fotoId ? ' (con foto, ver en Mantenimiento)' : ''), estado: 'pendiente', respuesta: '', respondidoPor: '', fecha: f, actualizado: f, vistoAdmin: false, vistoAutor: true });
+      } catch (e) {}
+      auditar_(u, 'avisó', 'mantenimiento', ['Rotura en la ' + m + ': ' + motivo + (r.paro ? ' (máquina parada)' : '') + (fotoId ? ' · con foto' : '')]);
+    } else {
+      const r = mant.roturas.filter(function (x) { return x.id === String(body.id); })[0];
+      if (!r) return { status: 'error', error: 'No encontré esa rotura.' };
+      r.estado = 'resuelta'; r.resueltaPor = etiquetaUsuario_(u); r.resueltaAt = ahora.toISOString(); r.nota = String(body.nota || '').slice(0, 600);
+      mant.trabajos.push({ id: 'mt-' + ahora.getTime(), maquina: r.maquina, fecha: fecha, tipo: 'correctivo', tarea: 'Reparación: ' + r.motivo, descripcion: r.nota, horas: Number(body.horas) || 0, hecho_por: u.nombre || u.usuario, roturaId: r.id, cargadoPor: etiquetaUsuario_(u), cargadoAt: ahora.toISOString() });
+      guardarModuloSinLock_('mantenimiento', mant);
+      if (body.habilitar !== false && setup.maquinas[r.maquina] && setup.maquinas[r.maquina].activa === false) {
+        const c = setup.maquinas[r.maquina]; c.activa = true; delete c.motivo; delete c.desde; delete c.hasta;
+        guardarModuloSinLock_('setup', setup);
+      }
+      auditar_(u, 'resolvió', 'mantenimiento', ['Rotura de la ' + r.maquina + ' (' + r.motivo + ') reparada' + (r.nota ? ': ' + r.nota : '')]);
+    }
+  } finally { lock.releaseLock(); }
+  const paq = paqueteDatos(u, null); paq.versiones = versiones_();
+  return paq;
+}
+// Copia diaria de toda la planilla en Google Drive (la llama el disparador inoferRespaldoDiario del Código.gs)
+function copiaDeSeguridad() {
+  const p = PropertiesService.getScriptProperties();
+  try {
+    const ss = getSs();
+    const archivo = DriveApp.getFileById(ss.getId());
+    const it = DriveApp.getFoldersByName('INOFER respaldos');
+    const carpeta = it.hasNext() ? it.next() : DriveApp.createFolder('INOFER respaldos');
+    const nombre = 'INOFER respaldo ' + Utilities.formatDate(new Date(), zonaHoja_(), 'yyyy-MM-dd HH.mm');
+    const copia = archivo.makeCopy(nombre, carpeta);
+    const lista = jsonSeguro_(p.getProperty('RESPALDOS'), []);
+    lista.unshift({ fecha: new Date().toISOString(), nombre: nombre, id: copia.getId(), url: copia.getUrl() });
+    while (lista.length > 30) { const v = lista.pop(); try { DriveApp.getFileById(v.id).setTrashed(true); } catch (e) {} }
+    p.setProperty('RESPALDOS', JSON.stringify(lista));
+    p.setProperty('RESPALDO_ULTIMO', new Date().toISOString());
+    p.deleteProperty('RESPALDO_ERROR');
+    return 'Copia guardada en Drive: ' + nombre;
+  } catch (e) {
+    p.setProperty('RESPALDO_ERROR', String(e.message || e).slice(0, 300));
+    return 'No se pudo hacer la copia: ' + e.message;
+  }
+}
+// Fusión de 3 vías para set-up (por máquina) y mantenimiento (listas por id)
+function fusionarSetup_(stored, incoming, base) {
+  const S = (stored && stored.maquinas) || {}, I = (incoming && incoming.maquinas) || {}, B = base || {};
+  const out = Object.assign({}, incoming, { maquinas: {} });
+  const ms = {}; Object.keys(S).forEach(function (m) { ms[m] = 1; }); Object.keys(I).forEach(function (m) { ms[m] = 1; });
+  Object.keys(ms).forEach(function (m) {
+    const s = S[m], it = I[m], b = B[m];
+    if (it === undefined) { if (s !== undefined) out.maquinas[m] = s; return; }
+    if (s === undefined) { out.maquinas[m] = it; return; }
+    out.maquinas[m] = (b && hashObj_(it) === b.h) ? s : it;
+  });
+  return { datos: out, conflictos: 0 };
+}
+function fusionarMant_(stored, incoming, base) {
+  const S = stored || {}, I = incoming || {}, B = base || {};
+  const out = Object.assign({}, S, I);
+  ['planes', 'trabajos', 'roturas'].forEach(function (k) {
+    if (!Array.isArray(S[k]) && !Array.isArray(I[k])) return;
+    out[k] = fusionarLista_('x', S[k] || [], I[k] || [], B[k] || {}).datos;
+  });
+  return { datos: out, conflictos: 0 };
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -1734,6 +1861,8 @@ function doPost(e) {
   if (inf) return respuesta(inf);
   const alm = accionAlmacen(u, body);
   if (alm) return respuesta(alm);
+  const rot = accionRotura(u, body);
+  if (rot) return respuesta(rot);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };
@@ -1797,6 +1926,8 @@ function doPost(e) {
         try {
           if (body.moduleKey === 'gantt' && body.moduleData && typeof body.moduleData === 'object') fusion = fusionarGantt_(anterior, body.moduleData, body.base);
           else if ((body.moduleKey === 'orders' || body.moduleKey === 'catalog') && Array.isArray(body.moduleData) && Array.isArray(anterior)) fusion = fusionarLista_(body.moduleKey, anterior, body.moduleData, body.base);
+          else if (body.moduleKey === 'setup' && body.moduleData && body.moduleData.maquinas) fusion = fusionarSetup_(anterior, body.moduleData, body.base);
+          else if (body.moduleKey === 'mantenimiento' && body.moduleData && typeof body.moduleData === 'object') fusion = fusionarMant_(anterior, body.moduleData, body.base);
           if (fusion) body.moduleData = fusion.datos;
         } catch (e) { fusion = null; }
       }

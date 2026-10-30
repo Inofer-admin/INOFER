@@ -13,6 +13,7 @@
         gantt: { nombre: '📅 Plan de la semana (Gantt)', ops: [] },
         ordenes: { nombre: '📋 Avance de órdenes de producción', ops: [] },
         facturacion: { nombre: '💲 Facturación de la semana', ops: [] },
+        oee: { nombre: '⚙️ OEE (eficiencia total de los equipos)', ops: ['periodo'] },
         mensaje: { nombre: '💬 Mensaje / aviso', ops: ['texto'] }
       };
       const PERIODOS = { hoy: 'Hoy', '7d': 'Últimos 7 días', '30d': 'Últimos 30 días', mes: 'Mes actual' };
@@ -113,6 +114,17 @@
             const items = MAQS().map(m => { const a = computeAggregates(regs.filter(r => r.machine === m.name)); return { n: m.short || m.id, v: a.utilizationPct, c: color(a.utilizationPct), t: a.totalAvailable ? a.utilizationPct.toFixed(1) + '%' : 'sin datos' }; });
             cont.innerHTML = tit('Utilización por máquina', PERIODOS[o.periodo || '7d']) + `<div class="space-y-5">${barras(items)}</div>`;
           }
+          return;
+        }
+        if (d.tipo === 'oee') {
+          const r = window.inoferOEE ? inoferOEE(registros(o.periodo, 'ALL')) : null;
+          const p = v => v == null ? '—' : (Math.round(v * 1000) / 10).toLocaleString('es-AR') + '%';
+          const col = v => v == null ? 'text-slate-400' : (v >= 0.85 ? 'text-emerald-400' : (v >= 0.6 ? 'text-amber-300' : 'text-rose-400'));
+          if (!r || !r.horas) { cont.innerHTML = tit('OEE', PERIODOS[o.periodo || '7d']) + '<div class="text-3xl text-slate-400">Todavía no hay turnos de órdenes en este período.</div>'; return; }
+          cont.innerHTML = tit('OEE · eficiencia total de los equipos', PERIODOS[o.periodo || '7d'] + ' · meta clase mundial 85%') + `<div class="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
+            <div class="flex flex-col items-center justify-center rounded-3xl border-2 border-slate-700 p-6"><div class="text-3xl font-bold text-slate-300">OEE</div><div class="text-9xl font-black ${col(r.OEE)}">${p(r.OEE)}</div>
+              <div class="mt-4 grid w-full grid-cols-3 gap-4 text-center">${[['Disponibilidad', r.D], ['Rendimiento', r.R], ['Calidad', r.C]].map(([t, v]) => `<div><div class="text-xl text-slate-400">${t}</div><div class="text-4xl font-black ${col(v)}">${p(v)}</div></div>`).join('')}</div></div>
+            <div class="space-y-5">${barras(Object.keys(r.maquinas).sort().map(m => ({ n: m, v: (r.maquinas[m].OEE || 0) * 100, c: r.maquinas[m].OEE >= 0.85 ? '#34d399' : (r.maquinas[m].OEE >= 0.6 ? '#fbbf24' : '#fb7185'), t: p(r.maquinas[m].OEE) })))}</div></div>`;
           return;
         }
         if (d.tipo === 'kpis') {
