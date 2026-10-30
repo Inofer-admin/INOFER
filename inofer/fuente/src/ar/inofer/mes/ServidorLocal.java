@@ -106,6 +106,11 @@ public final class ServidorLocal {
                 String v = actualizador.versionPaginaActual();
                 String json = "{\"web\":\"" + v + "\",\"programa\":\"" + Main.VERSION + "\",\"programaPendiente\":" + actualizador.isJarPendiente() + "}";
                 responder(ex, 200, TIPOS.get("json"), json.getBytes(StandardCharsets.UTF_8));
+            } else if (ruta.equals("/api/pagina") && "POST".equalsIgnoreCase(metodo)) {
+                // la ventana bajó las pantallas nuevas de GitHub y se las pasa al programa
+                boolean ok = actualizador.guardarPaginaRecibida(leerTodo(ex.getRequestBody()));
+                String json = "{\"ok\":" + ok + ",\"web\":\"" + actualizador.versionPaginaActual() + "\"}";
+                responder(ex, 200, TIPOS.get("json"), json.getBytes(StandardCharsets.UTF_8));
             } else if (ruta.equals("/api/version")) {
                 String v = actualizador.versionPaginaActual();
                 String json = "{\"web\":\"" + v + "\",\"programa\":\"" + Main.VERSION + "\",\"programaPendiente\":" + actualizador.isJarPendiente() + "}";

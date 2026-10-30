@@ -26,7 +26,7 @@ import java.nio.file.Path;
  */
 public final class Main {
 
-    public static final String VERSION = "2.6";
+    public static final String VERSION = "2.7";
     private static final int PUERTO_BASE = 47821;
 
     private static ServidorLocal servidor;
@@ -36,6 +36,8 @@ public final class Main {
     private static JLabel estado;
 
     public static void main(String[] args) throws Exception {
+        // Usar el proxy configurado en Windows (como Edge), si la red de la planta tiene uno
+        System.setProperty("java.net.useSystemProxies", "true");
         if (Arrays_contains(args, "--aplicar-actualizacion")) { // ejecutado desde INOFER-nuevo.jar
             Instalador.aplicarActualizacion();
             System.exit(0);

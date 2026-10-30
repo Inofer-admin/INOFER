@@ -4,6 +4,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.security.KeyStore;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLException;
+import javax.net.ssl.TrustManagerFactory;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -138,9 +143,31 @@ public final class Actualizador {
             }
             ultimoError = "";
         } catch (Exception e) {
-            ultimoError = "Sin conexión con el servidor de actualizaciones";
+            String causa = e.getClass().getSimpleName() + (e.getMessage() != null ? ": " + e.getMessage() : "");
+            ultimoError = "Sin conexión con el servidor de actualizaciones (" + (causa.length() > 160 ? causa.substring(0, 160) : causa) + ")";
         }
         return cambioWeb;
+    }
+
+    /**
+     * Guarda unas pantallas nuevas que bajó la propia ventana de INOFER (el navegador sí llega a internet
+     * aunque Java no pueda, por ejemplo con un proxy o un antivirus que revisa las conexiones seguras).
+     */
+    public synchronized boolean guardarPaginaRecibida(byte[] html) {
+        try {
+            if (html == null || html.length < 50_000) return false;
+            String texto = new String(html, StandardCharsets.UTF_8);
+            String v = versionDe(html);
+            if (!texto.contains("</html>") || !texto.contains("INOFER") || compararVersiones(v, versionPaginaActual()) <= 0) return false;
+            Files.createDirectories(carpetaWeb);
+            Path tmp = carpetaWeb.resolve("index.html.tmp");
+            Files.write(tmp, html);
+            Files.move(tmp, carpetaWeb.resolve("index.html"), StandardCopyOption.REPLACE_EXISTING);
+            versionWebDisponible = v;
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------ utilidades
@@ -172,8 +199,37 @@ public final class Actualizador {
         return m.find() ? m.group(1) : null;
     }
 
+    private static volatile SSLContext contextoWindows;
+
+    /** Certificados de Windows (los mismos que usa Edge): sirven si un antivirus o la red revisa las conexiones seguras. */
+    private static SSLContext contextoWindows() throws Exception {
+        if (contextoWindows == null) {
+            KeyStore ks = KeyStore.getInstance("Windows-ROOT");
+            ks.load(null, null);
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ks);
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, tmf.getTrustManagers(), null);
+            contextoWindows = ctx;
+        }
+        return contextoWindows;
+    }
+
     private static byte[] descargar(String url, int timeoutMs) throws IOException {
+        try {
+            return descargar(url, timeoutMs, false);
+        } catch (SSLException e) {
+            if (!System.getProperty("os.name", "").toLowerCase().contains("win")) throw e;
+            return descargar(url, timeoutMs, true);
+        }
+    }
+
+    private static byte[] descargar(String url, int timeoutMs, boolean certificadosWindows) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        if (certificadosWindows && c instanceof HttpsURLConnection) {
+            try { ((HttpsURLConnection) c).setSSLSocketFactory(contextoWindows().getSocketFactory()); }
+            catch (Exception e) { throw new SSLException("No se pudieron usar los certificados de Windows: " + e.getMessage()); }
+        }
         c.setConnectTimeout(timeoutMs);
         c.setReadTimeout(timeoutMs);
         c.setInstanceFollowRedirects(true);

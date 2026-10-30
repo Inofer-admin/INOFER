@@ -55,8 +55,23 @@
         var url = esJava ? '/api/actualizar?t=' + Date.now() : 'version.json?t=' + Date.now();
         var pedir = function (u) { return fetch(u, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }); };
         pedir(url).catch(function () { return esJava ? pedir('/api/version?t=' + Date.now()) : null; }).then(function (j) {
-          if (j && j.web && cmpVer(j.web, actual) > 0) { pendiente = j.web; intentar(); }
-        }).catch(function () {});
+          if (j && j.web && cmpVer(j.web, actual) > 0) { pendiente = j.web; intentar(); return; }
+          if (esJava) porVentana();
+        }).catch(function () { if (esJava) porVentana(); });
+      }
+      // Programa de la PC: si Java no llega a GitHub (proxy o antivirus), la ventana baja las pantallas y se las pasa al programa
+      var PAGES = 'https://inofer-admin.github.io/INOFER/inofer/', bajando = false;
+      function porVentana() {
+        if (bajando) return; bajando = true;
+        fetch(PAGES + 'version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+          if (!v || !v.web || cmpVer(v.web, actual) <= 0) return null;
+          return fetch(PAGES + 'index.html?v=' + encodeURIComponent(v.web), { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); }).then(function (html) {
+            if (html.indexOf('content="' + v.web + '"') === -1) return null;
+            return fetch('/api/pagina', { method: 'POST', headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: html }).then(function (r) { return r.ok ? r.json() : null; }).then(function (res) {
+              if (res && res.ok && res.web && cmpVer(res.web, actual) > 0) { pendiente = res.web; intentar(); }
+            });
+          });
+        }).catch(function () { }).then(function () { bajando = false; });
       }
       window.inoferVersionActual = actual;
       setTimeout(revisar, 4000);
