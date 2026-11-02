@@ -3,7 +3,7 @@
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const clave = s => norm(s).replace(/[\s\-\/_.]/g, '');
       const plata = n => '$ ' + Math.round(Number(n) || 0).toLocaleString('es-AR');
       window.inoferPlata = plata;
@@ -12,6 +12,7 @@
       const DIA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
       function catDe(part) {
+        if (window.inoferCatBuscar) return inoferCatBuscar(part, true);
         const k = norm(part), c2 = clave(part);
         return cat().find(x => norm(x.part) === k) || cat().find(x => clave(x.part) === c2) || null;
       }

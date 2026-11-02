@@ -1493,6 +1493,7 @@ function horarioInforme_(cfg) {
 function enviarInformeSemanal(forzar, opc) {
   opc = opc || {};
   if (!opc.manual) ajustarDisparadores_();
+  if (!opc.manual) { try { archivoAutomatico_(); } catch (e) {} }
   const mods = obtenerEstadoModulos();
   const cfg = mods.informes || {};
   const props = PropertiesService.getScriptProperties();
@@ -1623,9 +1624,53 @@ function candidatasArchivo_(mods, meses) {
   const corte = sumarDias_(isoDia_(new Date()), -Math.round(Math.max(1, num_(meses) || 6) * 30.44));
   return { corte: corte, lista: (mods.orders || []).filter(function (o) { return o && !DEMO_ORD_SRV[o.id] && o.status === 'Completada' && ultimaFechaOrden_(o) && ultimaFechaOrden_(o) < corte; }) };
 }
+// Archivo automático: una vez por día pasa al archivo las OP completadas de hace más de N meses (lo elige el admin)
+function archivoAutoCfg_() {
+  let c = null; try { c = JSON.parse(PropertiesService.getScriptProperties().getProperty('ARCHIVO_AUTO') || 'null'); } catch (e) { c = null; }
+  c = c || {};
+  return { activo: c.activo !== false, meses: Math.max(1, num_(c.meses) || 3) };
+}
+function archivarCore_(u, meses) {
+  const mods = obtenerEstadoModulos();
+  const c = candidatasArchivo_(mods, meses);
+  if (!c.lista.length) return { archivadas: 0, corte: c.corte };
+  const sh = hojaArchivo_();
+  const ahora = new Date().toISOString(), por = etiquetaUsuario_(u);
+  c.lista.forEach(function (o) {
+    const j = JSON.stringify(o); const partes = [];
+    for (let p = 0; p < j.length; p += CHUNK) partes.push(j.substring(p, p + CHUNK));
+    const fila = [String(o.id), String(o.ordNumber || ''), String(o.part || ''), String(o.machine || ''), ultimaFechaOrden_(o), ahora, por].concat(partes);
+    sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
+  });
+  const quitar = {}; c.lista.forEach(function (o) { quitar[String(o.id)] = 1; });
+  guardarModuloSinLock_('orders', (mods.orders || []).filter(function (o) { return !quitar[String(o.id)]; }));
+  olvidarIdsArchivo_();
+  auditar_(u, 'archivó', 'orders', ['Archivó ' + c.lista.length + ' órdenes completadas con último turno antes del ' + c.corte + ' (' + c.lista.slice(0, 15).map(function (o) { return o.ordNumber; }).join(', ') + (c.lista.length > 15 ? '…' : '') + ')']);
+  return { archivadas: c.lista.length, corte: c.corte };
+}
+function archivoAutomatico_() {
+  const cfg = archivoAutoCfg_();
+  if (!cfg.activo) return { archivadas: 0, apagado: true };
+  const props = PropertiesService.getScriptProperties();
+  const hoy = isoDia_(new Date());
+  let ult = null; try { ult = JSON.parse(props.getProperty('ARCHIVO_AUTO_ULTIMO') || 'null'); } catch (e) { }
+  if (ult && ult.dia === hoy) return { archivadas: 0, yaHoy: true };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { archivadas: 0 };
+  try {
+    try { ult = JSON.parse(props.getProperty('ARCHIVO_AUTO_ULTIMO') || 'null'); } catch (e) { }
+    if (ult && ult.dia === hoy) return { archivadas: 0, yaHoy: true };
+    const r = archivarCore_({ usuario: 'automático', nombre: 'Archivo automático' }, cfg.meses);
+    props.setProperty('ARCHIVO_AUTO_ULTIMO', JSON.stringify({ dia: hoy, at: new Date().toISOString(), archivadas: r.archivadas, meses: cfg.meses }));
+    return r;
+  } finally { lock.releaseLock(); }
+}
 function accionAlmacen(u, body) {
-  const A = ['almacenUso', 'archivarOrdenes', 'archivoListar', 'archivoRestaurar', 'archivoRegistros'];
+  const A = ['almacenUso', 'archivarOrdenes', 'archivoListar', 'archivoRestaurar', 'archivoRegistros', 'archivoAutoRevisar', 'archivoAutoConfig'];
   if (A.indexOf(body.action) === -1) return null;
+  if (body.action === 'archivoAutoRevisar') { // lo pide cualquier equipo al abrir; solo hace algo una vez por día
+    try { const r = archivoAutomatico_(); return { status: 'ok', archivadas: r.archivadas || 0 }; } catch (e) { return { status: 'ok', archivadas: 0, error: String(e && e.message || e) }; }
+  }
   if (body.action === 'archivoRegistros') {
     if (!(puede(u, 'partes', 'view') || puede(u, 'indicadores', 'view') || puede(u, 'ordenes', 'view'))) return { status: 'ok', records: [] };
     return { status: 'ok', records: registrosArchivados_() };
@@ -1637,7 +1682,16 @@ function accionAlmacen(u, body) {
     uso.candidatas = c.lista.length; uso.corte = c.corte;
     uso.turnosCandidatas = c.lista.reduce(function (s, o) { return s + (o.logs || []).length; }, 0);
     uso.bytesCandidatas = JSON.stringify(c.lista).length;
+    uso.auto = archivoAutoCfg_();
+    try { uso.autoUltimo = JSON.parse(PropertiesService.getScriptProperties().getProperty('ARCHIVO_AUTO_ULTIMO') || 'null'); } catch (e) { uso.autoUltimo = null; }
     return { status: 'ok', uso: uso };
+  }
+  if (body.action === 'archivoAutoConfig') {
+    const cfg = { activo: !!body.activo, meses: Math.max(1, Math.min(60, num_(body.meses) || 3)) };
+    PropertiesService.getScriptProperties().setProperty('ARCHIVO_AUTO', JSON.stringify(cfg));
+    PropertiesService.getScriptProperties().deleteProperty('ARCHIVO_AUTO_ULTIMO');
+    auditar_(u, 'configuró', 'orders', ['Archivo automático ' + (cfg.activo ? 'activado: órdenes completadas de hace más de ' + cfg.meses + ' meses' : 'apagado')]);
+    return { status: 'ok', auto: cfg };
   }
   if (body.action === 'archivoListar') {
     return { status: 'ok', archivadas: leerArchivo_(true).map(function (x) { return { id: x.id, ordNumber: x.ordNumber, part: x.part, machine: x.machine, ultima: x.ultima, at: x.at, por: x.por, qty: x.o ? num_(x.o.qtyTarget) : 0, ok: x.o ? totalBuenas_(x.o) : 0, turnos: x.o ? (x.o.logs || []).length : 0 }; }).reverse() };
@@ -1647,21 +1701,8 @@ function accionAlmacen(u, body) {
   try {
     const mods = obtenerEstadoModulos();
     if (body.action === 'archivarOrdenes') {
-      const c = candidatasArchivo_(mods, body.meses);
-      if (!c.lista.length) return { status: 'ok', archivadas: 0, corte: c.corte };
-      const sh = hojaArchivo_();
-      const ahora = new Date().toISOString(), por = etiquetaUsuario_(u);
-      c.lista.forEach(function (o) {
-        const j = JSON.stringify(o); const partes = [];
-        for (let p = 0; p < j.length; p += CHUNK) partes.push(j.substring(p, p + CHUNK));
-        const fila = [String(o.id), String(o.ordNumber || ''), String(o.part || ''), String(o.machine || ''), ultimaFechaOrden_(o), ahora, por].concat(partes);
-        sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
-      });
-      const quitar = {}; c.lista.forEach(function (o) { quitar[String(o.id)] = 1; });
-      guardarModuloSinLock_('orders', (mods.orders || []).filter(function (o) { return !quitar[String(o.id)]; }));
-      olvidarIdsArchivo_();
-      auditar_(u, 'archivó', 'orders', ['Archivó ' + c.lista.length + ' órdenes completadas con último turno antes del ' + c.corte + ' (' + c.lista.slice(0, 15).map(function (o) { return o.ordNumber; }).join(', ') + (c.lista.length > 15 ? '…' : '') + ')']);
-      return { status: 'ok', archivadas: c.lista.length, corte: c.corte };
+      const r = archivarCore_(u, body.meses);
+      return { status: 'ok', archivadas: r.archivadas, corte: r.corte };
     }
     if (body.action === 'archivoRestaurar') {
       const x = leerArchivo_(true).filter(function (a) { return a.id === String(body.id); })[0];

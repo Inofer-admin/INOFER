@@ -192,6 +192,7 @@
       let firma = '';
       function actualizar() {
         const tiles = $('gtTiles'); if (!tiles) return;
+        const vgt = $('viewGantt'); if (document.hidden || (vgt && vgt.classList.contains('hidden'))) { firma = ''; return; }
         const txt = id => (($(id) || {}).textContent || '').trim();
         const horas = num(txt('ganttTotalHoursBadge')), util = num(txt('ganttUtilPctBadge').replace(/^[^\d-]*/, ''));
         const alsi = num(txt('ganttAlsiKgBadge').replace(/^[^\d-]*/, '')), zamac = num(txt('ganttZamacKgBadge').replace(/^[^\d-]*/, ''));

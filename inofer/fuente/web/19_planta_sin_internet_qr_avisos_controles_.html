@@ -3,7 +3,7 @@
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const pad = n => String(n).padStart(2, '0');
       const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
       const hoyIso = () => isoD(new Date());
@@ -35,7 +35,7 @@
       const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
       const partes = () => (typeof records !== 'undefined' ? records : []).filter(r => !(window.inoferEsDemo && inoferEsDemo(r)));
       const esDemoOrden = o => window.inoferEsDemo && inoferEsDemo({ fromOrder: true, ordId: o.id });
-      const catDe = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const catDe = part => window.inoferCatBuscar ? (inoferCatBuscar(part) || undefined) : (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
       const COD_CAT = () => window.INOFER_CODIGO_CATEGORIA || {};
       const catDeCodigo = cod => COD_CAT()[parseInt(String(cod || ''), 10)] || 'otros';
       const BTN = 'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition';
@@ -983,6 +983,8 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
               <p class="text-[11px] text-slate-400">Las órdenes <b>completadas</b> cuyo último turno es anterior a la fecha elegida pasan a una hoja aparte de la nube (BD_Archivo_Ordenes). Dejan de viajar a cada celular y PC, pero <b>siguen contando</b> en el tablero, los velocímetros y el informe semanal. Se pueden volver a sacar del archivo cuando quieras.</p>
               <div class="flex flex-wrap items-center gap-2"><span>Archivar las completadas de hace más de</span><select id="almMeses" class="${INP}">${[3, 6, 12, 24].map(m => `<option value="${m}" ${m === meses ? 'selected' : ''}>${m} meses</option>`).join('')}</select>
                 ${U ? (U.candidatas ? `<span class="text-white">→ <b>${n0(U.candidatas)}</b> órdenes (${n0(U.turnosCandidatas)} turnos, ${kb(U.bytesCandidatas)}) con último turno antes del ${fFecha(U.corte)}/${String(U.corte).slice(0, 4)}</span><button type="button" id="almArchivar" class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Archivar ${n0(U.candidatas)} órdenes</button>` : `<span class="text-slate-400">No hay órdenes completadas tan viejas para archivar.</span>`) : ''}</div></div>
+            ${U && U.auto ? `<div class="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-1.5"><label class="flex flex-wrap items-center gap-2 text-[12px] text-slate-200"><input type="checkbox" id="almAuto" ${U.auto.activo ? 'checked' : ''} class="h-4 w-4 accent-emerald-500"><b class="text-emerald-300">🤖 Archivar solo, todos los días</b> las completadas de hace más de <select id="almAutoMeses" class="${INP}">${[1, 2, 3, 6, 12, 24].map(m => `<option value="${m}" ${m === U.auto.meses ? 'selected' : ''}>${m} ${m === 1 ? 'mes' : 'meses'}</option>`).join('')}</select></label>
+              <div class="text-[11px] text-slate-400">${U.auto.activo ? 'Así la app sigue rápida aunque pasen los años. ' : 'Apagado: solo se archiva cuando tocás el botón de arriba. '}${U.autoUltimo ? `Última revisión: ${fFecha(U.autoUltimo.dia)}/${String(U.autoUltimo.dia).slice(0, 4)} · ${U.autoUltimo.archivadas ? n0(U.autoUltimo.archivadas) + ' archivadas' : 'no había nada para archivar'}.` : ''}</div></div>` : ''}
             <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">📁 Órdenes archivadas ${archivadas ? '(' + archivadas.length + ')' : ''}</span><input id="almBuscar" value="${esc(buscar)}" placeholder="Buscar OP o pieza…" class="${INP} w-48"></div>
               ${archivadas == null ? '<div class="text-slate-400">Cargando…</div>' : (arch.length ? `<div class="max-h-64 overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-950"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1 pr-2">OP</th><th class="pr-2">Pieza</th><th class="pr-2">Máquina</th><th class="pr-2">Último turno</th><th class="pr-2 text-right">Buenas</th><th></th></tr></thead><tbody>
                 ${arch.slice(0, 300).map(a => `<tr class="border-t border-slate-800"><td class="py-1 pr-2 font-bold text-white">${esc(a.ordNumber)}</td><td class="pr-2">${esc(a.part)}</td><td class="pr-2 text-slate-400">${esc(maqId(a.machine))}</td><td class="pr-2 text-slate-400">${a.ultima ? fFecha(a.ultima) + '/' + a.ultima.slice(0, 4) : '—'}</td><td class="pr-2 text-right">${n0(a.ok)} / ${n0(a.qty)}</td><td class="text-right"><button type="button" class="alm-rest ${BTN} border-slate-600 text-slate-200" data-id="${esc(a.id)}">↩ Sacar del archivo</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="text-slate-400">No hay órdenes archivadas.</div>')}</div>
@@ -1006,7 +1008,15 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           try { archivadas = (await api({ action: 'archivoListar' })).archivadas || []; } catch (e) { archivadas = []; }
           pintar();
         };
-        w.addEventListener('change', e => { if (e.target.id === 'almMeses') { meses = Number(e.target.value) || 6; usoNube = null; cargar(); } });
+        w.addEventListener('change', async e => {
+          if (e.target.id === 'almMeses') { meses = Number(e.target.value) || 6; usoNube = null; cargar(); }
+          if (e.target.id === 'almAuto' || e.target.id === 'almAutoMeses') {
+            const activo = !!(w.querySelector('#almAuto') || {}).checked, m = Number((w.querySelector('#almAutoMeses') || {}).value) || 3;
+            try { await api({ action: 'archivoAutoConfig', activo, meses: m }); toast(activo ? `✓ Se archivan solas las completadas de hace más de ${m} ${m === 1 ? 'mes' : 'meses'}` : 'Archivo automático apagado'); } catch (er) { toast('No se pudo guardar: ' + er.message); }
+            if (activo) { try { const r = await api({ action: 'archivoAutoRevisar' }); if (r.archivadas) { archRegs = null; try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (er) { } toast(`✓ ${r.archivadas} órdenes archivadas`); } } catch (er) { } }
+            usoNube = null; archivadas = null; cargar();
+          }
+        });
         w.addEventListener('input', e => { if (e.target.id === 'almBuscar') { buscar = e.target.value; pintar(); const i = w.querySelector('#almBuscar'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); } });
         w.addEventListener('click', async e => {
           const b = e.target.closest('button'); if (!b) return;
@@ -1045,6 +1055,11 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
         cargar();
       }
       window.inoferAlmacenamiento = abrirAlmacen;
+      // Archivo automático: al abrir la app se le pide a la nube que revise (hace algo como mucho una vez por día)
+      setTimeout(async function revisarArchivo() {
+        if (!sesion() || !enNube()) { setTimeout(revisarArchivo, 60000); return; }
+        try { const r = await api({ action: 'archivoAutoRevisar' }); if (r && r.archivadas) { archRegs = null; try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (e) { } } } catch (e) { }
+      }, 25000);
       window.inoferPlantaPerm = { verInforme: () => verInforme() && enNube(), esAdmin };
       window.inoferModGuardar = k => guardarMod(k);
       window.inoferMarcarNoTrabajo = (m, fecha, turnoNombre) => { const av = D('avisos'); av.ignorados = av.ignorados || {}; av.ignorados[m + '|' + fecha + '|' + turnoNombre] = { por: quien(), at: new Date().toISOString() }; guardarMod('avisos'); try { programarAvisos(); } catch (e) { } };

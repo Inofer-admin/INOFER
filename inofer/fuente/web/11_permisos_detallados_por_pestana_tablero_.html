@@ -302,10 +302,12 @@
         window.renderRecordsTable = function () {
           const r = rt.apply(this, arguments);
           try {
+            let porId = null; // se arma una sola vez (antes se recalculaba por cada fila: muy lento con muchos turnos)
             document.querySelectorAll('#recordsTableBody .edit-record-btn').forEach(b => {
               const id = b.getAttribute('data-edit-id') || '';
               if (!id.startsWith('op-')) return;
-              const reg = registrosDeOrdenes().find(x => x.id === id);
+              if (!porId) { porId = new Map(); registrosDeOrdenes().forEach(x => porId.set(x.id, x)); }
+              const reg = porId.get(id);
               const td = b.parentElement;
               const cont = td && td.closest('td');
               if (!reg || !cont) return;

@@ -3,7 +3,7 @@
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const pad = n => String(n).padStart(2, '0');
       const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
       const hoy = () => isoD(new Date());
@@ -23,7 +23,7 @@
       const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
       const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
       const esDemo = o => window.inoferEsDemo && inoferEsDemo({ fromOrder: true, ordId: o.id });
-      const catDe = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
+      const catDe = part => window.inoferCatBuscar ? (inoferCatBuscar(part) || undefined) : (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
       const mant = () => (window.inoferModLocal && inoferModLocal('mantenimiento')) || { roturas: [] };
       const BTN = 'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition';
 
@@ -32,9 +32,10 @@
       // ---------------------------------------------------------------------------------
       function oee(regs) {
         let disp = 0, par = 0, ok = 0, tot = 0, teorico = 0; const porMaq = {};
+        const porId = new Map(); ordenes().forEach(x => { if (!porId.has(x.id)) porId.set(x.id, x); });
         (regs || []).filter(r => r && r.fromOrder).forEach(r => {
           const cats = (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).reduce((a, c) => a + (Number(r[c.key]) || 0), 0);
-          const o = ordenes().find(x => x.id === r.ordId); const c = catDe(r.part);
+          const o = porId.get(r.ordId); const c = catDe(r.part);
           const uh = Number(o && o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
           const d = Number(r.available) || 0, andando = Math.max(0, d - cats), t = (Number(r.okPcs) || 0) + (Number(r.scrapPcs) || 0);
           disp += d; par += Math.min(d, cats); ok += Number(r.okPcs) || 0; tot += t; if (uh) teorico += uh * andando;
@@ -390,7 +391,7 @@
           const ap = window.inoferApplyPermissions; const f = function () { const r = ap.apply(this, arguments); try { alIngresar(); pintarTodo(); } catch (e) { } return r; }; Object.assign(f, ap); f.__hoy = true; window.inoferApplyPermissions = f;
         }
         if (typeof window.switchTab === 'function') { const sw = window.switchTab; if (!sw.__hoy2) { const f = function () { const r = sw.apply(this, arguments); setTimeout(pintarTodo, 50); return r; }; Object.assign(f, sw); f.__hoy2 = true; window.switchTab = f; } }
-        setInterval(pintarTodo, 15000);
+        setInterval(() => { if (!document.hidden) pintarTodo(); }, 15000);
         setTimeout(() => { alIngresar(); pintarTodo(); }, 1500);
         try { const mo = new MutationObserver(() => { if ($('viewMant') && !$('viewMant').classList.contains('hidden') && !$('mantRoturas')) seccionRoturas(); }); const vm = $('viewMant'); if (vm) mo.observe(vm, { childList: true }); } catch (e) { }
         if (typeof window.saveProductionOrders === 'function' && !window.saveProductionOrders.__hoy) { const sp = window.saveProductionOrders; const f = function () { const r = sp.apply(this, arguments); setTimeout(pintarTodo, 50); return r; }; Object.assign(f, sp); f.__hoy = true; window.saveProductionOrders = f; }

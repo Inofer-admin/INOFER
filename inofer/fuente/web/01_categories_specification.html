@@ -1,4 +1,33 @@
   <script>
+    // ===== Ayudas de velocidad (compartidas por todos los bloques) =====
+    // Normalizar textos (minúsculas, sin acentos) con memoria: se llama miles de veces con los mismos nombres de pieza
+    (function () {
+      const memo = new Map();
+      window.inoferNormTxt = function (s) {
+        const k = String(s || '');
+        let v = memo.get(k);
+        if (v === undefined) { v = k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim(); if (memo.size > 50000) memo.clear(); memo.set(k, v); }
+        return v;
+      };
+      // Buscar una pieza en la base de datos (catálogo) por nombre sin recorrer toda la lista cada vez
+      let idx = null, idxArr = null, idxLen = -1, idxAt = 0;
+      const clave = s => window.inoferNormTxt(s).replace(/[\s\-\/_.]/g, '');
+      function armar(arr) {
+        const porNom = new Map(), porClave = new Map();
+        arr.forEach(x => { if (!x) return; const n = window.inoferNormTxt(x.part), c = clave(x.part); if (!porNom.has(n)) porNom.set(n, x); if (!porClave.has(c)) porClave.set(c, x); });
+        idx = { porNom, porClave }; idxArr = arr; idxLen = arr.length; idxAt = Date.now();
+      }
+      window.inoferCatBuscar = function (part, tambienClave) {
+        const arr = (typeof partsCatalog !== 'undefined' && Array.isArray(partsCatalog)) ? partsCatalog : [];
+        if (!idx || idxArr !== arr || idxLen !== arr.length || Date.now() - idxAt > 1500) armar(arr);
+        const x = idx.porNom.get(window.inoferNormTxt(part));
+        if (x && x.part != null && window.inoferNormTxt(x.part) === window.inoferNormTxt(part)) return x;
+        if (x) { armar(arr); const y = idx.porNom.get(window.inoferNormTxt(part)); if (y) return y; }
+        return tambienClave ? (idx.porClave.get(clave(part)) || null) : null;
+      };
+    })();
+  </script>
+  <script>
     // Categories specification
     const CATEGORIES = [
       { key: 'parada_maquina', label: 'Paradas de máquina (rotura / inyectora)', shortLabel: 'Parada Máquina', color: '#f43f5e' },
@@ -702,6 +731,13 @@
         return;
       }
 
+      // Se dibujan de a tandas (los primeros 150) para que el Historial abra rápido aunque haya miles de turnos
+      const pedidoMas = window.__recMas === true; window.__recMas = false;
+      if (!pedidoMas) window.__recLimite = 150;
+      window.__recUltimos = filtered;
+      const todos = filtered;
+      filtered = todos.slice(0, window.__recLimite || 150);
+      const restan = todos.length - filtered.length;
       tbody.innerHTML = filtered.map(r => {
         const avail = Number(r.available) || 0;
         let stopSum = 0;
@@ -738,7 +774,9 @@
             </td>
           </tr>
         `;
-      }).join('');
+      }).join('') + (restan > 0 ? `<tr id="recVerMasFila"><td colspan="16" class="py-3 text-center"><button type="button" id="recVerMas" class="rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/20">Mostrar ${Math.min(restan, 300)} más · quedan ${restan.toLocaleString('es-AR')}</button></td></tr>` : '');
+      const vm = document.getElementById('recVerMas');
+      if (vm) vm.addEventListener('click', () => { window.__recLimite = (window.__recLimite || 150) + 300; window.__recMas = true; (window.renderRecordsTable || renderRecordsTable)(window.__recUltimos || []); });
 
       tbody.querySelectorAll('.edit-record-btn').forEach(btn => {
         btn.addEventListener('click', () => {

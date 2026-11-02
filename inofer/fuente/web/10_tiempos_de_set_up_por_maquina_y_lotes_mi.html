@@ -3,7 +3,7 @@
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const clave = s => norm(s).replace(/[\s\-\/_.]/g, '');
       const KEY = 'tablero_inyectoras_setup_v1';
       const DEF = { maquinas: {
@@ -28,6 +28,7 @@
         return { cmo, alis, total: cmo + alis };
       }
       function catDe(part) {
+        if (window.inoferCatBuscar) return inoferCatBuscar(part, true);
         const pc = typeof partsCatalog !== 'undefined' ? partsCatalog : [];
         return pc.find(x => norm(x.part) === norm(part)) || pc.find(x => clave(x.part) === clave(part)) || null;
       }

@@ -444,6 +444,41 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const r = await A.evaluate(() => ({ btn: !!document.getElementById('inoferInstalarApp'), fn: typeof inoferInstalarApp }));
       ok(r.btn && r.fn === 'function', 'no aparece el botón Instalar: ' + JSON.stringify(r));
     });
+    await prueba('Velocidad con un año de datos y archivo automático de órdenes viejas', async () => {
+      const r = await A.evaluate(async () => {
+        const guard = productionOrders.slice();
+        const espera = () => new Promise(res => requestAnimationFrame(() => setTimeout(res, 0)));
+        for (let i = 0; i < 400; i++) { const logs = []; for (let j = 0; j < 25; j++) logs.push({ id: 'vl' + i + '_' + j, date: '2026-0' + (1 + j % 9) + '-1' + (j % 9), turno: 'Mañana', startTime: '06:00', endTime: '14:00', okPcs: 300, scrapPcs: 5, operator: 'Op' }); productionOrders.push({ id: 'vo' + i, ordNumber: String(70000 + i), part: 'VPZA-' + (i % 120), machine: 'H-50', qtyTarget: 5000, status: i < 350 ? 'Completada' : 'En Proceso', logs }); }
+        const t = {};
+        for (const tab of ['records', 'orders', 'dashboard', 'stock']) { const a = performance.now(); switchTab(tab); try { if (tab === 'records') renderRecordsTable(getFilteredRecords()); } catch (e) { } await espera(); t[tab] = Math.round(performance.now() - a); }
+        switchTab('records'); renderRecordsTable(getFilteredRecords()); await espera();
+        const filas = document.querySelectorAll('#recordsTableBody tr').length, mas = !!document.getElementById('recVerMas');
+        document.getElementById('recVerMas')?.click(); await espera();
+        const filas2 = document.querySelectorAll('#recordsTableBody tr').length;
+        productionOrders.length = 0; guard.forEach(o => productionOrders.push(o));
+        // orden vieja completada → el archivo automático la saca de la lista pero sigue contando
+        productionOrders.push({ id: 'ord-vieja', ordNumber: '88888', part: 'VIEJA-1', machine: 'H-50', qtyTarget: 10, status: 'Completada', logs: [{ id: 'lg-vieja', date: '2025-01-10', turno: 'Mañana', startTime: '06:00', endTime: '14:00', okPcs: 10 }] });
+        saveProductionOrders(); await new Promise(res => setTimeout(res, 4000));
+        const cfg = await inoferCloudPost({ action: 'archivoAutoConfig', token: inoferAuthToken(), activo: true, meses: 3 });
+        const a1 = await inoferCloudPost({ action: 'archivoAutoRevisar', token: inoferAuthToken() });
+        const a2 = await inoferCloudPost({ action: 'archivoAutoRevisar', token: inoferAuthToken() });
+        const n = await (await fetch(cloudApiUrl + '?action=json&t=' + Date.now() + inoferTokenParam())).json();
+        const enLista = ((n.modules || {}).orders || []).some(o => o.id === 'ord-vieja');
+        const reg = await inoferCloudPost({ action: 'archivoRegistros', token: inoferAuthToken() });
+        await inoferCloudPost({ action: 'archivoRestaurar', token: inoferAuthToken(), id: 'ord-vieja' });
+        try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (e) { } await new Promise(res => setTimeout(res, 2500));
+        productionOrders = productionOrders.filter(o => o.id !== 'ord-vieja'); saveProductionOrders(); await new Promise(res => setTimeout(res, 2500));
+        inoferAlmacenamiento(); await new Promise(res => setTimeout(res, 2500));
+        const auto = !!document.getElementById('almAuto') && document.getElementById('almAuto').checked;
+        document.querySelectorAll('.fixed.inset-0').forEach(x => { if (x.querySelector('#almCuerpo')) x.remove(); });
+        return { auto, e1: a1.error, t, filas, mas, filas2, cfg: cfg.status, a1: a1.archivadas, a2: a2.archivadas, enLista, sigue: (reg.records || []).some(x => x.ordId === 'ord-vieja') };
+      });
+      Object.entries(r.t).forEach(([k, v]) => ok(v < 3000, `la pestaña ${k} tardó ${v} ms`));
+      ok(r.filas <= 152 && r.mas && r.filas2 > r.filas, 'historial por tandas: ' + JSON.stringify([r.filas, r.mas, r.filas2]));
+      ok(r.cfg === 'ok' && r.a1 >= 1 && r.a2 === 0, 'archivo automático: ' + JSON.stringify(r));
+      ok(r.auto, 'falta la casilla de archivo automático en Almacenamiento');
+      ok(!r.enLista && r.sigue, 'la orden archivada debe salir de la lista y seguir contando: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

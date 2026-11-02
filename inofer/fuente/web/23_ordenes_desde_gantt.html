@@ -3,7 +3,7 @@
     (function () {
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
       const pad = n => String(n).padStart(2, '0');
       const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());

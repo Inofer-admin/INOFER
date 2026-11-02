@@ -5,7 +5,7 @@
       try { const stl = document.createElement('style'); stl.textContent = '@media (max-width: 640px){ body > header.sticky{ position: static; } }'; document.head.appendChild(stl); } catch (e) { }
       const $ = id => document.getElementById(id);
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
       const PREF_KEY = 'tablero_inyectoras_operario_v1';
       const MAQ = [
         { id: '200V', full: 'Italpresse 200 Tn (V)' }, { id: '200N', full: 'Italpresse 200 Tn (N)' }, { id: '180', full: 'Italpresse 180 Tn' },
