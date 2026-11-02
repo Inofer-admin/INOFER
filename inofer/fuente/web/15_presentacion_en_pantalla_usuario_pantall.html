@@ -180,6 +180,7 @@
           cont.innerHTML = tit('Facturación programada', esc(w.name || w.code) + ' · sin IVA') + `<div class="mb-8 text-8xl font-black text-lime-300">${inoferPlata(f.total)}</div><div class="space-y-4">${barras(items)}</div>`;
           return;
         }
+        if (window.inoferPresExtra && inoferPresExtra[d.tipo]) { inoferPresExtra[d.tipo](d, cont, { tit, barras, registros, PERIODOS, color, gauge, grafico: g => graficos.push(g), semanaActual }); return; }
         if (d.tipo === 'mensaje') {
           cont.innerHTML = `<div class="flex flex-1 items-center justify-center p-10 text-center"><div class="whitespace-pre-wrap text-6xl font-black leading-tight text-white">${esc(o.texto || '')}</div></div>`;
           return;
@@ -255,7 +256,7 @@
         else if (e.key === 'Escape' && !document.fullscreenElement) detener();
       });
       window.inoferPresentacion = { iniciar: iniciarPres, detener, config: () => cfg };
-      window.inoferPresInterna = { render: (d, c) => render(d, c), activas: () => activas(), cfg: () => cfg, tipos: TIPOS };
+      window.inoferPresInterna = { render: (d, c) => render(d, c), activas: () => activas(), cfg: () => cfg, tipos: TIPOS, periodos: PERIODOS };
 
       // ---------- configuración (administrador) ----------
       function montarCfg() {
@@ -303,7 +304,7 @@
                   <button type="button" data-a="subir" data-d="${i}" class="rounded px-1 text-xs text-slate-400 hover:text-white" title="Subir">↑</button>
                   <button type="button" data-a="bajar" data-d="${i}" class="rounded px-1 text-xs text-slate-400 hover:text-white" title="Bajar">↓</button>
                 </div>`; }).join('')}
-              <div class="flex flex-wrap items-center gap-2 pt-1"><select id="presNuevoTipo" class="min-w-0 flex-1 ${inp}">${Object.keys(TIPOS).map(k => `<option value="${k}">${esc(TIPOS[k].nombre)}</option>`).join('')}</select>
+              <div class="flex flex-wrap items-center gap-2 pt-1"><select id="presNuevoTipo" class="min-w-0 flex-1 ${inp}">${Object.keys(TIPOS).map(k => k === 'kpi' ? `<optgroup label="📈 Gráfico de un indicador">${kpis.map(x => `<option value="kpi:${x.key}">📈 ${esc(x.titulo || x.corto)}</option>`).join('')}</optgroup>` : `<option value="${k}">${esc(TIPOS[k].nombre)}</option>`).join('')}</select>
                 <button type="button" data-a="agregar" class="rounded-lg border border-cyan-500/50 px-3 py-1.5 text-xs font-bold text-cyan-200">+ Agregar</button></div>
               <div class="pt-1 text-[11px] text-slate-500">Vuelta completa: ${durTxt(total)} · ${L.filter(x => x.activo !== false).length} diapositivas activas</div>
             </div>
@@ -357,7 +358,7 @@
         else if (a === 'bajar' && i < L.length - 1) { [L[i + 1], L[i]] = [L[i], L[i + 1]]; if (selCfg === i) selCfg = i + 1; }
         else if (a === 'borrar') { if (!confirm('¿Quitar esta diapositiva?')) return; L.splice(i, 1); }
         else if (a === 'duplicar') { const cp = JSON.parse(JSON.stringify(L[i])); cp.id = 'd' + Date.now(); L.splice(i + 1, 0, cp); selCfg = i + 1; }
-        else if (a === 'agregar') { const tp = $('presNuevoTipo').value; L.push({ id: 'd' + Date.now(), tipo: tp, activo: true, opciones: tp === 'kpi' ? { kpi: 'inyeccion' } : (TIPOS[tp].ops.includes('periodo') ? { periodo: '7d', maquina: 'ALL' } : {}) }); selCfg = L.length - 1; }
+        else if (a === 'agregar') { const v = $('presNuevoTipo').value; const tp = v.split(':')[0], kk = v.split(':')[1]; L.push({ id: 'd' + Date.now(), tipo: tp, activo: true, opciones: tp === 'kpi' ? { kpi: kk || 'inyeccion' } : (TIPOS[tp].ops.includes('periodo') ? { periodo: '7d', maquina: 'ALL' } : {}) }); selCfg = L.length - 1; }
         else return;
         guardar(true); renderCfg();
       }

@@ -1,0 +1,146 @@
+  <script>
+    // ===== Presentación: más diapositivas (todos los gráficos de la app) =====
+    (function () {
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s == null ? '' : s).trim().toLowerCase();
+      const pad = n => String(n).padStart(2, '0');
+      const isoDe = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoy = () => isoDe(new Date());
+      const masDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoDe(d); };
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const n1 = v => (Math.round((Number(v) || 0) * 10) / 10).toLocaleString('es-AR');
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : []);
+      const maqId = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
+      const esDemo = o => window.inoferEsDemo && inoferEsDemo({ fromOrder: true, ordId: o.id });
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []).filter(o => !esDemo(o));
+      const corto = c => String(c || '').replace(/^\d+\s*-\s*/, '');
+      function desdeDe(periodo) { const h = hoy(); if (periodo === 'hoy') return h; if (periodo === 'mes') return h.slice(0, 8) + '01'; return masDias(h, periodo === '30d' ? -29 : -6); }
+      function diasDe(periodo) { const out = []; let f = desdeDe(periodo); const h = hoy(); while (f <= h) { out.push(f); f = masDias(f, 1); } return out; }
+      const fDia = iso => { const d = new Date(iso + 'T12:00:00'); return ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][d.getDay()] + ' ' + iso.slice(8, 10) + '/' + iso.slice(5, 7); };
+      // turnos de órdenes en el período (cada log con su orden)
+      function logs(periodo, maquinaNombre) {
+        const desde = desdeDe(periodo), h = hoy(), out = [];
+        ordenes().forEach(o => (o.logs || []).forEach(l => { if (l.date >= desde && l.date <= h && (!maquinaNombre || maquinaNombre === 'ALL' || o.machine === maquinaNombre)) out.push({ o, l }); }));
+        return out;
+      }
+      function programado(fecha, m) {
+        let q = 0;
+        try { Object.values(ganttWeeksData || {}).forEach(w => (((w.machines || {})[m] || {}).items || []).forEach(it => { if (it.isSharedCompanion) return; (it.dailyQty || []).forEach((x, d) => { if (window.inoferFechaDia && inoferFechaDia(w, d) === fecha) q += Number(x) || 0; }); })); } catch (e) { }
+        return q;
+      }
+      const vacio = (h, t, sub, msg) => h.tit(t, sub) + `<div class="text-3xl text-slate-400">${msg}</div>`;
+      function grafico(cont, h, cfg) {
+        const box = document.createElement('div'); box.className = 'relative min-h-0 flex-1 rounded-3xl border border-slate-800 bg-slate-900/60 p-4';
+        const cv = document.createElement('canvas'); box.appendChild(cv); cont.appendChild(box);
+        if (typeof Chart === 'undefined') return;
+        const base = { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 18 } } } }, scales: { x: { ticks: { color: '#cbd5e1', font: { size: 16 } }, grid: { color: '#1e293b' } }, y: { ticks: { color: '#cbd5e1', font: { size: 16 } }, grid: { color: '#1e293b' }, beginAtZero: true } } };
+        const g = new Chart(cv, Object.assign({}, cfg, { options: Object.assign(base, cfg.options || {}) }));
+        h.grafico(g);
+      }
+      const T = window.inoferPresInterna && inoferPresInterna.tipos;
+      if (!T) return;
+      Object.assign(T, {
+        estado: { nombre: '🖥️ Estado de las máquinas ahora', ops: [] },
+        produccion: { nombre: '🎯 Programado vs. producido por máquina', ops: ['periodo'] },
+        piezasDia: { nombre: '📦 Piezas buenas por día', ops: ['periodo', 'maquina'] },
+        utilDia: { nombre: '📉 Utilización día por día', ops: ['periodo', 'maquina'] },
+        turnos: { nombre: '🕐 Utilización por turno', ops: ['periodo'] },
+        codigos: { nombre: '🔢 Paradas por código (las que más tiempo llevan)', ops: ['periodo', 'maquina'] },
+        scrapMaq: { nombre: '♻️ Scrap por máquina', ops: ['periodo'] },
+        kpis4: { nombre: '📊 Los 4 indicadores en gráfico', ops: [] },
+        mantenimiento: { nombre: '🔧 Mantenimiento: roturas y preventivos', ops: [] },
+        stock: { nombre: '🧱 Stock con alerta', ops: [] }
+      });
+      const PER = p => (inoferPresInterna.periodos || {})[p || '7d'] || 'Últimos 7 días';
+      window.inoferPresExtra = {
+        estado(d, cont, h) {
+          const f = hoy();
+          const tarjetas = MAQS().map(m => {
+            const disp = !window.inoferMaquinaDisponible || inoferMaquinaDisponible(m.id, f);
+            const par = window.inoferCronoActiva ? inoferCronoActiva(m.id) : null;
+            const abiertas = ordenes().filter(o => maqId(o) === m.id && window.inoferCargaRapida && inoferCargaRapida.abierta(o));
+            const o = abiertas[0];
+            let pct = 0; try { const mm = o ? computeOrderMetrics(o) : null; pct = mm ? Math.min(100, Math.round(mm.progressPct || 0)) : 0; } catch (e) { }
+            const hecho = ordenes().filter(x => maqId(x) === m.id).reduce((a, x) => a + (x.logs || []).filter(l => l.date === f).reduce((b, l) => b + (Number(l.okPcs) || 0), 0), 0);
+            const prog = programado(f, m.id);
+            const est = !disp ? ['⛔ FUERA DE SERVICIO', 'border-rose-500 bg-rose-500/10', 'text-rose-300'] : (par ? ['⏸ PARADA · ' + corto(par.codigo), 'border-amber-500 bg-amber-500/10', 'text-amber-300'] : ['● EN SERVICIO', 'border-emerald-500/60 bg-emerald-500/5', 'text-emerald-300']);
+            return `<div class="flex flex-col rounded-3xl border-2 ${est[1]} p-5"><div class="flex items-baseline justify-between"><span class="text-5xl font-black text-white">${esc(m.short || m.id)}</span><span class="text-xl font-black ${est[2]}">${esc(est[0])}</span></div>
+              ${o ? `<div class="mt-3 text-3xl font-bold text-white">${esc(o.part)} <span class="text-xl text-slate-400">OP ${esc(o.ordNumber || '')}</span></div><div class="mt-2 h-5 overflow-hidden rounded-full bg-slate-800"><div class="h-full rounded-full" style="width:${pct}%;background:${h.color(pct)}"></div></div><div class="mt-1 text-xl text-slate-400">${pct}% de la orden</div>` : '<div class="mt-3 text-2xl text-slate-500">Sin orden abierta</div>'}
+              <div class="mt-auto pt-3 text-2xl text-slate-300">Hoy: <b class="text-white">${n0(hecho)}</b>${prog ? ` de ${n0(prog)} programadas` : ''}</div></div>`;
+          }).join('');
+          cont.innerHTML = h.tit('Estado de las máquinas', 'Ahora · ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })) + `<div class="grid flex-1 grid-cols-3 gap-5">${tarjetas}</div>`;
+        },
+        produccion(d, cont, h) {
+          const o = d.opciones || {}, dias = diasDe(o.periodo);
+          const filas = MAQS().map(m => {
+            const prog = dias.reduce((a, f) => a + programado(f, m.id), 0);
+            const hecho = logs(o.periodo).filter(x => maqId(x.o) === m.id).reduce((a, x) => a + (Number(x.l.okPcs) || 0), 0);
+            return { m: m.short || m.id, prog, hecho };
+          });
+          if (!filas.some(f => f.prog || f.hecho)) { cont.innerHTML = vacio(h, 'Programado vs. producido', PER(o.periodo), 'No hay programa ni producción en este período.'); return; }
+          cont.innerHTML = h.tit('Programado vs. producido', PER(o.periodo) + ' · piezas buenas');
+          grafico(cont, h, { type: 'bar', data: { labels: filas.map(f => f.m), datasets: [{ label: 'Programado', data: filas.map(f => f.prog), backgroundColor: '#475569' }, { label: 'Producido', data: filas.map(f => f.hecho), backgroundColor: filas.map(f => !f.prog ? '#38bdf8' : (f.hecho >= f.prog * 0.95 ? '#34d399' : (f.hecho >= f.prog * 0.75 ? '#fbbf24' : '#fb7185'))) }] } });
+        },
+        piezasDia(d, cont, h) {
+          const o = d.opciones || {}, dias = diasDe(o.periodo === 'hoy' ? '7d' : o.periodo);
+          const L = logs(o.periodo === 'hoy' ? '7d' : o.periodo, o.maquina);
+          const ok = dias.map(f => L.filter(x => x.l.date === f).reduce((a, x) => a + (Number(x.l.okPcs) || 0), 0));
+          const sc = dias.map(f => L.filter(x => x.l.date === f).reduce((a, x) => a + (Number(x.l.scrapPcs) || 0), 0));
+          const sub = PER(o.periodo === 'hoy' ? '7d' : o.periodo) + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
+          if (!ok.some(Boolean)) { cont.innerHTML = vacio(h, 'Piezas buenas por día', sub, 'Todavía no hay turnos cargados en este período.'); return; }
+          cont.innerHTML = h.tit('Piezas buenas por día', sub + ` · total ${n0(ok.reduce((a, b) => a + b, 0))}`);
+          grafico(cont, h, { type: 'bar', data: { labels: dias.map(fDia), datasets: [{ label: 'Buenas', data: ok, backgroundColor: '#34d399', stack: 's' }, { label: 'Scrap', data: sc, backgroundColor: '#fb7185', stack: 's' }] }, options: { scales: { x: { stacked: true, ticks: { color: '#cbd5e1', font: { size: 14 } }, grid: { color: '#1e293b' } }, y: { stacked: true, beginAtZero: true, ticks: { color: '#cbd5e1', font: { size: 16 } }, grid: { color: '#1e293b' } } } } });
+        },
+        utilDia(d, cont, h) {
+          const o = d.opciones || {}, per = o.periodo === 'hoy' ? '7d' : o.periodo, dias = diasDe(per);
+          const regs = h.registros(per, o.maquina);
+          const sub = PER(per) + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
+          if (!regs.length) { cont.innerHTML = vacio(h, 'Utilización día por día', sub, 'Todavía no hay horas cargadas en este período.'); return; }
+          const vals = dias.map(f => { const r = regs.filter(x => x.date === f); return r.length ? Math.round(computeAggregates(r).utilizationPct * 10) / 10 : null; });
+          cont.innerHTML = h.tit('Utilización día por día', sub);
+          grafico(cont, h, { type: 'line', data: { labels: dias.map(fDia), datasets: [{ label: 'Utilización %', data: vals, borderColor: '#38bdf8', backgroundColor: '#38bdf8', borderWidth: 4, pointRadius: 6, spanGaps: true }, { label: 'Meta 85%', data: dias.map(() => 85), borderColor: '#fbbf24', borderDash: [8, 6], pointRadius: 0, borderWidth: 2 }] }, options: { scales: { x: { ticks: { color: '#cbd5e1', font: { size: 14 } }, grid: { color: '#1e293b' } }, y: { min: 0, max: 100, ticks: { color: '#cbd5e1', font: { size: 16 }, callback: v => v + '%' }, grid: { color: '#1e293b' } } } } });
+        },
+        turnos(d, cont, h) {
+          const o = d.opciones || {}, regs = h.registros(o.periodo, 'ALL');
+          if (!regs.length) { cont.innerHTML = vacio(h, 'Utilización por turno', PER(o.periodo), 'Todavía no hay horas cargadas en este período.'); return; }
+          const por = {}; regs.forEach(r => { const k = r.shift || 'Sin turno'; (por[k] = por[k] || []).push(r); });
+          const items = Object.keys(por).map(k => { const a = computeAggregates(por[k]); return { n: k, v: a.utilizationPct, c: h.color(a.utilizationPct), t: n1(a.utilizationPct) + '% · ' + n1(a.totalAvailable) + ' h' }; }).sort((a, b) => b.v - a.v);
+          cont.innerHTML = h.tit('Utilización por turno', PER(o.periodo)) + `<div class="space-y-5">${h.barras(items)}</div>`;
+        },
+        codigos(d, cont, h) {
+          const o = d.opciones || {}, cnt = {};
+          logs(o.periodo, o.maquina).forEach(x => { const ps = Array.isArray(x.l.paradas) && x.l.paradas.length ? x.l.paradas : (x.l.stopCode ? [{ codigo: x.l.stopCode, min: x.l.stopMinutes }] : []); ps.forEach(p => { if (!p.codigo) return; cnt[p.codigo] = (cnt[p.codigo] || 0) + (Number(p.min) || 0); }); });
+          const desde = desdeDe(o.periodo), hh = hoy();
+          (typeof records !== 'undefined' ? records : []).forEach(r => { if (r.date < desde || r.date > hh || (o.maquina && o.maquina !== 'ALL' && r.machine !== o.maquina) || !Array.isArray(r.paradas)) return; r.paradas.forEach(p => { if (p.codigo) cnt[p.codigo] = (cnt[p.codigo] || 0) + (Number(p.min) || 0); }); });
+          const sub = PER(o.periodo) + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
+          const items = Object.keys(cnt).map(c => ({ n: String(c).split('-')[0] + ' · ' + corto(c).slice(0, 24), v: cnt[c] / 60, c: '#fb7185', t: n1(cnt[c] / 60) + ' h' })).sort((a, b) => b.v - a.v).slice(0, 10);
+          if (!items.length) { cont.innerHTML = vacio(h, 'Paradas por código', sub, 'Sin paradas con código en este período.'); return; }
+          cont.innerHTML = h.tit('Paradas por código', sub + ' · las 10 que más tiempo llevan') + `<div class="space-y-3">${h.barras(items).replace(/w-56/g, 'w-96')}</div>`;
+        },
+        scrapMaq(d, cont, h) {
+          const o = d.opciones || {}, L = logs(o.periodo);
+          const items = MAQS().map(m => { const x = L.filter(y => maqId(y.o) === m.id); const ok = x.reduce((a, y) => a + (Number(y.l.okPcs) || 0), 0), sc = x.reduce((a, y) => a + (Number(y.l.scrapPcs) || 0) + (Number(y.l.lowStartPcs) || 0), 0); const p = ok + sc ? sc / (ok + sc) * 100 : 0; return { n: m.short || m.id, v: p, c: p <= 2 ? '#34d399' : (p <= 5 ? '#fbbf24' : '#fb7185'), t: ok + sc ? n1(p) + '% · ' + n0(sc) + ' piezas' : 'sin datos' }; });
+          if (!L.length) { cont.innerHTML = vacio(h, 'Scrap por máquina', PER(o.periodo), 'Todavía no hay turnos cargados en este período.'); return; }
+          cont.innerHTML = h.tit('Scrap por máquina', PER(o.periodo) + ' · scrap + arranque en baja sobre lo inyectado') + `<div class="space-y-5">${h.barras(items)}</div>`;
+        },
+        kpis4(d, cont, h) {
+          const defs = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
+          cont.innerHTML = h.tit('Indicadores de planta', 'Últimos 12 meses de cada uno') + `<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-4">${defs.map(k => `<div class="relative min-h-0 rounded-2xl p-2" style="background:#5b9bd5"><canvas data-kpi="${esc(k.key)}"></canvas></div>`).join('')}</div>`;
+          cont.querySelectorAll('canvas[data-kpi]').forEach(cv => { try { const dd = inoferKpiData(cv.dataset.kpi); if (dd.datos.length && typeof inoferKpiDibujar === 'function') { const g = inoferKpiDibujar(cv, cv.dataset.kpi, { datos: dd.datos.slice(-12) }); if (g) h.grafico(g); } } catch (e) { } });
+        },
+        mantenimiento(d, cont, h) {
+          const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || {};
+          const rot = (M.roturas || []).filter(r => r.estado !== 'resuelta');
+          const planes = (M.planes || []).map(p => { const prox = p.ultimo ? masDias(p.ultimo, Number(p.cadaDias) || 0) : ''; return Object.assign({}, p, { prox }); }).filter(p => p.prox && p.prox <= masDias(hoy(), 7)).sort((a, b) => a.prox.localeCompare(b.prox));
+          cont.innerHTML = h.tit('Mantenimiento', 'Roturas sin resolver y preventivos de los próximos 7 días') + `<div class="grid flex-1 grid-cols-2 gap-6">
+            <div class="rounded-3xl border-2 ${rot.length ? 'border-rose-500/60' : 'border-emerald-500/50'} p-5"><div class="text-3xl font-black text-rose-200">🔧 Roturas abiertas: ${rot.length}</div>${rot.length ? rot.slice(0, 7).map(r => `<div class="mt-3 text-2xl text-white"><b>${esc(r.maquina)}</b> · ${esc(corto(r.motivo))}<div class="text-lg text-slate-400">${esc(r.fecha.slice(8, 10) + '/' + r.fecha.slice(5, 7))} ${esc(r.hora || '')}${r.tipo === 'molde' ? ' · molde ' + esc(r.pieza || '') : (r.paro ? ' · máquina parada' : '')}</div></div>`).join('') : '<div class="mt-4 text-2xl text-emerald-300">✓ No hay roturas pendientes</div>'}</div>
+            <div class="rounded-3xl border-2 border-slate-700 p-5"><div class="text-3xl font-black text-sky-200">🗓️ Preventivos</div>${planes.length ? planes.slice(0, 8).map(p => `<div class="mt-3 text-2xl ${p.prox < hoy() ? 'text-rose-300' : 'text-white'}"><b>${esc(p.maquina)}</b> · ${esc(p.tarea)}<div class="text-lg text-slate-400">${p.prox < hoy() ? 'VENCIDO desde ' : 'para el '}${fDia(p.prox)}</div></div>`).join('') : '<div class="mt-4 text-2xl text-emerald-300">✓ Nada vencido ni para esta semana</div>'}</div></div>`;
+        },
+        stock(d, cont, h) {
+          let S = null; try { S = window.inoferStock ? inoferStock() : null; } catch (e) { }
+          const L = []; if (S) Object.keys(S).forEach(g => (Array.isArray(S[g]) ? S[g] : []).forEach(x => { if (x && x.alerta) L.push(Object.assign({ g }, x)); }));
+          cont.innerHTML = h.tit('Stock con alerta', 'Material y producto terminado') + (L.length ? `<div class="grid grid-cols-2 gap-4">${L.slice(0, 10).map(x => `<div class="rounded-2xl border-2 ${x.nivel === 'rojo' ? 'border-rose-500/60 bg-rose-500/5' : 'border-amber-500/60 bg-amber-500/5'} p-4"><div class="text-3xl font-black text-white">${esc(x.nombre || x.part || x.clave || '')}</div><div class="mt-1 text-2xl text-slate-300">Stock: <b>${x.stock == null ? '—' : n0(x.stock)}</b>${x.g === 'materiales' ? ' kg' : ''}</div><div class="mt-1 text-xl ${x.nivel === 'rojo' ? 'text-rose-300' : 'text-amber-300'}">${esc(x.alerta)}</div></div>`).join('')}</div>` : '<div class="text-3xl text-emerald-300">✓ Ningún material ni pieza con alerta de stock</div>');
+        }
+      };
+    })();
+  </script>

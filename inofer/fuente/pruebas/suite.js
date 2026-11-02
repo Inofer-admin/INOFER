@@ -423,6 +423,17 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const jpgs = r.archivos.filter(a => /\.jpg$/.test(a));
       ok(jpgs.length >= 3 && r.tamanos.slice(0, jpgs.length).every(t => t > 15000) && !r.fallas.length && r.archivos.some(a => /LEEME/.test(a)), 'imágenes vacías o faltantes: ' + JSON.stringify(r));
     });
+    await prueba('Presentación: todos los gráficos se pueden elegir y se dibujan', async () => {
+      const r = await A.evaluate(() => {
+        const P = inoferPresInterna, tipos = Object.keys(P.tipos), out = {};
+        tipos.forEach(t => { const c = document.createElement('div'); c.style.cssText = 'width:1600px;height:900px;display:flex;flex-direction:column'; document.body.appendChild(c); try { P.render({ tipo: t, opciones: { periodo: '30d', maquina: 'ALL', kpi: 'recuento', texto: 'Hola' } }, c); out[t] = c.innerText.trim().length > 0 || !!c.querySelector('canvas'); } catch (e) { out[t] = 'ERROR ' + e.message; } c.remove(); });
+        inoferPresentacionConfig(); const opts = [...document.querySelectorAll('#presNuevoTipo option')].map(o => o.value); const m = document.getElementById('presCfg'); if (m) { m.classList.add('hidden'); m.classList.remove('flex'); }
+        return { out, opts };
+      });
+      const malos = Object.keys(r.out).filter(k => r.out[k] !== true);
+      ok(!malos.length, 'diapositivas que fallan: ' + malos.map(k => k + '=' + r.out[k]).join(', '));
+      ok(['kpi:recuento', 'kpi:rebabado', 'kpi:scrap', 'kpi:inyeccion', 'estado', 'produccion', 'codigos', 'kpis4', 'stock'].every(x => r.opts.includes(x)), 'faltan opciones para agregar: ' + r.opts.join(','));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
