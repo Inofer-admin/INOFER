@@ -1,0 +1,226 @@
+  <script>
+    // ===== Avisos al celular (notificaciones push) =====
+    // Cada equipo se suscribe con la clave pública de la nube (VAPID). La nube manda un aviso vacío; el service worker
+    // pide los mensajes de ese equipo (pid) y los muestra. Ver servidor: accionPush / enviarPush_ / pushPendientes.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const enNube = () => typeof cloudApiUrl !== 'undefined' && !!cloudApiUrl && !!sesion() && sesion().modo === 'nube';
+      const api = async body => { const d = await inoferCloudPost(Object.assign({ token: inoferAuthToken() }, body)); if (!d || d.status === 'error') throw new Error((d && d.error) || 'Sin respuesta de la nube'); return d; };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const CLAVE = 'tablero_inyectoras_push_v1', CLAVE_REP = 'tablero_inyectoras_push_rep_v1';
+      const TIPOS = [
+        ['rotura', 'Roturas de molde o máquina', 'Apenas alguien avisa, con la foto.'],
+        ['parada', 'Máquina parada mucho tiempo', 'Sale del cronómetro de paradas.'],
+        ['turno', 'Turno sin cargar', 'Un rato después de terminar el turno.'],
+        ['prev', 'Preventivo vencido', 'Una vez por cada tarea vencida.'],
+        ['stock', 'Stock bajo de material', 'Cuando no alcanza para lo programado.'],
+        ['msg', 'Mensajes y solicitudes', 'Chats y respuestas a tus pedidos.'],
+        ['informe', 'Informe semanal listo', 'Cuando sale el mail del informe.']
+      ];
+      const leer = (k, def) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || def; } catch (e) { return def; } };
+      const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } };
+      const local = () => leer(CLAVE, {});
+      const soportado = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+      const esIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+      const instalada = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+      function equipo() {
+        const ua = navigator.userAgent || '';
+        const so = /android/i.test(ua) ? 'Android' : (/iphone|ipad/i.test(ua) ? 'iPhone' : (/windows/i.test(ua) ? 'Windows' : (/mac os/i.test(ua) ? 'Mac' : 'Equipo')));
+        const nav = /edg\//i.test(ua) ? 'Edge' : (/chrome\//i.test(ua) ? 'Chrome' : (/firefox/i.test(ua) ? 'Firefox' : (/safari/i.test(ua) ? 'Safari' : '')));
+        return so + (nav ? ' · ' + nav : '') + (instalada() ? ' (app)' : '');
+      }
+      function claveBytes(b64) {
+        const p = '='.repeat((4 - b64.length % 4) % 4), s = atob((b64 + p).replace(/-/g, '+').replace(/_/g, '/'));
+        const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i); return out;
+      }
+      // el service worker lee de acá a dónde pedir los mensajes de este equipo
+      async function guardarCfgSW(pid) {
+        try { const c = await caches.open('inofer-push'); if (pid) await c.put('./__inofer_push_cfg', new Response(JSON.stringify({ url: cloudApiUrl, pid }), { headers: { 'Content-Type': 'application/json' } })); else await c.delete('./__inofer_push_cfg'); } catch (e) { }
+      }
+      function prefsBase(permitidos) {
+        const L = local(); const p = L.prefs || {};
+        const tipos = Object.assign({}, p.tipos || {}); TIPOS.forEach(([k]) => { if (tipos[k] === undefined) tipos[k] = k !== 'informe'; });
+        const maqs = Object.assign({}, p.maqs || {}); MAQS().forEach(m => { if (maqs[m] === undefined) maqs[m] = true; });
+        return { tipos, maqs, silencio: p.silencio !== false };
+      }
+      async function suscribir(info, prefs) {
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        const clave = claveBytes(info.clave);
+        if (sub) {
+          let igual = false; try { const k = new Uint8Array(sub.options.applicationServerKey || []); igual = k.length === clave.length && k.every((x, i) => x === clave[i]); } catch (e) { }
+          if (!igual) { try { await sub.unsubscribe(); } catch (e) { } sub = null; }
+        }
+        if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: clave });
+        const d = await api({ action: 'pushSuscribir', sub: sub.toJSON(), prefs, equipo: equipo(), pid: local().pid || '' });
+        guardar(CLAVE, Object.assign(local(), { pid: d.pid, prefs, usuario: sesion().usuario }));
+        await guardarCfgSW(d.pid);
+        return d.pid;
+      }
+      async function activar(prefs) {
+        if (!soportado()) throw new Error(esIOS() ? 'En iPhone primero instalá INOFER (Compartir → Agregar a inicio) y abrila desde ese ícono.' : 'Este navegador no permite avisos. Probá con Chrome o Edge.');
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') throw new Error('No diste permiso para los avisos. Activalo en la configuración del navegador (ícono del candado → Notificaciones).');
+        const info = await api({ action: 'pushInfo' });
+        return suscribir(info, prefs);
+      }
+      async function desactivar() {
+        const L = local();
+        try { await api({ action: 'pushBaja', pid: L.pid || '' }); } catch (e) { }
+        try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (e) { }
+        delete L.pid; guardar(CLAVE, L); await guardarCfgSW('');
+      }
+      // al abrir la app: si el equipo ya estaba activado, se renueva en silencio (cambió la suscripción o el usuario)
+      async function revisarAlEntrar() {
+        const L = local();
+        if (!L.pid || !enNube() || !soportado()) return;
+        await guardarCfgSW(L.pid);
+        let renovar = L.usuario && L.usuario !== sesion().usuario;
+        try { const c = await caches.open('inofer-push'); if (await c.match('./__inofer_push_renovar')) { renovar = true; await c.delete('./__inofer_push_renovar'); } } catch (e) { }
+        try { const reg = await navigator.serviceWorker.ready; if (!(await reg.pushManager.getSubscription())) renovar = true; } catch (e) { }
+        if (renovar && Notification.permission === 'granted') { try { await suscribir(await api({ action: 'pushInfo' }), L.prefs || prefsBase()); } catch (e) { } }
+      }
+
+      // ---------- ventana "Avisos al celular" (cada usuario, en su equipo) ----------
+      function ventana(titulo, ancho) {
+        const v = $('inoferPushModal'); if (v) v.remove();
+        const w = document.createElement('div'); w.id = 'inoferPushModal';
+        w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full ${ancho} rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl space-y-3"><div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">${titulo}</h3><button type="button" class="pu-cerrar flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800" aria-label="Cerrar">✕</button></div><div class="pu-cuerpo space-y-3 text-sm text-slate-300">Cargando…</div></div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => { if (e.target === w || e.target.closest('.pu-cerrar')) w.remove(); });
+        return w;
+      }
+      const interruptor = (on, attrs) => `<button type="button" ${attrs} aria-pressed="${on}" class="flex h-8 w-[52px] shrink-0 items-center rounded-full p-[3px] transition ${on ? 'justify-end bg-cyan-500' : 'justify-start bg-slate-700'}"><span class="block h-[26px] w-[26px] rounded-full ${on ? 'bg-cyan-50' : 'bg-slate-400'}"></span></button>`;
+      async function abrir() {
+        if (!sesion()) return;
+        const w = ventana('📲 Avisos al celular', 'max-w-md');
+        const cuerpo = w.querySelector('.pu-cuerpo');
+        if (!enNube()) { cuerpo.innerHTML = '<p>Los avisos al celular funcionan con la nube conectada.</p>'; return; }
+        let info = null; try { info = await api({ action: 'pushInfo' }); } catch (e) { cuerpo.innerHTML = `<p class="text-rose-300">No se pudo consultar la nube: ${esc(e.message)}</p>`; return; }
+        let prefs = prefsBase(info.permitidos), activo = !!(local().pid && soportado() && Notification.permission === 'granted' && (info.equipos || []).some(x => x.pid === local().pid));
+        if (!activo && local().pid) { const L = local(); delete L.pid; guardar(CLAVE, L); }
+        let msg = '', ocupado = false, tGuardar = null;
+        const guardarPrefs = () => { const L = local(); L.prefs = prefs; guardar(CLAVE, L); if (!activo) return; clearTimeout(tGuardar); tGuardar = setTimeout(() => api({ action: 'pushPrefs', pid: L.pid, prefs }).catch(e => toast('No se pudo guardar: ' + e.message)), 600); };
+        const pintar = () => {
+          const permitidos = new Set(info.permitidos || []);
+          const tipos = TIPOS.filter(([k]) => permitidos.has(k));
+          let estado;
+          if (!soportado()) estado = `<div class="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-[13px] text-amber-100">${esIOS() && !instalada() ? 'En iPhone los avisos llegan solo con INOFER instalada: tocá <b>Compartir → Agregar a inicio</b>, abrila desde ese ícono y volvé acá.' : 'Este navegador no permite avisos. Probá con Chrome o Edge.'}</div>`;
+          else if ('Notification' in window && Notification.permission === 'denied') estado = `<div class="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-3 text-[13px] text-rose-100">Los avisos están <b>bloqueados</b> en este navegador. Tocá el candado al lado de la dirección → <b>Notificaciones → Permitir</b> y volvé a abrir esta ventana.</div>`;
+          else if (activo) estado = `<div class="space-y-2 rounded-2xl border border-emerald-700 bg-emerald-950/60 p-3"><div class="font-bold text-emerald-200">✓ Activado en este equipo</div><div class="flex gap-2"><button type="button" data-a="probar" class="min-h-[44px] flex-1 rounded-xl bg-emerald-500 text-sm font-black text-emerald-950 disabled:opacity-60" ${ocupado ? 'disabled' : ''}>Probar un aviso</button><button type="button" data-a="baja" class="min-h-[44px] rounded-xl border border-slate-600 px-3 text-sm font-semibold text-slate-200">Desactivar</button></div></div>`;
+          else estado = `<div class="space-y-2 rounded-2xl border border-cyan-500/40 bg-cyan-500/10 p-3"><div class="text-[13px] text-cyan-100">Te llegan los avisos a este equipo aunque INOFER esté cerrada.</div><button type="button" data-a="activar" class="min-h-[44px] w-full rounded-xl bg-cyan-400 text-sm font-black text-cyan-950 disabled:opacity-60" ${ocupado ? 'disabled' : ''}>${ocupado ? 'Activando…' : 'Activar en este equipo'}</button></div>`;
+          cuerpo.innerHTML = `${estado}${msg ? `<div class="text-[12px] text-amber-200">${esc(msg)}</div>` : ''}
+            <div><div class="pb-1 text-[11px] font-extrabold tracking-wider text-slate-400">QUÉ ME AVISA</div>
+              ${tipos.map(([k, n, a]) => `<div class="flex items-center gap-3 border-b border-slate-800 py-2.5"><div class="min-w-0 flex-1"><div class="text-[15px] font-semibold text-slate-100">${n}</div><div class="text-[12px] text-slate-400">${a}</div></div>${interruptor(prefs.tipos[k] !== false, `data-t="${k}" aria-label="${esc(n)}"`)}</div>`).join('')}
+              ${tipos.length < TIPOS.length ? '<div class="pt-2 text-[11px] text-slate-500">Los demás avisos los habilita el administrador.</div>' : ''}</div>
+            <div class="space-y-2"><div class="text-[11px] font-extrabold tracking-wider text-slate-400">DE QUÉ MÁQUINAS</div><div class="flex flex-wrap gap-2">${MAQS().map(m => { const on = prefs.maqs[m] !== false; return `<button type="button" data-m="${esc(m)}" aria-pressed="${on}" class="min-h-[44px] min-w-[64px] rounded-xl border px-3 text-sm font-extrabold ${on ? 'border-cyan-400 bg-cyan-400/15 text-cyan-200' : 'border-slate-700 text-slate-400'}">${esc(m)}</button>`; }).join('')}</div></div>
+            <div class="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-3"><div class="flex-1"><div class="text-[15px] font-semibold text-slate-100">Silencio de 22:00 a 06:00</div><div class="text-[12px] text-slate-400">Las roturas suenan igual, aunque sea de noche.</div></div>${interruptor(prefs.silencio, 'data-s="1" aria-label="Silencio nocturno"')}</div>
+            <p class="text-[12px] text-slate-400">En iPhone los avisos llegan solo si INOFER está instalada. En Android, en la PC y en la app de la tienda funcionan también desde el navegador. Cada celular tiene su propia configuración.</p>`;
+        };
+        w.addEventListener('click', async e => {
+          const b = e.target.closest('button'); if (!b || !cuerpo.contains(b)) return;
+          if (b.dataset.t) { prefs.tipos[b.dataset.t] = !(prefs.tipos[b.dataset.t] !== false); guardarPrefs(); pintar(); return; }
+          if (b.dataset.m) { prefs.maqs[b.dataset.m] = !(prefs.maqs[b.dataset.m] !== false); guardarPrefs(); pintar(); return; }
+          if (b.dataset.s) { prefs.silencio = !prefs.silencio; guardarPrefs(); pintar(); return; }
+          if (b.dataset.a === 'activar') {
+            ocupado = true; msg = ''; pintar();
+            try { await activar(prefs); activo = true; info = await api({ action: 'pushInfo' }); toast('✓ Avisos activados en este equipo'); } catch (er) { msg = er.message; }
+            ocupado = false; pintar(); return;
+          }
+          if (b.dataset.a === 'probar') {
+            ocupado = true; pintar();
+            try { const d = await api({ action: 'pushProbar', pid: local().pid }); msg = d.enviados ? 'Listo: en unos segundos te llega "Prueba de INOFER".' : 'La nube no pudo mandar el aviso. Desactivá y volvé a activar.'; } catch (er) { msg = er.message; }
+            ocupado = false; pintar(); return;
+          }
+          if (b.dataset.a === 'baja') { await desactivar(); activo = false; msg = 'Desactivado en este equipo.'; pintar(); }
+        });
+        pintar();
+      }
+      window.inoferAvisosCelular = abrir;
+
+      // ---------- tabla del administrador: quién recibe qué ----------
+      async function abrirAdmin() {
+        if (!esAdmin()) return;
+        const w = ventana('📣 Avisos al celular · quién recibe qué', 'max-w-5xl');
+        const cuerpo = w.querySelector('.pu-cuerpo');
+        if (!enNube()) { cuerpo.innerHTML = '<p>Necesita la nube conectada.</p>'; return; }
+        let d; try { d = await api({ action: 'pushAdminInfo' }); } catch (e) { cuerpo.innerHTML = `<p class="text-rose-300">${esc(e.message)}</p>`; return; }
+        const cfg = Object.assign({ minParada: 30, minTurno: 30 }, d.cfg || {});
+        const marcas = {}; d.usuarios.forEach(u => { marcas[u.usuario] = Object.assign({}, u.permitidos); });
+        const corto = { rotura: 'ROTURAS', parada: 'PARADA LARGA', turno: 'TURNO SIN CARGAR', prev: 'PREVENTIVO', stock: 'STOCK BAJO', msg: 'MENSAJES', informe: 'INFORME' };
+        const sel = (id, val, ops) => `<select id="${id}" class="min-h-[40px] rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white">${ops.map(([v, t]) => `<option value="${v}" ${Number(val) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+        const pintar = () => {
+          cuerpo.innerHTML = `<p class="text-[13px] text-slate-400">Lo que no marques acá no le llega. Cada uno puede además apagar los suyos desde su celular (📲 Avisos al celular).</p>
+            <div class="overflow-x-auto rounded-xl border border-slate-800"><table class="w-full min-w-[820px] text-sm"><thead class="bg-slate-950 text-[10px] font-extrabold tracking-wider text-slate-400"><tr><th class="px-3 py-2.5 text-left">USUARIO</th><th class="px-2 text-left">EQUIPOS</th>${d.tipos.map(t => `<th class="px-1 text-center">${corto[t] || t}</th>`).join('')}</tr></thead><tbody>
+              ${d.usuarios.map(u => `<tr class="border-t border-slate-800"><td class="px-3 py-2"><div class="font-bold text-slate-100">${esc(u.nombre)}</div><div class="text-[12px] text-slate-400">@${esc(u.usuario)}${u.rol === 'admin' ? ' · administrador' : ''}</div></td>
+                <td class="px-2 text-[13px] ${u.equipos ? 'text-emerald-300' : 'text-slate-500'}">${u.equipos ? u.equipos + (u.equipos === 1 ? ' equipo' : ' equipos') : 'sin activar'}</td>
+                ${d.tipos.map(t => { const on = !!marcas[u.usuario][t]; return `<td class="text-center"><button type="button" data-u="${esc(u.usuario)}" data-t="${t}" aria-pressed="${on}" aria-label="${esc(u.nombre)}: ${corto[t]}" class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg border-2 ${on ? 'border-cyan-400 bg-cyan-400 text-cyan-950' : 'border-slate-600 text-transparent'} font-black">✓</button></td>`; }).join('')}</tr>`).join('')}
+            </tbody></table></div>
+            <div class="flex flex-wrap items-center gap-3 text-[13px]"><label for="puMinParada">Avisar una máquina parada después de</label>${sel('puMinParada', cfg.minParada, [[15, '15 min'], [30, '30 min'], [45, '45 min'], [60, '1 hora']])}
+              <label for="puMinTurno">· Turno sin cargar, avisar</label>${sel('puMinTurno', cfg.minTurno, [[30, '30 min después'], [60, '1 hora después'], [120, '2 horas después']])}
+              <button type="button" data-a="guardar" class="ml-auto min-h-[44px] rounded-xl bg-cyan-400 px-5 text-sm font-black text-cyan-950">Guardar</button></div>`;
+        };
+        w.addEventListener('click', async e => {
+          const b = e.target.closest('button'); if (!b || !cuerpo.contains(b)) return;
+          if (b.dataset.u) { marcas[b.dataset.u][b.dataset.t] = !marcas[b.dataset.u][b.dataset.t]; const mp = $('puMinParada').value, mt = $('puMinTurno').value; cfg.minParada = Number(mp); cfg.minTurno = Number(mt); pintar(); return; }
+          if (b.dataset.a === 'guardar') {
+            const nuevo = { usuarios: marcas, minParada: Number($('puMinParada').value) || 30, minTurno: Number($('puMinTurno').value) || 30, actualizado: new Date().toISOString() };
+            b.disabled = true; b.textContent = 'Guardando…';
+            try { await api({ action: 'saveModule', moduleKey: 'avisosPush', moduleData: nuevo }); toast('✓ Avisos guardados'); w.remove(); }
+            catch (er) { toast('No se pudo guardar: ' + er.message); b.disabled = false; b.textContent = 'Guardar'; }
+          }
+        });
+        pintar();
+      }
+      window.inoferAvisosAdmin = abrirAdmin;
+
+      // ---------- la app avisa a la nube lo que calcula la 🔔 (turnos sin cargar, preventivos, stock) ----------
+      const aMin = h => { const [a, b] = String(h || '0:0').split(':').map(Number); return (a || 0) * 60 + (b || 0); };
+      const masDia = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const fDia = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+      let reportando = false;
+      async function reportar() {
+        if (reportando || !sesion() || !enNube() || !window.inoferAvisosFuente) return;
+        reportando = true;
+        try {
+          const rep = leer(CLAVE_REP, {}); const corte = Date.now() - 4 * 86400000;
+          Object.keys(rep).forEach(k => { if (rep[k] < corte) delete rep[k]; });
+          const ev = [];
+          try {
+            inoferAvisosFuente.turnos().forEach(x => {
+              const noct = aMin(x.t.fin) <= aMin(x.t.ini);
+              const fin = new Date((noct ? masDia(x.fecha, 1) : x.fecha) + 'T' + x.t.fin + ':00').getTime();
+              if (Date.now() - fin > 8 * 3600000) return; // solo lo reciente
+              ev.push({ tipo: 'turno', clave: x.key, fin, maq: x.m, ir: 'cierre', titulo: 'Falta cargar un turno · ' + x.m, cuerpo: `El turno ${x.t.nombre} (${x.t.ini} a ${x.t.fin}) del ${fDia(x.fecha)} terminó y no tiene producción cargada. Tocá para cerrarlo.` });
+            });
+          } catch (e) { }
+          try { inoferAvisosFuente.prev().forEach(x => { if (x.falta == null || x.falta > 0) return; ev.push({ tipo: 'prev', clave: x.p.id + '|' + (x.prox || ''), maq: x.p.maquina, ir: 'mant', titulo: 'Preventivo vencido · ' + (x.p.maquina || ''), cuerpo: `${x.p.tarea}${x.prox ? ' (tocaba el ' + fDia(x.prox) + ')' : ''}.` }); }); } catch (e) { }
+          try { const hoy = new Date().toISOString().slice(0, 10); inoferAvisosFuente.stock().forEach(s => ev.push({ tipo: 'stock', clave: s.nombre + '|' + (s.nivel || '') + '|' + hoy, ir: 'stock', titulo: 'Stock bajo · ' + s.nombre, cuerpo: String(s.alerta || '').replace(/<[^>]+>/g, '') })); } catch (e) { }
+          for (const x of ev.slice(0, 12)) {
+            const k = x.tipo + '|' + x.clave; if (rep[k]) continue;
+            try { const d = await api(Object.assign({ action: 'pushEvento' }, x)); if (!d.pronto) rep[k] = Date.now(); } catch (e) { break; }
+          }
+          guardar(CLAVE_REP, rep);
+        } finally { reportando = false; }
+      }
+      setInterval(() => { reportar().catch(() => { }); }, 3 * 60000);
+      setTimeout(function primera() { if (!sesion()) { setTimeout(primera, 30000); return; } revisarAlEntrar().catch(() => { }); setTimeout(() => reportar().catch(() => { }), 20000); }, 8000);
+
+      // botón en el panel de la 🔔
+      try {
+        new MutationObserver(() => {
+          const p = $('inoferAvisosPanel'); if (!p || p.classList.contains('hidden') || $('puBtnPanel')) return;
+          const b = document.createElement('button'); b.type = 'button'; b.id = 'puBtnPanel';
+          b.className = 'mb-2 w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-left text-xs font-bold text-cyan-200 hover:bg-cyan-500/20';
+          b.textContent = local().pid ? '📲 Avisos al celular: activados · configurar' : '📲 Recibir estos avisos en el celular';
+          b.addEventListener('click', e => { e.stopPropagation(); p.classList.add('hidden'); abrir(); });
+          p.insertBefore(b, p.firstChild);
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      } catch (e) { }
+    })();
+  </script>

@@ -411,7 +411,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin' };
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin' };
 // área 'a|b' = alcanza con tener permiso en cualquiera de las dos
 function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
@@ -537,9 +537,18 @@ function restablecerClaveAdmin() {
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
+  if (p.action === 'pushPendientes') {
+    const pid = String(p.pid || '');
+    if (pid.length < 20) return respuesta({ status: 'error', error: 'pid' });
+    const f = leerPush_().filter(function (x) { return x.pid === pid; })[0];
+    if (!f) return respuesta({ status: 'ok', mensajes: [] });
+    const m = f.cola || []; f.cola = []; f.ultimo = new Date().toISOString(); escribirPush_(f);
+    return respuesta({ status: 'ok', mensajes: m });
+  }
   if (p.action === 'versiones') {
     const u = usuarioDeToken(p.token);
     if (!u) return respuesta({ status: 'error', error: 'auth', authRequired: true });
+    revisarAvisosPush_(false);
     return respuesta({ status: 'ok', auth: publico(u), versiones: versiones_() });
   }
   if (p.action === 'json') {
@@ -885,6 +894,7 @@ function accionMensajeria(u, body) {
         if (!t) return { status: 'error', error: 'Mensaje vacío.' };
         hojaMensajes_().appendRow([idNuevo_('msg'), c.id, yo, nombreYo, t, ahora]);
         c.ultimoAt = ahora;
+        try { enviarPush_('msg', { titulo: c.tipo === 'grupo' ? nombreYo + ' en ' + (c.nombre || 'el grupo') : 'Mensaje de ' + nombreYo, cuerpo: t, ir: 'msg', tag: 'chat-' + c.id }, { usuarios: c.miembros.filter(function (x) { return x !== yo; }) }); } catch (e) {}
       }
       c.leidos = c.leidos || {}; c.leidos[yo] = ahora;
       escribirChat_(c);
@@ -937,6 +947,7 @@ function accionMensajeria(u, body) {
       if (!t) return { status: 'error', error: 'Poné un título.' };
       escribirSolicitud_({ id: idNuevo_('sol'), autor: yo, nombre: nombreYo, tipo: texto(body.tipo, 60) || 'Otro', titulo: t, detalle: texto(body.detalle, 3000),
         estado: 'pendiente', respuesta: '', respondidoPor: '', fecha: ahora, actualizado: ahora, vistoAdmin: u.rol === 'admin', vistoAutor: true });
+      try { enviarPush_('msg', { titulo: 'Solicitud de ' + nombreYo, cuerpo: t, ir: 'msg', tag: 'sol' }, { usuarios: leerUsuarios().filter(function (x) { return x.rol === 'admin'; }).map(function (x) { return x.usuario; }), excluir: yo }); } catch (e) {}
       return { status: 'ok', solicitudes: solicitudesDe_(u) };
     }
     const solDe = function (id) { return leerSolicitudes_().filter(function (s) { return s.id === String(id || ''); })[0]; };
@@ -948,6 +959,7 @@ function accionMensajeria(u, body) {
       if (body.respuesta != null) s.respuesta = texto(body.respuesta, 3000);
       s.respondidoPor = nombreYo; s.actualizado = ahora; s.vistoAdmin = true; s.vistoAutor = s.autor === yo;
       escribirSolicitud_(s);
+      try { if (s.autor !== yo) enviarPush_('msg', { titulo: 'Tu solicitud: ' + s.estado, cuerpo: s.titulo + (s.respuesta ? ' — ' + s.respuesta : ''), ir: 'msg', tag: 'sol-' + s.id }, { usuarios: [s.autor] }); } catch (e) {}
       return { status: 'ok', solicitudes: solicitudesDe_(u) };
     }
     if (body.action === 'solVisto') {
@@ -1493,7 +1505,7 @@ function horarioInforme_(cfg) {
 function enviarInformeSemanal(forzar, opc) {
   opc = opc || {};
   if (!opc.manual) ajustarDisparadores_();
-  if (!opc.manual) { try { archivoAutomatico_(); } catch (e) {} }
+  if (!opc.manual) { try { archivoAutomatico_(); } catch (e) {} try { revisarAvisosPush_(true); } catch (e) {} }
   const mods = obtenerEstadoModulos();
   const cfg = mods.informes || {};
   const props = PropertiesService.getScriptProperties();
@@ -1539,6 +1551,7 @@ function enviarInformeSemanal(forzar, opc) {
   }
   // el envío a mano no cuenta como el automático (el programado sale igual en su día y hora)
   if (!opc.manual) props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
+  try { enviarPush_('informe', { titulo: 'Informe semanal listo', cuerpo: 'Ya salió por mail el informe de la semana del ' + lunes.split('-').reverse().join('/') + '.', ir: 'hoy', tag: 'informe' }); } catch (e) {}
   props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como + (opc.manual ? ' · enviado a mano' + (quien ? ' por ' + quien : '') : ''), semana: lunes }));
   auditar_(opc.por || admin, 'mail', 'informes', ['Informe semanal (semana del ' + lunes.split('-').reverse().join('/') + ') enviado' + (opc.manual ? ' a mano' : '') + ' a ' + emails.join(', ') + como]);
   return 'Informe enviado a ' + emails.join(', ') + como;
@@ -1933,6 +1946,12 @@ function accionRotura(u, body) {
       auditar_(u, 'resolvió', 'mantenimiento', ['Rotura de la ' + r.maquina + ' (' + r.motivo + ') reparada' + (r.nota ? ': ' + r.nota : '')]);
     }
   } finally { lock.releaseLock(); }
+  if (roturaNueva) {
+    try {
+      const r = ((obtenerEstadoModulos().mantenimiento || {}).roturas || []).filter(function (x) { return x.id === roturaNueva; })[0];
+      if (r) enviarPush_('rotura', { titulo: (r.tipo === 'molde' ? 'Rotura de molde · ' : 'Rotura · ') + r.maquina + (r.paro ? ' (parada)' : ''), cuerpo: r.motivo + (r.pieza ? ' · pieza ' + r.pieza : '') + (r.ordNumber ? ' (OP ' + r.ordNumber + ')' : '') + (r.tipo === 'molde' ? '. La máquina sigue operativa.' : '') + ' Avisó ' + (u.nombre || u.usuario) + (r.fotoId ? ', con foto.' : '.'), maq: r.maquina, ir: 'mant', tag: 'rotura-' + r.id }, { excluir: u.usuario });
+    } catch (e) {}
+  }
   const paq = paqueteDatos(u, null); paq.versiones = versiones_(); if (roturaNueva) paq.roturaId = roturaNueva;
   return paq;
 }
@@ -1982,6 +2001,247 @@ function fusionarMant_(stored, incoming, base) {
   return { datos: out, conflictos: 0 };
 }
 
+// =====================================================================
+// AVISOS AL CELULAR (Web Push sin contenido + VAPID firmado con P-256 acá mismo)
+// El aviso viaja vacío: el celular se despierta, pide sus mensajes con su "pid" (pushPendientes) y los muestra.
+// Hoja BD_Push: pid | usuario | endpoint | prefs JSON | creado | ultimo | cola JSON | equipo
+// =====================================================================
+const PUSH_TIPOS = ['rotura', 'parada', 'turno', 'prev', 'stock', 'msg', 'informe'];
+// Se arma recién cuando hace falta (si BigInt no existiera, solo fallan los avisos, no todo el servidor)
+let P256C_ = null;
+function p256_() { if (!P256C_) P256C_ = armarP256_(); return P256C_; }
+function armarP256_() {
+  const B = BigInt, Z = B(0), U = B(1), DOS = B(2), TRES = B(3), OCHO = B(8), CUATRO = B(4);
+  const P = B('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff');
+  const N = B('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
+  const G = [B('0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'), B('0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5')];
+  const md = function (a, m) { const r = a % m; return r < Z ? r + m : r; };
+  const pot = function (b, e, m) { let r = U; b = md(b, m); while (e > Z) { if (e & U) r = r * b % m; b = b * b % m; e >>= U; } return r; };
+  const inv = function (a, m) { return pot(a, m - DOS, m); };
+  function dbl(Q) {
+    if (!Q || Q[1] === Z) return null;
+    const X = Q[0], Y = Q[1], Zc = Q[2];
+    const delta = Zc * Zc % P, gamma = Y * Y % P, beta = X * gamma % P;
+    const alpha = TRES * md(X - delta, P) % P * ((X + delta) % P) % P;
+    const X3 = md(alpha * alpha - OCHO * beta, P);
+    const Z3 = md((Y + Zc) * (Y + Zc) - gamma - delta, P);
+    const Y3 = md(alpha * md(CUATRO * beta - X3, P) - OCHO * gamma % P * gamma, P);
+    return [X3, Y3, Z3];
+  }
+  function sum(A, Bp) {
+    if (!A) return Bp; if (!Bp) return A;
+    const z1z1 = A[2] * A[2] % P, z2z2 = Bp[2] * Bp[2] % P;
+    const u1 = A[0] * z2z2 % P, u2 = Bp[0] * z1z1 % P;
+    const s1 = A[1] * Bp[2] % P * z2z2 % P, s2 = Bp[1] * A[2] % P * z1z1 % P;
+    if (u1 === u2) return s1 === s2 ? dbl(A) : null;
+    const h = md(u2 - u1, P), r = md(s2 - s1, P), h2 = h * h % P, h3 = h * h2 % P, u1h2 = u1 * h2 % P;
+    const X3 = md(r * r - h3 - DOS * u1h2, P);
+    const Y3 = md(r * md(u1h2 - X3, P) - s1 * h3, P);
+    const Z3 = h * A[2] % P * Bp[2] % P;
+    return [X3, Y3, Z3];
+  }
+  function mul(k, pt) {
+    let R = null; const Q = [pt[0], pt[1], U];
+    const bits = k.toString(2);
+    for (let i = 0; i < bits.length; i++) { R = dbl(R); if (bits[i] === '1') R = sum(R, Q); }
+    if (!R) return null;
+    const zi = inv(R[2], P), zi2 = zi * zi % P;
+    return [R[0] * zi2 % P, R[1] * zi2 % P * zi % P];
+  }
+  const aBig = function (bytes) { let h = '0x'; bytes.forEach(function (b) { h += ('0' + (b & 255).toString(16)).slice(-2); }); return B(h === '0x' ? '0x0' : h); };
+  const aBytes = function (x, n) { let h = x.toString(16); while (h.length < n * 2) h = '0' + h; const o = []; for (let i = 0; i < n * 2; i += 2) o.push(parseInt(h.substr(i, 2), 16)); return o; };
+  return {
+    N: N, aBig: aBig, aBytes: aBytes,
+    publica: function (d) { const Q = mul(d, G); return [4].concat(aBytes(Q[0], 32), aBytes(Q[1], 32)); },
+    firmar: function (hashBytes, d, azar) {
+      const e = aBig(hashBytes);
+      for (let i = 0; i < 20; i++) {
+        const k = md(aBig(azar()), N - U) + U;
+        const R = mul(k, G); const r = md(R[0], N); if (r === Z) continue;
+        const s = md(inv(k, N) * ((e + r * d) % N), N); if (s === Z) continue;
+        return aBytes(r, 32).concat(aBytes(s, 32));
+      }
+      throw new Error('No se pudo firmar');
+    }
+  };
+}
+function b64u_(bytes) {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'; let o = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] & 255, b = i + 1 < bytes.length ? bytes[i + 1] & 255 : 0, c = i + 2 < bytes.length ? bytes[i + 2] & 255 : 0;
+    const n = (a << 16) | (b << 8) | c;
+    o += A[(n >> 18) & 63] + A[(n >> 12) & 63] + (i + 1 < bytes.length ? A[(n >> 6) & 63] : '') + (i + 2 < bytes.length ? A[n & 63] : '');
+  }
+  return o;
+}
+function ascii_(s) { const o = []; const t = unescape(encodeURIComponent(String(s))); for (let i = 0; i < t.length; i++) o.push(t.charCodeAt(i)); return o; }
+function azar32_() { return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, Utilities.getUuid() + Utilities.getUuid() + Date.now() + Math.random()).map(function (b) { return b & 255; }); }
+function vapid_() {
+  const props = PropertiesService.getScriptProperties();
+  let d = props.getProperty('VAPID_D'), pub = props.getProperty('VAPID_PUB');
+  if (!d || !pub) {
+    const x = p256_().aBig(azar32_()) % (p256_().N - BigInt(1)) + BigInt(1);
+    d = x.toString(16); pub = b64u_(p256_().publica(x));
+    props.setProperty('VAPID_D', d); props.setProperty('VAPID_PUB', pub);
+  }
+  return { d: BigInt('0x' + d), pub: pub };
+}
+function vapidJwt_(endpoint) {
+  const aud = String(endpoint).match(/^https?:\/\/[^\/]+/)[0];
+  const cache = CacheService.getScriptCache(); const ck = 'inofer_vapid_' + aud.replace(/[^a-z0-9]/gi, '').slice(-60);
+  const c = cache.get(ck); if (c) return c;
+  const v = vapid_();
+  const ent = b64u_(ascii_(JSON.stringify({ typ: 'JWT', alg: 'ES256' }))) + '.' + b64u_(ascii_(JSON.stringify({ aud: aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://inofer-admin.github.io/INOFER/inofer/' })));
+  const firma = p256_().firmar(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, ent).map(function (b) { return b & 255; }), v.d, azar32_);
+  const auth = 'vapid t=' + ent + '.' + b64u_(firma) + ', k=' + v.pub;
+  try { cache.put(ck, auth, 5 * 3600); } catch (e) {}
+  return auth;
+}
+function hojaPush_() {
+  const ss = getSs(); let sh = ss.getSheetByName('BD_Push');
+  if (!sh) { sh = ss.insertSheet('BD_Push'); sh.appendRow(['pid', 'usuario', 'endpoint', 'prefs', 'creado', 'ultimo', 'cola', 'equipo']); }
+  return sh;
+}
+function leerPush_() {
+  const rows = hojaPush_().getDataRange().getValues(); const out = [];
+  for (let i = 1; i < rows.length; i++) { const r = rows[i]; if (!r[0]) continue; out.push({ fila: i + 1, pid: String(r[0]), usuario: String(r[1] || ''), endpoint: String(r[2] || ''), prefs: jsonSeguro_(r[3], {}), creado: String(r[4] || ''), ultimo: String(r[5] || ''), cola: jsonSeguro_(r[6], []), equipo: String(r[7] || '') }); }
+  return out;
+}
+function escribirPush_(x) {
+  const fila = [x.pid, x.usuario, x.endpoint, JSON.stringify(x.prefs || {}), x.creado, x.ultimo, JSON.stringify((x.cola || []).slice(-10)), x.equipo || ''];
+  const sh = hojaPush_();
+  if (x.fila) sh.getRange(x.fila, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
+  else sh.getRange(sh.getLastRow() + 1, 1, 1, fila.length).setNumberFormat('@').setValues([fila]);
+}
+function pushCfg_() { const m = obtenerEstadoModulos().avisosPush; return m && typeof m === 'object' ? m : {}; }
+// Lo que el administrador marcó en la tabla; si no marcó nada para ese usuario, según sus permisos
+function pushPermitido_(cfg, u, tipo) {
+  const c = cfg.usuarios && cfg.usuarios[u.usuario];
+  if (c && typeof c[tipo] === 'boolean') return c[tipo];
+  if (u.rol === 'admin') return true;
+  const det = function (k) { return !(u.permisos && u.permisos.detalle && u.permisos.detalle[k] === false); };
+  if (tipo === 'msg') return true;
+  if (tipo === 'rotura' || tipo === 'parada') return puedeMantSrv_(u) && det('mant_ver');
+  if (tipo === 'prev') return puedeMantSrv_(u) && det('mant_ver');
+  if (tipo === 'turno') return puede(u, 'ordenes', 'edit') && det('ord_editar_turnos') && det('avisos_carga');
+  if (tipo === 'stock') return (puede(u, 'ordenes', 'view') || puede(u, 'catalogo', 'view')) && det('stock_ver');
+  return false;
+}
+function horaLocal_() { const h = parseInt(Utilities.formatDate(new Date(), zonaHoja_(), 'H'), 10); return isNaN(h) || h > 23 ? new Date().getHours() : h; }
+// Manda un aviso: ev = {titulo, cuerpo, maq, ir, tag}; opc = {usuarios: [solo estos], excluir: usuario, pid: solo ese equipo}
+function enviarPush_(tipo, ev, opc) {
+  opc = opc || {};
+  let filas; try { filas = leerPush_(); } catch (e) { return 0; }
+  if (!filas.length) return 0;
+  const cfg = pushCfg_(), usuarios = {}; leerUsuarios().forEach(function (x) { usuarios[x.usuario] = x; });
+  const h = horaLocal_(), noche = h >= 22 || h < 6;
+  const ahora = new Date().toISOString(), envios = [], destinos = [];
+  filas.forEach(function (f) {
+    if (opc.pid && f.pid !== opc.pid) return;
+    const u = usuarios[f.usuario]; if (!u || u.activo === false) return;
+    if (!opc.pid) {
+      if (opc.excluir && f.usuario === opc.excluir) return;
+      if (opc.usuarios && opc.usuarios.indexOf(f.usuario) === -1) return;
+      if (!pushPermitido_(cfg, u, tipo)) return;
+      const pr = f.prefs || {};
+      if (pr.tipos && pr.tipos[tipo] === false) return;
+      if (ev.maq && pr.maqs && pr.maqs[ev.maq] === false) return;
+      if (noche && pr.silencio !== false && tipo !== 'rotura') return;
+    }
+    f.cola = (f.cola || []).concat([{ tipo: tipo, titulo: String(ev.titulo || 'INOFER').slice(0, 90), cuerpo: String(ev.cuerpo || '').slice(0, 240), ir: ev.ir || 'hoy', tag: ev.tag || '', at: ahora }]).slice(-10);
+    escribirPush_(f);
+    destinos.push(f);
+    try { envios.push({ url: f.endpoint, method: 'post', payload: '', muteHttpExceptions: true, headers: { Authorization: vapidJwt_(f.endpoint), TTL: '86400', Urgency: tipo === 'rotura' ? 'high' : 'normal' } }); } catch (e) { envios.push(null); }
+  });
+  if (!envios.length) return 0;
+  let resp = [];
+  try { resp = UrlFetchApp.fetchAll(envios.filter(function (x) { return x; })); } catch (e) { resp = []; }
+  let ok = 0, j = 0; const borrar = [];
+  envios.forEach(function (x, i) {
+    if (!x) return; const r = resp[j++]; const code = r ? r.getResponseCode() : 0;
+    if (code >= 200 && code < 300) ok++;
+    else if (code === 404 || code === 410) borrar.push(destinos[i].fila);
+  });
+  if (borrar.length) { try { borrar.sort(function (a, b) { return b - a; }).forEach(function (fl) { hojaPush_().deleteRow(fl); }); } catch (e) {} }
+  return ok;
+}
+// Avisos que se mandan una sola vez (clave → fecha); se olvidan a los 4 días
+function pushYaAvisado_(clave) {
+  const props = PropertiesService.getScriptProperties();
+  const m = jsonSeguro_(props.getProperty('PUSH_EVENTOS'), {});
+  if (m[clave]) return true;
+  const corte = new Date(Date.now() - 4 * 86400000).toISOString();
+  Object.keys(m).forEach(function (k) { if (m[k] < corte) delete m[k]; });
+  const ks = Object.keys(m); if (ks.length > 250) ks.sort(function (a, b) { return m[a] < m[b] ? -1 : 1; }).slice(0, ks.length - 250).forEach(function (k) { delete m[k]; });
+  m[clave] = new Date().toISOString();
+  props.setProperty('PUSH_EVENTOS', JSON.stringify(m));
+  return false;
+}
+// Máquinas paradas hace más de N minutos (cronómetro de paradas). Corre cada 5 min como mucho.
+function revisarAvisosPush_(forzar) {
+  const cache = CacheService.getScriptCache();
+  if (!forzar && cache.get('inofer_push_rev')) return;
+  try { cache.put('inofer_push_rev', '1', 300); } catch (e) {}
+  try {
+    if (!leerPush_().length) return;
+    const mods = obtenerEstadoModulos(), cfg = mods.avisosPush || {}, min = Math.max(5, num_(cfg.minParada) || 30);
+    const cron = ((mods.mantenimiento || {}).cronoParadas || []).filter(function (c) { return c && !c.hasta && c.desde; });
+    cron.forEach(function (c) {
+      const mins = Math.floor((Date.now() - new Date(c.desde).getTime()) / 60000);
+      if (!(mins >= min) || mins > 24 * 60) return;
+      if (pushYaAvisado_('parada|' + c.id)) return;
+      enviarPush_('parada', { titulo: c.maq + ' parada hace ' + mins + ' min', cuerpo: 'Motivo: código ' + (c.codigo || '—') + (c.por ? ' · cronómetro de ' + c.por : '') + '.', maq: c.maq, ir: 'hoy', tag: 'parada-' + c.maq });
+    });
+  } catch (e) {}
+}
+function accionPush(u, body) {
+  const A = ['pushInfo', 'pushSuscribir', 'pushPrefs', 'pushBaja', 'pushProbar', 'pushEvento', 'pushAdminInfo'];
+  if (A.indexOf(body.action) === -1) return null;
+  const mios = function () { return leerPush_().filter(function (f) { return f.usuario === u.usuario; }); };
+  if (body.action === 'pushInfo') {
+    const cfg = pushCfg_();
+    return { status: 'ok', clave: vapid_().pub, equipos: mios().map(function (f) { return { pid: f.pid, equipo: f.equipo, creado: f.creado, prefs: f.prefs }; }), permitidos: PUSH_TIPOS.filter(function (t) { return pushPermitido_(cfg, u, t); }) };
+  }
+  if (body.action === 'pushSuscribir') {
+    const sub = body.sub || {}; const ep = String(sub.endpoint || '');
+    if (!/^https:\/\//.test(ep) || ep.length > 1200) return { status: 'error', error: 'Suscripción inválida.' };
+    const ya = leerPush_().filter(function (f) { return f.endpoint === ep || (body.pid && f.pid === String(body.pid)); })[0];
+    const ahora = new Date().toISOString();
+    const x = ya || { pid: Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 8), creado: ahora, cola: [] };
+    x.usuario = u.usuario; x.endpoint = ep; x.ultimo = ahora; x.equipo = String(body.equipo || '').slice(0, 60);
+    x.prefs = body.prefs && typeof body.prefs === 'object' ? body.prefs : (x.prefs || {});
+    escribirPush_(x);
+    auditar_(u, 'activó', 'avisos', ['Avisos al celular activados en ' + (x.equipo || 'un equipo')]);
+    return { status: 'ok', pid: x.pid };
+  }
+  const mio = mios().filter(function (f) { return f.pid === String(body.pid || ''); })[0];
+  if (body.action === 'pushPrefs') { if (!mio) return { status: 'error', error: 'Este equipo no tiene los avisos activados.' }; mio.prefs = body.prefs || {}; escribirPush_(mio); return { status: 'ok' }; }
+  if (body.action === 'pushBaja') { if (mio) hojaPush_().deleteRow(mio.fila); return { status: 'ok' }; }
+  if (body.action === 'pushProbar') {
+    if (!mio) return { status: 'error', error: 'Este equipo no tiene los avisos activados.' };
+    const n = enviarPush_('msg', { titulo: 'Prueba de INOFER', cuerpo: 'Así te van a llegar los avisos. Tocá para abrir la app.', ir: 'hoy', tag: 'prueba' }, { pid: mio.pid });
+    return { status: 'ok', enviados: n };
+  }
+  if (body.action === 'pushEvento') { // avisos que calcula la app (turno sin cargar, preventivo, stock): una sola vez cada uno
+    const tipo = String(body.tipo || '');
+    if (['turno', 'prev', 'stock'].indexOf(tipo) === -1) return { status: 'error', error: 'Tipo desconocido.' };
+    const clave = tipo + '|' + String(body.clave || '').slice(0, 120);
+    if (tipo === 'turno' && num_(body.fin) && Date.now() - num_(body.fin) < Math.max(10, num_(pushCfg_().minTurno) || 30) * 60000) return { status: 'ok', pronto: true };
+    if (pushYaAvisado_(clave)) return { status: 'ok', ya: true };
+    const n = enviarPush_(tipo, { titulo: body.titulo, cuerpo: body.cuerpo, maq: body.maq ? String(body.maq).slice(0, 20) : '', ir: String(body.ir || 'hoy').slice(0, 20), tag: tipo + '-' + String(body.clave || '').slice(0, 40) });
+    return { status: 'ok', enviados: n };
+  }
+  if (body.action === 'pushAdminInfo') {
+    if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
+    const filas = leerPush_(), cfg = pushCfg_();
+    return { status: 'ok', tipos: PUSH_TIPOS, cfg: cfg, usuarios: leerUsuarios().filter(function (x) { return x.activo !== false; }).map(function (x) {
+      const per = {}; PUSH_TIPOS.forEach(function (t) { per[t] = pushPermitido_(cfg, x, t); });
+      return { usuario: x.usuario, nombre: x.nombre || x.usuario, rol: x.rol, equipos: filas.filter(function (f) { return f.usuario === x.usuario; }).length, permitidos: per };
+    }) };
+  }
+  return null;
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -2002,6 +2262,8 @@ function doPost(e) {
   if (alm) return respuesta(alm);
   const rot = accionRotura(u, body);
   if (rot) return respuesta(rot);
+  const psh = accionPush(u, body);
+  if (psh) return respuesta(psh);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };

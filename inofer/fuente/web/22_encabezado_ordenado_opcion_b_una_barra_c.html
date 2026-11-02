@@ -15,7 +15,8 @@
           { tab: 'tabDashboardBtn', ico: '📊', t: 'Tablero y velocímetros', d: 'Utilización y paradas' },
           { tab: 'tabRecordsBtn', ico: '🕒', t: 'Historial de partes', d: 'Partes de horas cargados', n: () => cuenta('recordCountBadge') },
           { accion: () => window.inoferElegirMiMaquina && inoferElegirMiMaquina(), vis: () => !!sesion() && can('ordenes', 'edit'), ico: '📱', t: 'Modo tablet de máquina', d: 'Fijar este equipo a una inyectora' },
-          { accion: () => $('openNewEntryModalBtn') && $('openNewEntryModalBtn').click(), vis: () => !!sesion() && !!$('openNewEntryModalBtn') && can('partes', 'edit') && pk('partes_cargar'), ico: '➕', t: 'Cargar horas', d: 'Parte de horas manual' }
+          { accion: () => $('openNewEntryModalBtn') && $('openNewEntryModalBtn').click(), vis: () => !!sesion() && !!$('openNewEntryModalBtn') && can('partes', 'edit') && pk('partes_cargar'), ico: '➕', t: 'Cargar horas', d: 'Parte de horas manual' },
+          { accion: () => window.inoferAvisosCelular && inoferAvisosCelular(), vis: () => !!sesion() && !!window.inoferAvisosCelular, ico: '📲', t: 'Avisos al celular', d: 'Roturas, paradas y turnos en tu teléfono' }
         ] },
         { id: 'plan', nombre: 'Planificación', ico: '📅', items: [
           { tab: 'tabGanttBtn', ico: '📅', t: 'Plan Gantt', d: 'Semanal / mensual y asistente' },
@@ -30,6 +31,7 @@
         { id: 'adm', nombre: 'Admin', ico: '⚙️', items: [
           { tab: 'tabAudBtn', ico: '🧾', t: 'Registro de cambios', d: 'Quién cambió qué y cuándo' },
           { accion: () => window.inoferAlmacenamiento && inoferAlmacenamiento(), vis: () => esAdmin() && !!window.inoferAlmacenamiento, ico: '💾', t: 'Almacenamiento', d: 'Espacio y archivo de órdenes' },
+          { accion: () => window.inoferAvisosAdmin && inoferAvisosAdmin(), vis: () => esAdmin() && !!window.inoferAvisosAdmin, ico: '📣', t: 'Quién recibe avisos', d: 'Avisos al celular por usuario' },
           { tab: 'tabPapeleraBtn', ico: '🗑️', t: 'Papelera', d: 'Recuperar lo borrado' },
           { accion: () => $('inoferMenuUsers') && $('inoferMenuUsers').click(), vis: () => esAdmin() && !!$('inoferMenuUsers'), ico: '🛡️', t: 'Usuarios y permisos', d: 'Altas, claves y permisos' },
           { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }

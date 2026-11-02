@@ -43,7 +43,7 @@ const props = {};
 const cacheStore = {};
 const ctx = {
   globalThis: null,
-  UrlFetchApp: { fetch: (u, opts) => { if (/generativelanguage/.test(u)) { delete require.cache[require.resolve('' + require('path').join(__dirname, 'gemini_simulado.js') + '')]; const fn = require('' + require('path').join(__dirname, 'gemini_simulado.js') + ''); const t = fn(JSON.parse((opts && opts.payload) || '{}'), u); return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ candidates: [{ content: { parts: [{ text: t }] } }] }) }; } const f = process.env.SRV_FILE; let txt = ''; let code = 404; try { txt = fs.readFileSync(f, 'utf8'); code = 200; } catch (e) {} return { getResponseCode: () => code, getContentText: () => txt }; } },
+  UrlFetchApp: { fetchAll: reqs => reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)), fetch: (u, opts) => { if (/^https:\/\/push\.prueba\//.test(u)) { (ctx.__push = ctx.__push || []).push({ url: u, headers: (opts && opts.headers) || {} }); const code = /vencida/.test(u) ? 410 : 201; return { getResponseCode: () => code, getContentText: () => '' }; } if (/generativelanguage/.test(u)) { delete require.cache[require.resolve('' + require('path').join(__dirname, 'gemini_simulado.js') + '')]; const fn = require('' + require('path').join(__dirname, 'gemini_simulado.js') + ''); const t = fn(JSON.parse((opts && opts.payload) || '{}'), u); return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ candidates: [{ content: { parts: [{ text: t }] } }] }) }; } const f = process.env.SRV_FILE; let txt = ''; let code = 404; try { txt = fs.readFileSync(f, 'utf8'); code = 200; } catch (e) {} return { getResponseCode: () => code, getContentText: () => txt }; } },
   CacheService: { getScriptCache: () => ({ get: k => cacheStore[k] || null, put: (k, v) => { cacheStore[k] = v; } }) },
   SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss },
   PropertiesService: { getScriptProperties: () => ({
@@ -69,7 +69,7 @@ vm.runInContext(code, ctx);
 http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   const url = new URL(req.url, 'http://x');
-  if (url.pathname === '/__state') { res.end(JSON.stringify({ sheets: Object.fromEntries(Object.entries(sheets).map(([k, v]) => [k, v._data])), props })); return; }
+  if (url.pathname === '/__state') { res.end(JSON.stringify({ sheets: Object.fromEntries(Object.entries(sheets).map(([k, v]) => [k, v._data])), props, push: ctx.__push || [] })); return; }
   if (url.pathname === '/__run') { vm.runInContext(url.searchParams.get('f') + '()', ctx); res.end('ok'); return; }
   let body = '';
   req.on('data', c => body += c);

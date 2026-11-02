@@ -428,6 +428,8 @@
         }
         return L;
       }
+      // para los avisos al celular (parte 33): lo mismo que calcula la 🔔, sin depender de los permisos de este usuario
+      window.inoferAvisosFuente = { turnos: () => turnosSinCargar(), prev: () => preventivosPendientes(), stock: () => { try { return calcStock().materiales.filter(x => x.alerta); } catch (e) { return []; } } };
       function montarAvisos() {
         if ($('inoferAvisosBtn') || !$('inoferUserChip') || !sesion()) return;
         const chip = $('inoferUserChip');

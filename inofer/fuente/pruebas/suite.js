@@ -9,7 +9,7 @@ const PUERTO_NUBE = 18900 + Math.floor(Math.random() * 500), PUERTO_WEB = PUERTO
 const NUBE = `http://127.0.0.1:${PUERTO_NUBE}/exec`;
 const resultados = [];
 const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'inofer-pruebas-'));
-fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal, copiaDeSeguridad: copiaDeSeguridad };\n');
+fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal, copiaDeSeguridad: copiaDeSeguridad, revisarAvisosPush_: revisarAvisosPush_ };\n');
 const html = fs.readFileSync(path.join(FUENTE, 'res', 'web', 'index.html'), 'utf8');
 
 function web() {
@@ -478,6 +478,65 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.cfg === 'ok' && r.a1 >= 1 && r.a2 === 0, 'archivo automático: ' + JSON.stringify(r));
       ok(r.auto, 'falta la casilla de archivo automático en Almacenamiento');
       ok(!r.enLista && r.sigue, 'la orden archivada debe salir de la lista y seguir contando: ' + JSON.stringify(r));
+    });
+    await prueba('Avisos al celular: suscribir, firmar (VAPID), mandar, filtrar y pedir pendientes', async () => {
+      const pedir = ruta => new Promise((res, rej) => http.get(`http://127.0.0.1:${PUERTO_NUBE}` + ruta, r => { let b = ''; r.on('data', c => b += c); r.on('end', () => res(b)); }).on('error', rej));
+      const estado = async () => JSON.parse(await pedir('/__state')).push || [];
+      const sub = (ep, prefs) => A.evaluate(([ep, prefs]) => inoferCloudPost({ action: 'pushSuscribir', token: inoferAuthToken(), sub: { endpoint: ep, keys: { p256dh: 'x', auth: 'y' } }, prefs, equipo: 'Prueba' }), [ep, prefs]);
+      const prefs = { tipos: { stock: true, rotura: true, parada: true, msg: true }, maqs: { '200V': true, 'H50': false }, silencio: false };
+      const info = await A.evaluate(() => inoferCloudPost({ action: 'pushInfo', token: inoferAuthToken() }));
+      ok(info.status === 'ok' && /^[A-Za-z0-9_-]{87}$/.test(info.clave || ''), 'clave pública: ' + JSON.stringify(info).slice(0, 200));
+      const s1 = await sub('https://push.prueba/equipo1', prefs);
+      const s2 = await sub('https://push.prueba/vencida', prefs);
+      ok(s1.pid && s2.pid && s1.pid !== s2.pid, 'suscripción: ' + JSON.stringify([s1, s2]));
+      const antes = (await estado()).length;
+      const pr = await A.evaluate(pid => inoferCloudPost({ action: 'pushProbar', token: inoferAuthToken(), pid }), s1.pid);
+      ok(pr.enviados === 1, 'probar: ' + JSON.stringify(pr));
+      const env = (await estado()).slice(antes);
+      ok(env.length === 1 && env[0].url === 'https://push.prueba/equipo1', 'envío de prueba: ' + JSON.stringify(env).slice(0, 200));
+      // la firma VAPID (ES256) tiene que verificar con la clave pública
+      const crypto = require('crypto');
+      const m = /^vapid t=([^.]+)\.([^.]+)\.([^,]+), k=(.+)$/.exec(env[0].headers.Authorization || '');
+      ok(m && m[4] === info.clave, 'encabezado VAPID: ' + (env[0].headers.Authorization || '').slice(0, 60));
+      const pub = Buffer.from(m[4], 'base64url');
+      const key = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') }, format: 'jwk' });
+      ok(crypto.verify('sha256', Buffer.from(m[1] + '.' + m[2]), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(m[3], 'base64url')), 'la firma VAPID no verifica');
+      ok(JSON.parse(Buffer.from(m[2], 'base64url')).aud === 'https://push.prueba', 'aud del JWT');
+      const pend = await A.evaluate(async pid => { const g = async () => (await (await fetch(cloudApiUrl + '?action=pushPendientes&pid=' + pid)).json()).mensajes; return [await g(), await g()]; }, s1.pid);
+      ok(pend[0].length === 1 && pend[0][0].titulo === 'Prueba de INOFER' && pend[1].length === 0, 'pendientes: ' + JSON.stringify(pend));
+      // evento de stock: llega; la suscripción vencida (410) se borra
+      const n0 = (await estado()).length;
+      const ev = await A.evaluate(() => inoferCloudPost({ action: 'pushEvento', token: inoferAuthToken(), tipo: 'stock', clave: 'ALSI|rojo|x', titulo: 'Stock bajo · ALSI', cuerpo: 'Quedan 100 kg', ir: 'stock' }));
+      const ev2 = await A.evaluate(() => inoferCloudPost({ action: 'pushEvento', token: inoferAuthToken(), tipo: 'stock', clave: 'ALSI|rojo|x', titulo: 'Stock bajo · ALSI', cuerpo: 'Quedan 100 kg' }));
+      ok(ev.enviados === 1 && ev2.ya === true, 'evento stock (una sola vez): ' + JSON.stringify([ev, ev2]));
+      ok((await estado()).length === n0 + 2, 'debía intentar los 2 equipos');
+      const eqs = await A.evaluate(() => inoferCloudPost({ action: 'pushInfo', token: inoferAuthToken() }));
+      ok(eqs.equipos.length === 1, 'la suscripción vencida debía borrarse: ' + eqs.equipos.length);
+      // filtro de máquina del equipo y tabla del administrador
+      const fm = await A.evaluate(() => inoferCloudPost({ action: 'pushEvento', token: inoferAuthToken(), tipo: 'prev', clave: 'h50|1', maq: 'H50', titulo: 'Preventivo', cuerpo: 'x' }));
+      ok(fm.enviados === 0, 'H50 apagada en el equipo: ' + JSON.stringify(fm));
+      await A.evaluate(() => inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'avisosPush', moduleData: { usuarios: { admin: { stock: false } }, minParada: 30, minTurno: 30 } }));
+      const fa = await A.evaluate(() => inoferCloudPost({ action: 'pushEvento', token: inoferAuthToken(), tipo: 'stock', clave: 'ZAMAC|rojo|x', titulo: 'Stock', cuerpo: 'x' }));
+      ok(fa.enviados === 0, 'el admin sacó el stock en la tabla: ' + JSON.stringify(fa));
+      const tp = await A.evaluate(() => inoferCloudPost({ action: 'pushEvento', token: inoferAuthToken(), tipo: 'turno', clave: '200V|hoy|Noche', fin: Date.now() - 5 * 60000, titulo: 'Turno', cuerpo: 'x' }));
+      ok(tp.pronto === true, 'turno recién terminado espera los minutos elegidos: ' + JSON.stringify(tp));
+      // máquina parada hace más de 30 min (cronómetro)
+      await A.evaluate(() => inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'mantenimiento', moduleData: Object.assign({}, (window.inoferModLocal && inoferModLocal('mantenimiento')) || {}, { cronoParadas: [{ id: 'cp-push', maq: '200V', codigo: 30, desde: new Date(Date.now() - 40 * 60000).toISOString(), hasta: '', por: 'Prueba' }] }) }));
+      const n1 = (await estado()).length;
+      await pedir('/__run?f=' + encodeURIComponent('(function(){ inoferServidor_().revisarAvisosPush_(true); })'));
+      const par = await A.evaluate(async pid => (await (await fetch(cloudApiUrl + '?action=pushPendientes&pid=' + pid)).json()).mensajes, s1.pid);
+      ok((await estado()).length === n1 + 1 && par.some(x => /200V parada hace 4\d min/.test(x.titulo)), 'parada larga: ' + JSON.stringify(par));
+      // pantallas
+      const ui = await A.evaluate(async () => {
+        inoferAvisosCelular(); await new Promise(r => setTimeout(r, 2500));
+        const m = document.getElementById('inoferPushModal'); const t1 = m ? m.textContent : ''; if (m) m.remove();
+        inoferAvisosAdmin(); await new Promise(r => setTimeout(r, 2500));
+        const a = document.getElementById('inoferPushModal'); const filas = a ? a.querySelectorAll('tbody tr').length : 0; const t2 = a ? a.textContent : ''; if (a) a.remove();
+        return { t1: /QUÉ ME AVISA/.test(t1) && /DE QUÉ MÁQUINAS/.test(t1) && /Activar en este equipo|bloqueados|no permite/.test(t1), txt: t1.slice(0, 200), filas, t2: /PARADA LARGA/.test(t2) };
+      });
+      ok(ui.t1, 'ventana del celular: ' + ui.txt);
+      ok(ui.filas >= 1 && ui.t2, 'tabla del administrador: ' + JSON.stringify(ui));
+      await A.evaluate(() => inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'avisosPush', moduleData: {} }));
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {

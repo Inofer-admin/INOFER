@@ -40,9 +40,15 @@
           else if (destino === 'gantt') { const b = $('tabGanttBtn'); if (b) b.click(); }
           else if (destino === 'hoy') { const b = $('tabHoyBtn'); if (b) b.click(); }
           else if (destino === 'mimaq') { if (window.inoferElegirMiMaquina && !localStorage.getItem('tablero_inyectoras_mimaquina_v1')) inoferElegirMiMaquina(); else switchTab('mimaq'); }
+          else if (destino === 'mant') switchTab('mant');
+          else if (destino === 'stock') switchTab('stock');
+          else if (destino === 'msg') { if (window.inoferMensajes && inoferMensajes.abrir) inoferMensajes.abrir(); }
         } catch (e) { }
         return true;
       }
+      // desde un aviso del celular con la app ya abierta
+      window.inoferIr = d => { ir = String(d || ''); irA(); };
+      try { navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.inoferIr) window.inoferIr(e.data.inoferIr); }); } catch (e) { }
       const t = setInterval(() => { try { pintar(); if (irA()) { if (!ir) { /* listo */ } } } catch (e) { } }, 1500);
       setTimeout(() => clearInterval(t), 10 * 60 * 1000);
       setInterval(() => { try { pintar(); } catch (e) { } }, 30000);
