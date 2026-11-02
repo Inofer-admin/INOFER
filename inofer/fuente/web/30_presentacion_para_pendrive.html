@@ -1,0 +1,110 @@
+  <script>
+    // ===== Presentación para pendrive: cada diapositiva como imagen JPG (1920×1080) dentro de un ZIP =====
+    // La tele la pasa como álbum de fotos desde el USB. Sin librerías externas: la diapositiva se dibuja con SVG
+    // (foreignObject) y los gráficos (canvas de Chart.js) se pasan a imagen antes.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const pad = n => String(n).padStart(2, '0');
+      const espera = ms => new Promise(r => setTimeout(r, ms));
+      const ANCHO = 1600, ALTO = 900, ESCALA = 1.2; // se exporta a 1920×1080
+
+      // ---------- ZIP simple (sin comprimir: los JPG ya vienen comprimidos) ----------
+      const TABLA = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+      function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = TABLA[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+      function zip(archivos) { // [{nombre, datos: Uint8Array}]
+        const enc = new TextEncoder(), partes = [], central = []; let off = 0;
+        const d = new Date(), hora = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), dia = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+        archivos.forEach(a => {
+          const n = enc.encode(a.nombre), c = crc32(a.datos), L = a.datos.length;
+          const h = new DataView(new ArrayBuffer(30));
+          h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+          h.setUint16(10, hora, true); h.setUint16(12, dia, true); h.setUint32(14, c, true); h.setUint32(18, L, true); h.setUint32(22, L, true);
+          h.setUint16(26, n.length, true); h.setUint16(28, 0, true);
+          partes.push(new Uint8Array(h.buffer), n, a.datos);
+          const ce = new DataView(new ArrayBuffer(46));
+          ce.setUint32(0, 0x02014b50, true); ce.setUint16(4, 20, true); ce.setUint16(6, 20, true); ce.setUint16(8, 0x0800, true); ce.setUint16(10, 0, true);
+          ce.setUint16(12, hora, true); ce.setUint16(14, dia, true); ce.setUint32(16, c, true); ce.setUint32(20, L, true); ce.setUint32(24, L, true);
+          ce.setUint16(28, n.length, true); ce.setUint32(42, off, true);
+          central.push(new Uint8Array(ce.buffer), n);
+          off += 30 + n.length + L;
+        });
+        const tamC = central.reduce((s, x) => s + x.length, 0);
+        const fin = new DataView(new ArrayBuffer(22));
+        fin.setUint32(0, 0x06054b50, true); fin.setUint16(8, archivos.length, true); fin.setUint16(10, archivos.length, true); fin.setUint32(12, tamC, true); fin.setUint32(16, off, true);
+        return new Blob(partes.concat(central, [new Uint8Array(fin.buffer)]), { type: 'application/zip' });
+      }
+
+      // ---------- foto de una parte de la pantalla ----------
+      function estilos() { return [...document.querySelectorAll('style')].map(s => s.textContent).join('\n'); }
+      async function foto(nodo) {
+        const clon = nodo.cloneNode(true);
+        const orig = nodo.querySelectorAll('canvas'), copias = clon.querySelectorAll('canvas');
+        orig.forEach((c, i) => {
+          const img = document.createElement('img');
+          try { img.src = c.toDataURL('image/png'); } catch (e) { }
+          img.setAttribute('style', (copias[i].getAttribute('style') || '') + `;width:${c.clientWidth || c.width}px;height:${c.clientHeight || c.height}px;display:block`);
+          img.className = copias[i].className;
+          copias[i].replaceWith(img);
+        });
+        clon.style.position = 'static'; clon.style.left = '0'; clon.style.top = '0';
+        const html = new XMLSerializer().serializeToString(clon);
+        const css = estilos().replace(/@import[^;]+;/g, '');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ANCHO}" height="${ALTO}"><foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${ANCHO}px;height:${ALTO}px;background:#020617;font-family:Inter,Arial,sans-serif"><style>${css.replace(/<\/style/gi, '')}</style>${html}</div></foreignObject></svg>`;
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('No se pudo dibujar la diapositiva')); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+        const cv = document.createElement('canvas'); cv.width = ANCHO * ESCALA; cv.height = ALTO * ESCALA;
+        const g = cv.getContext('2d'); g.fillStyle = '#020617'; g.fillRect(0, 0, cv.width, cv.height);
+        g.drawImage(img, 0, 0, cv.width, cv.height);
+        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
+        return new Uint8Array(await blob.arrayBuffer());
+      }
+      const limpio = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'diapositiva';
+
+      async function exportar(opc) {
+        const P = window.inoferPresInterna;
+        if (!P) { toast('La presentación todavía no está lista'); return null; }
+        const lista = P.activas();
+        if (!lista.length) { toast('No hay diapositivas activas en la presentación'); return null; }
+        const cfg = P.cfg() || {};
+        const aviso = document.createElement('div');
+        aviso.className = 'fixed inset-0 z-[100000] flex items-center justify-center bg-black/80 text-center';
+        aviso.innerHTML = '<div class="rounded-2xl border border-amber-500/40 bg-slate-900 px-8 py-6"><div class="text-lg font-black text-amber-200">⬇ Preparando la presentación para el pendrive</div><div id="ppAvance" class="mt-2 text-sm text-slate-300">Empezando…</div></div>';
+        document.body.appendChild(aviso);
+        const escenario = document.createElement('div');
+        escenario.setAttribute('style', `position:fixed;left:-30000px;top:0;width:${ANCHO}px;height:${ALTO}px;overflow:hidden;background:#020617;color:#fff;display:flex;flex-direction:column`);
+        const ahora = new Date(), cuando = `${pad(ahora.getDate())}/${pad(ahora.getMonth() + 1)} ${pad(ahora.getHours())}:${pad(ahora.getMinutes())}`;
+        escenario.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1e293b;padding:16px 32px"><div style="display:flex;align-items:center;gap:16px"><span style="border-radius:8px;background:rgba(6,182,212,.2);padding:4px 12px;font-size:20px;font-weight:900;color:#67e8f9">INOFER</span><span class="pp-titulo" style="font-size:24px;font-weight:700;color:#cbd5e1"></span></div><span style="font-size:18px;color:#94a3b8">Datos al ${cuando}</span></div><div class="pp-cuerpo flex min-h-0 flex-1 flex-col px-10 py-8"></div>`;
+        document.body.appendChild(escenario);
+        const cuerpo = escenario.querySelector('.pp-cuerpo'); escenario.querySelector('.pp-titulo').textContent = cfg.titulo || '';
+        let animAntes = null; try { animAntes = Chart.defaults.animation; Chart.defaults.animation = false; } catch (e) { }
+        const archivos = [], fallas = [];
+        try {
+          for (let i = 0; i < lista.length; i++) {
+            const d = lista[i], nombre = ((P.tipos[d.tipo] || {}).nombre || d.tipo);
+            const av = $('ppAvance'); if (av) av.textContent = `Diapositiva ${i + 1} de ${lista.length}: ${nombre}`;
+            try {
+              cuerpo.innerHTML = ''; P.render(d, cuerpo);
+              await espera(500);
+              const datos = await foto(escenario);
+              archivos.push({ nombre: `INOFER_presentacion/${pad(i + 1)}_${limpio(nombre.replace(/^\W+/, ''))}.jpg`, datos });
+            } catch (e) { fallas.push(nombre); console.error(e); }
+          }
+        } finally {
+          try { Chart.defaults.animation = animAntes; } catch (e) { }
+          escenario.remove(); aviso.remove();
+        }
+        if (!archivos.length) { toast('No se pudo armar ninguna imagen' + (fallas.length ? ': ' + fallas.join(', ') : '')); return null; }
+        const leeme = `INOFER - Presentacion para la tele (pendrive)\r\nGenerada el ${cuando}\r\n\r\n1. Copia la carpeta INOFER_presentacion al pendrive.\r\n2. Enchufa el pendrive en la tele.\r\n3. En la tele: Entradas / Fuente -> USB (o la app Medios / Fotos), entra a la carpeta y elegi "Presentacion" o "Reproducir todo".\r\n4. En las opciones de la presentacion de la tele, activa "Repetir" y elegi el tiempo de cada foto.\r\n\r\nLos datos quedan fijos: para actualizarlos volve a descargar desde INOFER (boton Descargar para pendrive) y reemplaza la carpeta.\r\n`;
+        archivos.push({ nombre: 'INOFER_presentacion/LEEME.txt', datos: new TextEncoder().encode(leeme) });
+        const z = zip(archivos);
+        if (opc && opc.soloProbar) return { archivos: archivos.map(a => a.nombre), tamanos: archivos.map(a => a.datos.length), zip: z.size, fallas, primeros: Array.from(new Uint8Array(await z.slice(0, 4).arrayBuffer())), imagenes: opc.conImagenes ? archivos.filter(a => /\.jpg$/.test(a.nombre)).map(a => { let s = ''; a.datos.forEach(b => { s += String.fromCharCode(b); }); return btoa(s); }) : undefined };
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(z); a.download = `INOFER_presentacion_${ahora.getFullYear()}-${pad(ahora.getMonth() + 1)}-${pad(ahora.getDate())}.zip`;
+        document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+        toast(`✓ Listo: ${archivos.length - 1} imágenes${fallas.length ? ` (no se pudo: ${fallas.join(', ')})` : ''}. Descomprimí el ZIP en el pendrive y en la tele abrí la carpeta INOFER_presentacion.`);
+        return true;
+      }
+      window.inoferPresPendrive = exportar;
+    })();
+  </script>

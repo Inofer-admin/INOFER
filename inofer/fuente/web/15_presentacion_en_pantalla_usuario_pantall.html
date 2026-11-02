@@ -255,6 +255,7 @@
         else if (e.key === 'Escape' && !document.fullscreenElement) detener();
       });
       window.inoferPresentacion = { iniciar: iniciarPres, detener, config: () => cfg };
+      window.inoferPresInterna = { render: (d, c) => render(d, c), activas: () => activas(), cfg: () => cfg, tipos: TIPOS };
 
       // ---------- configuración (administrador) ----------
       function montarCfg() {
@@ -286,7 +287,8 @@
         const total = L.filter(x => x.activo !== false).reduce((a, x) => a + (Number(x.segundos) || Number(cfg.intervalo) || 300), 0);
         c.innerHTML = `<div class="flex items-center justify-between border-b border-slate-800 px-5 py-3">
             <div><h3 class="text-base font-extrabold text-white">📺 Presentación en pantalla</h3><p class="text-[11px] text-slate-400">Armala como diapositivas: elegí qué gráfico va en cada una y cuánto dura. Se guarda en la nube y la pantalla lo toma sola.</p></div>
-            <button type="button" data-a="cerrar" class="rounded-lg px-2 py-1 text-xl text-slate-400 hover:bg-slate-800 hover:text-white">×</button></div>
+            <div class="flex items-center gap-2"><button type="button" data-a="pendrive" class="rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-500/25" title="Baja todas las diapositivas como imágenes para pasarlas desde un pendrive en la tele">⬇ Descargar para pendrive</button>
+            <button type="button" data-a="cerrar" class="rounded-lg px-2 py-1 text-xl text-slate-400 hover:bg-slate-800 hover:text-white">×</button></div></div>
           <div class="grid gap-3 border-b border-slate-800 px-5 py-3 sm:grid-cols-3">
             <label class="text-[11px] font-semibold text-slate-400 sm:col-span-2">Título en pantalla<input data-c="titulo" value="${esc(cfg.titulo || '')}" class="mt-1 w-full ${inp}"></label>
             <div class="text-[11px] font-semibold text-slate-400">Duración general de cada diapositiva<div class="mt-1 flex items-center gap-1"><input type="number" min="0" data-c="min" value="${g.m}" class="w-16 ${inp}"> min <input type="number" min="0" max="59" data-c="sec" value="${g.s}" class="w-16 ${inp}"> s</div></div>
@@ -347,6 +349,7 @@
         const i = Number(b.dataset.d), L = cfg.diapositivas;
         const a = b.dataset.a;
         if (a === 'cerrar') return cerrarCfg();
+        if (a === 'pendrive') return window.inoferPresPendrive && inoferPresPendrive();
         if (a === 'ver') { cerrarCfg(); return iniciarPres(); }
         if (a === 'verDesde') { cerrarCfg(); iniciarPres(); const idx = activas().indexOf(L[i]); if (idx > 0) mostrar(idx); return; }
         if (a === 'sel') { selCfg = i; return renderCfg(); }

@@ -417,6 +417,12 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.filas.startsWith('200V,200N') && Number(r.ok200V) > 0 && r.cronoChip, 'el cierre no se precargó bien: ' + JSON.stringify(r));
       ok(r.l1 === 1 && r.ok1 === Number(r.ok200V) && Number(r.par2) === 30 && r.origen === 'cierre' && r.listo >= 2 && r.usada, 'no guardó el cierre: ' + JSON.stringify(r));
     });
+    await prueba('Presentación para pendrive: imágenes JPG en un ZIP', async () => {
+      const r = await A.evaluate(async () => await inoferPresPendrive({ soloProbar: true }));
+      ok(r && r.primeros.join(',') === '80,75,3,4', 'no armó el ZIP: ' + JSON.stringify(r));
+      const jpgs = r.archivos.filter(a => /\.jpg$/.test(a));
+      ok(jpgs.length >= 3 && r.tamanos.slice(0, jpgs.length).every(t => t > 15000) && !r.fallas.length && r.archivos.some(a => /LEEME/.test(a)), 'imágenes vacías o faltantes: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
