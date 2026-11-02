@@ -209,3 +209,8 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 
 ## Presentación: todos los gráficos (parte 31)
 - El selector "agregar" lista cada indicador por separado (`kpi:recuento`, `kpi:rebabado`, `kpi:scrap`, `kpi:inyeccion`). Tipos nuevos agregados a `inoferPresInterna.tipos` y dibujados por `window.inoferPresExtra[tipo](d, cont, h)` (gancho al final de render en la parte 15; h = {tit, barras, registros, PERIODOS, color, gauge, grafico, semanaActual}): estado (máquinas ahora, con cronómetro y orden), produccion (programado vs producido), piezasDia, utilDia, turnos, codigos (top 10 por tiempo), scrapMaq, kpis4 (los 4 gráficos), mantenimiento (roturas + preventivos 7 días), stock (alertas de `inoferStock()`).
+
+## Tiendas (Microsoft Store / Google Play) — preparación (parte 32)
+- manifest: name "INOFER · Producción y planificación", id "/INOFER/inofer/", start_url ./index.html?origen=app, categories, launch_handler, shortcuts (?ir=hoy|cierre|gantt|mimaq, manejados en la parte 32 tras el login), screenshots en `fuente/tienda/capturas` (se publican en inofer/tienda/, fuera del .jar). Política de privacidad `fuente/tienda/privacidad.html` → https://inofer-admin.github.io/INOFER/inofer/privacidad.html. sw CACHE inofer-v8.
+- Botón `#inoferInstalarApp` "📲 Instalar" en `#nbRight` (beforeinstallprompt; si no hay evento muestra cómo instalar según el equipo); se oculta si ya corre instalada o en el programa Java.
+- El usuario YA tiene cuenta en Microsoft Partner Center (02/11/2026). Falta: crear la app y reservar el nombre, pasar Package ID / Publisher ID / Publisher display name para generar el MSIX con PWABuilder.

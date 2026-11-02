@@ -1,9 +1,9 @@
 {
-  "name": "INOFER",
+  "name": "INOFER · Producción y planificación",
   "short_name": "INOFER",
-  "description": "Tablero de inyectoras, órdenes de producción y planificación Gantt de INOFER.",
-  "id": "./",
-  "start_url": "./index.html",
+  "description": "Sistema de la planta INOFER: carga de turnos y paradas, órdenes de producción, plan Gantt de inyectoras, indicadores, OEE, mantenimiento y presentación en pantalla.",
+  "id": "/INOFER/inofer/",
+  "start_url": "./index.html?origen=app",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
@@ -28,6 +28,110 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "categories": [
+    "business",
+    "productivity",
+    "utilities"
+  ],
+  "prefer_related_applications": false,
+  "dir": "ltr",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "shortcuts": [
+    {
+      "name": "Hoy",
+      "short_name": "Hoy",
+      "description": "Estado de las máquinas y avance del día",
+      "url": "./index.html?ir=hoy",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Cierre de turno",
+      "short_name": "Cierre",
+      "description": "Cargar el turno de todas las máquinas",
+      "url": "./index.html?ir=cierre",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Plan Gantt",
+      "short_name": "Gantt",
+      "description": "Programación de inyectoras",
+      "url": "./index.html?ir=gantt",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Mi máquina (tablet)",
+      "short_name": "Mi máquina",
+      "description": "Modo tablet de la máquina",
+      "url": "./index.html?ir=mimaq",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "tienda/capturas/pc_1_hoy.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Hoy: estado de cada máquina"
+    },
+    {
+      "src": "tienda/capturas/pc_2_gantt.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Plan Gantt de inyectoras"
+    },
+    {
+      "src": "tienda/capturas/pc_3_cierre.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Cierre de turno de todas las máquinas"
+    },
+    {
+      "src": "tienda/capturas/pc_5_presentacion.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Presentación en pantalla"
+    },
+    {
+      "src": "tienda/capturas/cel_1_mimaquina.png",
+      "sizes": "540x960",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Modo tablet de la máquina"
+    },
+    {
+      "src": "tienda/capturas/cel_2_hoy.png",
+      "sizes": "540x960",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Hoy en el celular"
     }
   ]
 }

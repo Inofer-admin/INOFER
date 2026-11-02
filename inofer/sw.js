@@ -1,6 +1,6 @@
 // INOFER MES — Service Worker: permite abrir la app sin internet.
 // Los datos de la nube (Apps Script / Gemini) nunca se guardan en caché.
-const CACHE = 'inofer-v7';
+const CACHE = 'inofer-v8';
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 // Los estilos y Chart.js ya vienen dentro de index.html; solo la librería de Excel se baja aparte

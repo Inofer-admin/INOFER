@@ -434,6 +434,16 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(!malos.length, 'diapositivas que fallan: ' + malos.map(k => k + '=' + r.out[k]).join(', '));
       ok(['kpi:recuento', 'kpi:rebabado', 'kpi:scrap', 'kpi:inyeccion', 'estado', 'produccion', 'codigos', 'kpis4', 'stock'].every(x => r.opts.includes(x)), 'faltan opciones para agregar: ' + r.opts.join(','));
     });
+    await prueba('Lista para tiendas: manifest, capturas, privacidad y botón Instalar', async () => {
+      const path = require('path'), fs = require('fs');
+      const m = JSON.parse(fs.readFileSync(path.join(FUENTE, 'res', 'web', 'manifest.webmanifest'), 'utf8'));
+      ok(m.name && m.short_name === 'INOFER' && m.id && m.start_url && m.display === 'standalone' && m.icons.some(i => i.sizes === '512x512' && i.purpose === 'maskable'), 'manifest incompleto');
+      ok(m.shortcuts.length >= 3 && m.screenshots.filter(x => x.form_factor === 'wide').length >= 3, 'faltan accesos o capturas');
+      m.screenshots.forEach(x => ok(fs.existsSync(path.join(FUENTE, x.src)), 'falta la captura ' + x.src));
+      ok(fs.existsSync(path.join(FUENTE, 'tienda', 'privacidad.html')), 'falta la política de privacidad');
+      const r = await A.evaluate(() => ({ btn: !!document.getElementById('inoferInstalarApp'), fn: typeof inoferInstalarApp }));
+      ok(r.btn && r.fn === 'function', 'no aparece el botón Instalar: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

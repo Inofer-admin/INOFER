@@ -39,6 +39,8 @@ rm -f $B/INOFER.jar; (cd $B/classes && jar cfm ../INOFER.jar ../MF @../lista.txt
 mkdir -p "$OUT"
 cp $SRC/res/web/index.html $SRC/res/web/manifest.webmanifest $SRC/res/web/sw.js "$OUT/"
 rm -rf "$OUT/icons"; cp -r $SRC/res/web/icons "$OUT/"
+# Material para las tiendas (capturas) y política de privacidad: fuera del .jar
+rm -rf "$OUT/tienda"; cp -r $SRC/tienda "$OUT/tienda"; cp $SRC/tienda/privacidad.html "$OUT/privacidad.html"
 cp $B/INOFER.jar "$OUT/INOFER.jar"
 SHA=$(sha256sum "$OUT/INOFER.jar" | cut -d' ' -f1)
 cat > "$OUT/version.json" <<EOF

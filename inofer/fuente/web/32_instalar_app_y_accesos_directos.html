@@ -1,0 +1,50 @@
+  <script>
+    // ===== Instalar INOFER como aplicación + accesos directos del ícono (?ir=hoy|cierre|gantt|mimaq) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      let aviso = null;
+      const instalada = () => { try { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: window-controls-overlay)').matches || navigator.standalone === true || !!window.__INOFER_JAVA; } catch (e) { return false; } };
+      window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); aviso = e; pintar(); });
+      window.addEventListener('appinstalled', () => { aviso = null; pintar(); try { showToast('✓ INOFER quedó instalada como aplicación'); } catch (e) { } });
+      function pintar() {
+        let b = $('inoferInstalarApp');
+        const ver = !instalada() && /^https?:$/.test(location.protocol);
+        if (!ver) { if (b) b.remove(); return; }
+        const ref = $('nbRight'); if (!ref) return;
+        if (!b) {
+          b = document.createElement('button'); b.type = 'button'; b.id = 'inoferInstalarApp';
+          b.className = 'rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1.5 text-xs font-black text-emerald-200 hover:bg-emerald-500/25';
+          b.title = 'Instalar INOFER como aplicación en este equipo'; b.textContent = '📲 Instalar';
+          b.addEventListener('click', instalar);
+          ref.insertBefore(b, ref.firstChild);
+        }
+      }
+      async function instalar() {
+        if (aviso) { aviso.prompt(); try { await aviso.userChoice; } catch (e) { } aviso = null; pintar(); return; }
+        const ios = /iphone|ipad|ipod/i.test(navigator.userAgent), android = /android/i.test(navigator.userAgent);
+        const txt = ios ? 'En el iPhone/iPad: tocá el botón Compartir (cuadrado con flecha) → "Agregar a pantalla de inicio".'
+          : android ? 'En Android: menú ⋮ del navegador → "Instalar aplicación" o "Agregar a la pantalla principal".'
+          : 'En la PC con Chrome o Edge: arriba a la derecha de la barra de direcciones tocá el ícono de instalar (una pantallita con flecha) o menú ⋯ → "Aplicaciones" → "Instalar INOFER".';
+        try { showToast('📲 ' + txt); } catch (e) { alert(txt); }
+      }
+      window.inoferInstalarApp = instalar;
+      // accesos directos (manifest "shortcuts"): abren directo la pantalla pedida después de entrar
+      let ir = ''; try { const p = new URLSearchParams(location.search); ir = p.get('ir') || ''; if (ir || p.get('origen')) { p.delete('ir'); p.delete('origen'); history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash); } } catch (e) { }
+      function irA() {
+        if (!ir) return true;
+        const sesion = typeof inoferSession !== 'undefined' && inoferSession;
+        if (!sesion || typeof switchTab !== 'function') return false;
+        const destino = ir; ir = '';
+        try {
+          if (destino === 'cierre' && window.inoferCierreTurno) { switchTab('hoy'); setTimeout(() => inoferCierreTurno(), 300); }
+          else if (destino === 'gantt') { const b = $('tabGanttBtn'); if (b) b.click(); }
+          else if (destino === 'hoy') { const b = $('tabHoyBtn'); if (b) b.click(); }
+          else if (destino === 'mimaq') { if (window.inoferElegirMiMaquina && !localStorage.getItem('tablero_inyectoras_mimaquina_v1')) inoferElegirMiMaquina(); else switchTab('mimaq'); }
+        } catch (e) { }
+        return true;
+      }
+      const t = setInterval(() => { try { pintar(); if (irA()) { if (!ir) { /* listo */ } } } catch (e) { } }, 1500);
+      setTimeout(() => clearInterval(t), 10 * 60 * 1000);
+      setInterval(() => { try { pintar(); } catch (e) { } }, 30000);
+    })();
+  </script>

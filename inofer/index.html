@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.11.02.02" />
+  <meta name="inofer-version" content="2026.11.02.03" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20318,6 +20318,56 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           cont.innerHTML = h.tit('Stock con alerta', 'Material y producto terminado') + (L.length ? `<div class="grid grid-cols-2 gap-4">${L.slice(0, 10).map(x => `<div class="rounded-2xl border-2 ${x.nivel === 'rojo' ? 'border-rose-500/60 bg-rose-500/5' : 'border-amber-500/60 bg-amber-500/5'} p-4"><div class="text-3xl font-black text-white">${esc(x.nombre || x.part || x.clave || '')}</div><div class="mt-1 text-2xl text-slate-300">Stock: <b>${x.stock == null ? '—' : n0(x.stock)}</b>${x.g === 'materiales' ? ' kg' : ''}</div><div class="mt-1 text-xl ${x.nivel === 'rojo' ? 'text-rose-300' : 'text-amber-300'}">${esc(x.alerta)}</div></div>`).join('')}</div>` : '<div class="text-3xl text-emerald-300">✓ Ningún material ni pieza con alerta de stock</div>');
         }
       };
+    })();
+  </script>
+  <script>
+    // ===== Instalar INOFER como aplicación + accesos directos del ícono (?ir=hoy|cierre|gantt|mimaq) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      let aviso = null;
+      const instalada = () => { try { return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: window-controls-overlay)').matches || navigator.standalone === true || !!window.__INOFER_JAVA; } catch (e) { return false; } };
+      window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); aviso = e; pintar(); });
+      window.addEventListener('appinstalled', () => { aviso = null; pintar(); try { showToast('✓ INOFER quedó instalada como aplicación'); } catch (e) { } });
+      function pintar() {
+        let b = $('inoferInstalarApp');
+        const ver = !instalada() && /^https?:$/.test(location.protocol);
+        if (!ver) { if (b) b.remove(); return; }
+        const ref = $('nbRight'); if (!ref) return;
+        if (!b) {
+          b = document.createElement('button'); b.type = 'button'; b.id = 'inoferInstalarApp';
+          b.className = 'rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1.5 text-xs font-black text-emerald-200 hover:bg-emerald-500/25';
+          b.title = 'Instalar INOFER como aplicación en este equipo'; b.textContent = '📲 Instalar';
+          b.addEventListener('click', instalar);
+          ref.insertBefore(b, ref.firstChild);
+        }
+      }
+      async function instalar() {
+        if (aviso) { aviso.prompt(); try { await aviso.userChoice; } catch (e) { } aviso = null; pintar(); return; }
+        const ios = /iphone|ipad|ipod/i.test(navigator.userAgent), android = /android/i.test(navigator.userAgent);
+        const txt = ios ? 'En el iPhone/iPad: tocá el botón Compartir (cuadrado con flecha) → "Agregar a pantalla de inicio".'
+          : android ? 'En Android: menú ⋮ del navegador → "Instalar aplicación" o "Agregar a la pantalla principal".'
+          : 'En la PC con Chrome o Edge: arriba a la derecha de la barra de direcciones tocá el ícono de instalar (una pantallita con flecha) o menú ⋯ → "Aplicaciones" → "Instalar INOFER".';
+        try { showToast('📲 ' + txt); } catch (e) { alert(txt); }
+      }
+      window.inoferInstalarApp = instalar;
+      // accesos directos (manifest "shortcuts"): abren directo la pantalla pedida después de entrar
+      let ir = ''; try { const p = new URLSearchParams(location.search); ir = p.get('ir') || ''; if (ir || p.get('origen')) { p.delete('ir'); p.delete('origen'); history.replaceState(null, '', location.pathname + (p.toString() ? '?' + p : '') + location.hash); } } catch (e) { }
+      function irA() {
+        if (!ir) return true;
+        const sesion = typeof inoferSession !== 'undefined' && inoferSession;
+        if (!sesion || typeof switchTab !== 'function') return false;
+        const destino = ir; ir = '';
+        try {
+          if (destino === 'cierre' && window.inoferCierreTurno) { switchTab('hoy'); setTimeout(() => inoferCierreTurno(), 300); }
+          else if (destino === 'gantt') { const b = $('tabGanttBtn'); if (b) b.click(); }
+          else if (destino === 'hoy') { const b = $('tabHoyBtn'); if (b) b.click(); }
+          else if (destino === 'mimaq') { if (window.inoferElegirMiMaquina && !localStorage.getItem('tablero_inyectoras_mimaquina_v1')) inoferElegirMiMaquina(); else switchTab('mimaq'); }
+        } catch (e) { }
+        return true;
+      }
+      const t = setInterval(() => { try { pintar(); if (irA()) { if (!ir) { /* listo */ } } } catch (e) { } }, 1500);
+      setTimeout(() => clearInterval(t), 10 * 60 * 1000);
+      setInterval(() => { try { pintar(); } catch (e) { } }, 30000);
     })();
   </script>
 </body>
