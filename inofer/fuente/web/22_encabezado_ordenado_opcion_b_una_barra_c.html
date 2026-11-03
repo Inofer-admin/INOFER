@@ -20,6 +20,7 @@
         ] },
         { id: 'plan', nombre: 'Planificación', ico: '📅', items: [
           { tab: 'tabGanttBtn', ico: '📅', t: 'Plan Gantt', d: 'Semanal / mensual y asistente' },
+          { accion: () => window.inoferAbrirOrdenarSemanas && inoferAbrirOrdenarSemanas(), vis: () => !!sesion() && can('gantt', 'edit') && !!window.inoferAbrirOrdenarSemanas, ico: '🔢', t: 'Ordenar / mover semanas', d: 'Número de semana correcto y pasar de una a otra' },
           { tab: 'tabStockBtn', ico: '📦', t: 'Stock', d: 'Material y producto terminado' },
           { tab: 'tabMantBtn', ico: '🔧', t: 'Mantenimiento', d: 'Roturas, preventivos, máquinas' }
         ] },

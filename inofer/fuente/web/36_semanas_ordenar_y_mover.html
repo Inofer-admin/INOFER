@@ -1,0 +1,191 @@
+  <script>
+    // ===== Semanas del Gantt: número real por fecha, ordenar la numeración y mover lo de una semana a otra =====
+    // N° de semana = ISO (lunes a domingo), igual que la planilla "PLANTA INOFER, SEM N". Una semana del Gantt (SEM-N) tiene
+    // fechas por su startDate; si el número del código no coincide con sus fechas, "Ordenar semanas" lo corrige.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const pad = n => String(n).padStart(2, '0');
+      const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const desdeIso = s => new Date(String(s).slice(0, 10) + 'T12:00:00');
+      const masDias = (s, n) => { const d = desdeIso(s); d.setDate(d.getDate() + n); return iso(d); };
+      const lunesDe = s => { const d = desdeIso(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+      const domingoDe = s => { const d = desdeIso(s); d.setDate(d.getDate() - d.getDay()); return iso(d); };
+      const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+      const MESES_LARGO = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      const semanas = () => (typeof ganttWeeksData !== 'undefined' && ganttWeeksData) ? ganttWeeksData : {};
+      function numIso(lun) { const d = desdeIso(lun); d.setDate(d.getDate() + 3); const j = new Date(d.getFullYear(), 0, 4, 12); return 1 + Math.round(((d - j) / 86400000 - 3 + ((j.getDay() + 6) % 7)) / 7); }
+      function anioIso(lun) { const d = desdeIso(lun); d.setDate(d.getDate() + 3); return d.getFullYear(); }
+      // lunes de la semana ISO n, en el año más cercano a la fecha de referencia
+      function lunesDeNum(n, ref) {
+        ref = ref || iso(new Date());
+        let best = null;
+        [-1, 0, 1].forEach(dy => {
+          const y = anioIso(lunesDe(ref)) + dy, j4 = new Date(y, 0, 4, 12); j4.setDate(j4.getDate() - ((j4.getDay() + 6) % 7) + (n - 1) * 7);
+          const l = iso(j4); if (numIso(l) !== n) return;
+          const dist = Math.abs(desdeIso(l) - desdeIso(ref)); if (!best || dist < best.dist) best = { l, dist };
+        });
+        return best ? best.l : null;
+      }
+      function rango(lun) { const a = desdeIso(lun), b = desdeIso(masDias(lun, 5)); return a.getMonth() === b.getMonth() ? `${a.getDate()} al ${b.getDate()} ${MES[b.getMonth()]}` : `${a.getDate()} ${MES[a.getMonth()]} al ${b.getDate()} ${MES[b.getMonth()]}`; }
+      const numDeCodigo = c => { const m = /^SEM-(\d{1,2})(?:-\d+)?$/i.exec(String(c || '')); return m ? Number(m[1]) : null; };
+      // info de una semana del Gantt: número real por sus fechas
+      function info(code) {
+        const w = semanas()[code]; if (!w) return null;
+        const lun = w.startDate ? masDias(domingoDe(w.startDate), 1) : null;
+        return { code, lunes: lun, num: lun ? numIso(lun) : numDeCodigo(code), rango: lun ? rango(lun) : '', numCodigo: numDeCodigo(code) };
+      }
+      const etiqueta = code => { const x = info(code); return x ? `Sem ${x.num}${x.rango ? ' · ' + x.rango : ''}` : String(code); };
+      window.inoferSemanaInfo = info;
+      window.inoferEtiquetaSemana = etiqueta;
+      // semana del Gantt para un lunes (la crea vacía si hace falta)
+      function semanaDeLunes(lun, crear) {
+        lun = lunesDe(lun);
+        const c = window.inoferCodigoSemana ? inoferCodigoSemana(lun) : { code: 'SEM-' + numIso(lun), num: numIso(lun), rango: rango(lun) };
+        if (!semanas()[c.code] && crear) semanas()[c.code] = { code: c.code, name: `Semana ${c.num} · ${c.rango}`, startDate: lun, machines: {} };
+        return semanas()[c.code] ? c.code : null;
+      }
+      // "semana 46", "sem 46", "s46", "esta semana", "la que viene", "semana pasada", "9/11", "9 de noviembre", "del 9 al 14 de noviembre"
+      function semanasEnTexto(texto) {
+        const f = String(texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const hoyLun = lunesDe(iso(new Date())), out = [];
+        const add = (lun, txt) => { if (lun && !out.some(x => x.lunes === lun)) out.push({ lunes: lun, num: numIso(lun), txt }); };
+        let m; const re = /\b(?:sem(?:ana)?s?|s)[\s.\-]*(\d{1,2})(?:\s*(?:y|,|a|al|hasta(?: la)?)\s*(?:la\s*)?(?:sem(?:ana)?\s*)?(\d{1,2}))?\b/g;
+        while ((m = re.exec(f))) {
+          const a = Number(m[1]), b = m[2] ? Number(m[2]) : null; if (a < 1 || a > 53) continue;
+          const la = lunesDeNum(a); add(la, m[0]);
+          if (b && b >= 1 && b <= 53) { const lb = lunesDeNum(b); if (/a|al|hasta/.test(m[0]) && la && lb && lb > la) { for (let l = masDias(la, 7); l < lb; l = masDias(l, 7)) add(l, m[0]); } add(lb, m[0]); }
+        }
+        if (/\besta semana\b/.test(f)) add(hoyLun, 'esta semana');
+        if (/\b(la )?(semana )?(que viene|proxima( semana)?|siguiente)\b/.test(f)) add(masDias(hoyLun, 7), 'la que viene');
+        if (/\b(semana pasada|la pasada|semana anterior)\b/.test(f)) add(masDias(hoyLun, -7), 'la pasada');
+        if (/\b(en dos semanas|subsiguiente)\b/.test(f)) add(masDias(hoyLun, 14), 'en dos semanas');
+        const fecha = (d, mes) => { const y = new Date().getFullYear(); let dt = new Date(y, mes, d, 12); if (dt - new Date() < -200 * 86400000) dt = new Date(y + 1, mes, d, 12); return iso(dt); };
+        let r = /\b(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*\/\s*\d{2,4})?\b/g;
+        while ((m = r.exec(f))) { const d = Number(m[1]), mm = Number(m[2]) - 1; if (d >= 1 && d <= 31 && mm >= 0 && mm < 12) add(lunesDe(fecha(d, mm)), m[0]); }
+        r = new RegExp('\\b(\\d{1,2})(?:\\s*(?:al|a)\\s*(\\d{1,2}))?\\s*de\\s*(' + MESES_LARGO.join('|') + ')\\b', 'g');
+        while ((m = r.exec(f))) { const mm = MESES_LARGO.indexOf(m[3]); add(lunesDe(fecha(Number(m[1]), mm)), m[0]); }
+        return out;
+      }
+      window.inoferSemanasEnTexto = semanasEnTexto;
+      window.inoferSemanaDeLunes = semanaDeLunes;
+      // resolver lo que manda la IA o el parser: "SEM-46", "46", 46, "2026-11-09"
+      window.inoferResolverSemana = function (v, crear) {
+        if (v == null || v === '') return null;
+        const s = String(v).trim();
+        if (semanas()[s]) return s;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return semanaDeLunes(s, crear);
+        const n = /^(?:SEM-?)?(\d{1,2})$/i.exec(s.replace(/\s+/g, ''));
+        if (n) { const l = lunesDeNum(Number(n[1])); return l ? semanaDeLunes(l, crear) : null; }
+        const t = semanasEnTexto(s); return t.length ? semanaDeLunes(t[0].lunes, crear) : null;
+      };
+      function resumen(w) {
+        let piezas = 0, h = 0; Object.values((w && w.machines) || {}).forEach(md => {
+          ((md && md.items) || []).forEach(it => { if (it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (!q) return; piezas++; const u = Number(it.stdRate) || 0; if (u) h += q / u; });
+          Object.values((md && md.aux) || {}).forEach(a => (a || []).forEach(x => { h += Number(x) || 0; }));
+        });
+        return { piezas, h: Math.round(h), txt: piezas ? `${piezas} pza${piezas === 1 ? '' : 's'} · ≈${Math.round(h)} h` : 'vacía' };
+      }
+      window.inoferResumenSemana = resumen;
+
+      // ---------- 7) Ordenar la numeración: cada SEM-N pasa a las fechas de la semana N ----------
+      function corridas() {
+        const W = semanas(); const out = [];
+        Object.keys(W).forEach(c => {
+          const x = info(c); if (!x || !x.lunes || !x.numCodigo || x.numCodigo === x.num) return;
+          const nuevo = lunesDeNum(x.numCodigo, x.lunes); if (!nuevo || nuevo === x.lunes) return;
+          out.push({ code: c, de: x.lunes, a: nuevo, numFechas: x.num, numCodigo: x.numCodigo, res: resumen(W[c]) });
+        });
+        return out.sort((a, b) => a.de.localeCompare(b.de));
+      }
+      window.inoferSemanasCorridas = corridas;
+      function aplicarOrden(codes) {
+        const W = semanas(); const lista = corridas().filter(x => codes.includes(x.code)); let n = 0;
+        lista.forEach(x => { const w = W[x.code]; w.startDate = x.a; w.name = `Semana ${x.numCodigo} · ${rango(x.a)}`; w.semanaOrdenada = new Date().toISOString(); n++; });
+        // si dos semanas quedan con las mismas fechas, se avisa (no se borra nada)
+        const porFecha = {}; Object.keys(W).forEach(c => { const x = info(c); if (x && x.lunes) (porFecha[x.lunes] = porFecha[x.lunes] || []).push(c); });
+        const dobles = Object.values(porFecha).filter(l => l.length > 1);
+        return { n, dobles };
+      }
+      window.inoferOrdenarSemanas = aplicarOrden;
+      function puedeEditar() { return (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')); }
+      function ventana(titulo) {
+        const v = $('inoferSemModal'); if (v) v.remove();
+        const w = document.createElement('div'); w.id = 'inoferSemModal';
+        w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full max-w-3xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl"><div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">${titulo}</h3><button type="button" class="sm-x rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div><div class="sm-cuerpo space-y-3 text-sm text-slate-300"></div></div>`;
+        document.body.appendChild(w); w.addEventListener('click', e => { if (e.target === w || e.target.closest('.sm-x')) w.remove(); });
+        return w;
+      }
+      function guardar(motivo) { try { saveGanttWeeks(); } catch (e) { } try { renderGanttView(); } catch (e) { } try { refreshAll(); } catch (e) { } }
+      function abrirOrdenar() {
+        if (!puedeEditar()) { toast('Tu usuario no puede modificar el Gantt'); return; }
+        const w = ventana('🔢 Ordenar las semanas del Gantt'); const c = w.querySelector('.sm-cuerpo');
+        const L = corridas();
+        c.innerHTML = `${L.length ? `<p class="text-[13px] text-slate-300">Estas semanas tienen el <b>número</b> de una semana pero las <b>fechas</b> de otra (venía del armado viejo). Al ordenarlas, lo programado queda en la semana de su número, con sus fechas correctas. No se borra nada.</p>
+          <div class="overflow-x-auto rounded-xl border border-slate-800"><table class="w-full text-xs"><thead class="bg-slate-950 text-[10px] uppercase text-slate-500"><tr><th class="px-2 py-2 text-left">Ordenar</th><th class="text-left">Semana</th><th class="text-left">Hoy tiene fechas de</th><th class="text-left">Pasa a</th><th class="text-left">Programado</th></tr></thead><tbody>
+          ${L.map(x => `<tr class="border-t border-slate-800"><td class="px-2 py-1.5"><input type="checkbox" class="so-c h-4 w-4" data-c="${esc(x.code)}" checked></td><td class="font-bold text-white">${esc(x.code)}</td><td class="text-amber-300">Sem ${x.numFechas} · ${rango(x.de)}</td><td class="text-emerald-300">Sem ${x.numCodigo} · ${rango(x.a)}</td><td>${x.res.txt}</td></tr>`).join('')}</tbody></table></div>
+          <div class="flex justify-end"><button type="button" class="so-ok rounded-xl bg-cyan-400 px-4 py-2 text-sm font-black text-cyan-950">🔢 Ordenar las tildadas</button></div>` : '<p class="text-emerald-300">✓ Todas las semanas tienen el número que corresponde a sus fechas.</p>'}
+          <div class="rounded-xl border border-slate-700 bg-slate-950/60 p-3 space-y-2"><div class="font-black text-white">↔️ Mover todo lo de una semana a otra</div>
+            <div class="flex flex-wrap items-center gap-2 text-xs"><span>De la semana</span><input type="number" min="1" max="53" class="mv-de w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-white"><span>a la semana</span><input type="number" min="1" max="53" class="mv-a w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-white">
+              <select class="mv-modo rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-white"><option value="mover">mover (la de origen queda vacía)</option><option value="copiar">copiar (queda en las dos)</option></select>
+              <button type="button" class="mv-ok rounded-lg bg-amber-400 px-3 py-1.5 font-black text-amber-950">Hacerlo</button></div>
+            <div class="mv-info text-[11px] text-slate-400">Se guarda una copia antes; si te equivocás lo volvés atrás con ♻️ Recuperar el Gantt.</div></div>`;
+        const ok = c.querySelector('.so-ok');
+        if (ok) ok.addEventListener('click', () => {
+          const codes = [...c.querySelectorAll('.so-c:checked')].map(i => i.dataset.c); if (!codes.length) return;
+          try { window.inoferGanttGuardarAntes && inoferGanttGuardarAntes('Antes de ordenar las semanas'); } catch (e) { }
+          const r = aplicarOrden(codes); guardar();
+          toast(`✓ ${r.n} semana${r.n === 1 ? '' : 's'} ordenada${r.n === 1 ? '' : 's'}${r.dobles.length ? ' · ⚠️ quedaron semanas con las mismas fechas: ' + r.dobles.map(l => l.join(' y ')).join(', ') : ''}`);
+          abrirOrdenar(); pintarAviso();
+        });
+        c.querySelector('.mv-ok').addEventListener('click', () => {
+          const de = Number(c.querySelector('.mv-de').value), a = Number(c.querySelector('.mv-a').value), modo = c.querySelector('.mv-modo').value;
+          if (!de || !a || de === a) { toast('Poné las dos semanas'); return; }
+          const r = moverSemana(String(de), String(a), { modo }); c.querySelector('.mv-info').innerHTML = r.ok ? `<span class="text-emerald-300">✓ ${esc(r.txt)}</span>` : `<span class="text-rose-300">${esc(r.txt)}</span>`;
+          if (r.ok) guardar();
+        });
+      }
+      window.inoferAbrirOrdenarSemanas = abrirOrdenar;
+      // mover / copiar lo de una semana a otra (todo, o solo una máquina); lo usa también el asistente
+      function moverSemana(de, a, o) {
+        o = o || {};
+        const cd = window.inoferResolverSemana(de, false); if (!cd) return { ok: false, txt: `La semana ${de} no tiene nada cargado.` };
+        const ca = window.inoferResolverSemana(a, true); if (!ca) return { ok: false, txt: `No pude ubicar la semana ${a}.` };
+        if (cd === ca) return { ok: false, txt: 'Es la misma semana.' };
+        const W = semanas(), wd = W[cd], wa = W[ca]; const maqs = o.mach ? [o.mach] : Object.keys(wd.machines || {});
+        if (!o.sinCopia) { try { window.inoferGanttGuardarAntes && inoferGanttGuardarAntes('Antes de mover la semana ' + etiqueta(cd)); } catch (e) { } }
+        let n = 0;
+        maqs.forEach(m => {
+          const md = (wd.machines || {})[m]; if (!md) return;
+          wa.machines = wa.machines || {};
+          const dest = wa.machines[m] = wa.machines[m] || { aux: {}, items: [] }; dest.items = dest.items || []; dest.aux = dest.aux || {};
+          (md.items || []).forEach(it => {
+            const q = (it.dailyQty || []).reduce((s, x) => s + (Number(x) || 0), 0); if (!q && !it.isSharedCompanion) return;
+            const ya = dest.items.find(x => String(x.part).toLowerCase() === String(it.part).toLowerCase() && !!x.isSharedCompanion === !!it.isSharedCompanion);
+            if (ya) { ya.dailyQty = (ya.dailyQty || [0, 0, 0, 0, 0, 0, 0]).map((v, i) => (Number(v) || 0) + (Number((it.dailyQty || [])[i]) || 0)); ya.totalQty = ya.dailyQty.reduce((s, x) => s + x, 0); }
+            else dest.items.push(JSON.parse(JSON.stringify(Object.assign({}, it, { id: (it.id || 'gi') + '-' + Date.now().toString(36) + n }))));
+            if (!it.isSharedCompanion) n++;
+          });
+          Object.keys(md.aux || {}).forEach(k => { const src = md.aux[k] || []; if (!src.some(x => Number(x) > 0)) return; dest.aux[k] = (dest.aux[k] || [0, 0, 0, 0, 0, 0, 0]).map((v, i) => (Number(v) || 0) + (Number(src[i]) || 0)); });
+          if (o.modo !== 'copiar') { md.items = (md.items || []).filter(it => it.fijo && o.dejarFijas); Object.keys(md.aux || {}).forEach(k => { md.aux[k] = [0, 0, 0, 0, 0, 0, 0]; }); }
+        });
+        if (!n) return { ok: false, txt: `No había piezas en ${etiqueta(cd)}${o.mach ? ' en la ' + o.mach : ''}.` };
+        if (typeof activeGanttWeekCode !== 'undefined') activeGanttWeekCode = ca;
+        return { ok: true, n, de: cd, a: ca, txt: `${o.modo === 'copiar' ? 'Copié' : 'Pasé'} ${n} pieza${n === 1 ? '' : 's'}${o.mach ? ' de la ' + o.mach : ''} de ${etiqueta(cd)} a ${etiqueta(ca)}.` };
+      }
+      window.inoferMoverSemana = moverSemana;
+      // aviso arriba del Gantt si hay semanas corridas
+      function pintarAviso() {
+        const vg = $('viewGantt'); if (!vg || vg.classList.contains('hidden')) return;
+        let b = $('inoferSemAviso'); const L = corridas();
+        if (!L.length || !puedeEditar()) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('div'); b.id = 'inoferSemAviso'; b.className = 'mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-100'; const bar = $('gtBar'); (bar && bar.parentElement === vg ? bar.after(b) : vg.insertBefore(b, vg.firstChild)); }
+        const txt = `⚠️ ${L.length === 1 ? 'Hay 1 semana' : 'Hay ' + L.length + ' semanas'} con el número corrido (por ejemplo ${esc(L[0].code)} tiene las fechas de la Sem ${L[0].numFechas}).`;
+        if (b.dataset.t !== txt) { b.dataset.t = txt; b.innerHTML = `<span>${txt}</span><button type="button" id="inoferSemAvisoBtn" class="rounded-lg bg-amber-400 px-3 py-1.5 font-black text-amber-950">🔢 Ordenar las semanas</button>`; }
+      }
+      document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#inoferSemAvisoBtn')) abrirOrdenar(); });
+      setInterval(() => { try { pintarAviso(); } catch (e) { } }, 3000);
+    })();
+  </script>

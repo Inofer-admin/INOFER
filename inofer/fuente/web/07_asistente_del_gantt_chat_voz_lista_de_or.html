@@ -102,8 +102,18 @@
           const incremental = !!pct || /(aument|subi|sum|increment)\w*.*\ben\s+\$?\s*\d/.test(f) || /\d[\d.,]*\s*(millones|millon|mil|m|palos)?\s*(mas|extra|adicionales?)\b/.test(f);
           return pre.concat([{ op: 'meta', monto, pct: pct ? Number(pct[1].replace(',', '.')) : null, incremental, dias: ds, maquinas: xx.maquinas.map(m => m.id), sinLimite: /sin limite|aunque no haya (pedido|demanda)|sin importar (la )?demanda|sin tope/.test(f) }]);
         }
+        {
+          const ms = window.inoferSemanasEnTexto ? inoferSemanasEnTexto(frase) : [];
+          const xm = extraer(frase, week); const mq = xm.maquinas[0] ? xm.maquinas[0].id : null;
+          const sinPieza = !xm.piezas.length;
+          if (ms.length >= 2 && /(pas|move|movi|mueve|lleva|corre|traslad|copi|duplic)/.test(f) && sinPieza) return [{ op: /(copi|duplic)/.test(f) ? 'copy_week' : 'move_week', from: String(ms[0].num), to: String(ms[1].num), mach: mq }];
+          if (/(vacia|vaciar|borra|borrar|limpia|limpiar|saca|sacar)\w* (todo|toda|la semana|lo de)/.test(f) && sinPieza) return [{ op: 'clear_week', semana: ms[0] ? String(ms[0].num) : null, mach: mq }];
+          if (/(horas libres|hs libres|lugar libre|capacidad libre|cuanto lugar|cuantas horas (quedan|hay|tiene)|esta libre)/.test(f)) return [{ op: 'free', semana: ms[0] ? String(ms[0].num) : null, mach: mq }];
+          if (/(donde|en que semana|en que maquina|cuando)\b.*(esta|program|va|sale|toca)/.test(f) && !sinPieza) { const pz0 = resolverPieza(xm.piezas[0].token, week); return [{ op: 'donde', part: pz0.part || xm.piezas[0].token }]; }
+          if (ms.length && sinPieza && /(que hay|que tiene|mostra|ver|resumen|como (esta|viene|quedo)|programado)/.test(f)) return [{ op: 'show', semana: String(ms[0].num), mach: mq }];
+        }
         const sem = f.match(/\bsem(?:ana)?[\s-]*(\d{1,2})\b/);
-        if (sem && /(cambia|pasa|anda|abri|ir|mostra|ver|selecciona|semana)/.test(f) && !/\b\d{4,}/.test(f.replace(sem[0], ''))) return [{ op: 'week', code: 'SEM-' + sem[1] }];
+        if (sem && /(cambia|pasa|anda|abri|ir|mostra|ver|selecciona|semana)/.test(f) && !/\b\d{4,}/.test(f.replace(sem[0], ''))) return [{ op: 'week', code: sem[1] }];
         const x = extraer(frase, week);
         const pz = x.piezas[0] ? resolverPieza(x.piezas[0].token, week) : null;
         if (pz && pz.ambigua) return [{ op: 'error', msg: `"${x.piezas[0].token}" coincide con varias piezas: ${pz.ambigua.join(', ')}. Decime cuál.` }];
@@ -397,6 +407,13 @@ Pedido: ${frase}`;
         if (!opciones.devolver) agregarMsg('user', esc(texto));
         const puedeEditar = (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('gantt_asistente'));
         const puedePrecios = typeof inoferPuede !== 'function' || inoferPuede('precios_ver');
+        semPedido = null;
+        try {
+          const ment = window.inoferSemanasEnTexto ? inoferSemanasEnTexto(texto) : [];
+          const crear = /\b(pon|pone|poné|agreg|suma|sumá|pas|move|movė|mové|copi|program|carg|arma|armá|meté|mete|lleva|llevá|corre|corré)/i.test(texto);
+          if (ment.length) semPedido = ment.map(x => inoferSemanaDeLunes(x.lunes, crear)).filter(Boolean);
+          if (ment.length && !semPedido.length) return salida(`La ${ment.map(x => 'Sem ' + x.num).join(', ')} no tiene nada programado todavía.`);
+        } catch (e) { semPedido = null; }
         const sel = semanasElegidas();
         if (sel.length && !sel.includes(activeGanttWeekCode)) activeGanttWeekCode = sel[0];
         let week = getActiveGanttWeek();
@@ -428,9 +445,10 @@ Pedido: ${frase}`;
         const copia = JSON.stringify(ganttWeeksData);
         const semanaAntes = activeGanttWeekCode;
         const tocadas = new Set([activeGanttWeekCode]);
+        let grande = false;
         for (const op of ops) {
           if (op && op.semana && op.op !== 'week') {
-            const cs = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.semana) || norm(c) === norm('SEM-' + String(op.semana).replace(/\D/g, '')));
+            const cs = (window.inoferResolverSemana && inoferResolverSemana(op.semana, !/^(show|free|donde|facturacion)$/.test(op.op))) || Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.semana) || norm(c) === norm('SEM-' + String(op.semana).replace(/\D/g, '')));
             if (!cs) { errores.push(`No existe la semana ${op.semana}.`); continue; }
             week = ganttWeeksData[cs]; tocadas.add(cs);
           } else if (op && op.op !== 'week') { week = getActiveGanttWeek(); }
@@ -447,6 +465,20 @@ Pedido: ${frase}`;
             continue;
           }
           if (op.op === 'detalle') { respuestas.push(ultimoDetalle || 'Todavía no hice cambios en esta sesión.'); continue; }
+          if (op.op === 'move_week' || op.op === 'copy_week') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            const r = window.inoferMoverSemana ? inoferMoverSemana(op.from, op.to, { modo: op.op === 'copy_week' ? 'copiar' : 'mover', mach: op.mach || null, sinCopia: true }) : { ok: false, txt: 'Falta la herramienta de semanas.' };
+            if (r.ok) { cambio = true; nCambios += r.n; tocadas.add(r.de); tocadas.add(r.a); grande = true; respuestas.push('✓ ' + esc(r.txt)); detalles.push('✓ ' + esc(r.txt)); week = getActiveGanttWeek(); } else errores.push(r.txt);
+            continue;
+          }
+          if (op.op === 'clear_week') {
+            if (!puedeEditar) { errores.push('Tu usuario solo puede ver el Gantt, no modificarlo.'); continue; }
+            let n = 0; Object.keys(week.machines || {}).forEach(m => { if (op.mach && m !== op.mach) return; const md = week.machines[m]; n += (md.items || []).filter(it => !it.isSharedCompanion && !it.fijo).length; md.items = (md.items || []).filter(it => it.fijo); Object.keys(md.aux || {}).forEach(k => { if (!md.auxFijo) md.aux[k] = [0, 0, 0, 0, 0, 0, 0]; }); });
+            if (n) { cambio = true; nCambios += n; grande = true; const t = `Vacié ${week.code}${op.mach ? ' en la ' + op.mach : ''}: saqué ${n} pieza${n === 1 ? '' : 's'} (las 📌 fijas quedan).`; respuestas.push('✓ ' + esc(t)); detalles.push('✓ ' + esc(t)); } else respuestas.push(`${esc(week.code)} ya estaba vacía${op.mach ? ' en la ' + esc(op.mach) : ''}.`);
+            continue;
+          }
+          if (op.op === 'free') { respuestas.push(horasLibres(week, op.mach)); continue; }
+          if (op.op === 'donde') { respuestas.push(dondeEsta(op.part)); continue; }
           if (op.op === 'error') { errores.push(op.msg); continue; }
           if (op.op === 'show') { respuestas.push(resumen(week, op.mach)); continue; }
           if ((op.op === 'facturacion' || op.op === 'meta') && !puedePrecios) { errores.push('Tu usuario no tiene permiso para ver precios y facturación.'); continue; }
@@ -491,7 +523,7 @@ Pedido: ${frase}`;
             continue;
           }
           if (op.op === 'week') {
-            const code = Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.code));
+            const code = (window.inoferResolverSemana && inoferResolverSemana(op.code, false)) || Object.keys(ganttWeeksData).find(c => norm(c) === norm(op.code));
             if (!code) { errores.push(`No existe la semana ${op.code}. Semanas cargadas: ${Object.keys(ganttWeeksData).join(', ')}.`); continue; }
             activeGanttWeekCode = code; week = getActiveGanttWeek();
             respuestas.push(`Abrí la ${week.name || code}.`); continue;
@@ -507,6 +539,16 @@ Pedido: ${frase}`;
           try { const linea = '✓ ' + esc(aplicar(op, week, avisos)); detalles.push(linea); if (quiereDetalle) respuestas.push(linea); cambio = true; nCambios++; }
           catch (e) { errores.push(typeof e === 'string' ? e : ('Error: ' + (e && e.message))); }
         }
+        const esUndo = ops.some(o => o.op === 'undo');
+        if (cambio && !esUndo && !opciones.devolver && (grande || nCambios >= 4 || [...tocadas].filter(c => ganttWeeksData[c] && JSON.stringify(ganttWeeksData[c]) !== JSON.stringify((JSON.parse(copia) || {})[c])).length > 1)) {
+          const nuevo = JSON.stringify(ganttWeeksData);
+          const resumenCambios = resumenDiferencias(JSON.parse(copia), ganttWeeksData, tocadas);
+          ganttWeeksData = JSON.parse(copia); activeGanttWeekCode = semanaAntes;
+          pendiente = { nuevo, antes: copia, semana: semanaAntes, destino: activeDestino(tocadas, semanaAntes, JSON.parse(nuevo)), tocadas: [...tocadas] };
+          const htmlP = `${respuestas.filter(Boolean).join('<br>') || '✓ Preparé el cambio.'}<div class="mt-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2"><div class="mb-1 font-bold text-amber-200">Antes de aplicarlo, revisá:</div>${resumenCambios}<div class="mt-2 flex gap-2"><button type="button" class="gc-aplicar rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-black text-slate-950">✓ Aplicar</button><button type="button" class="gc-cancelar rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-200">✗ Cancelar</button></div></div>${avisos.filter(a => /^⚠️/.test(a)).map(esc).join('<br>')}${errores.length ? '<br>' + errores.map(e => '✗ ' + esc(e)).join('<br>') : ''}`;
+          semPedido = null;
+          return salida(etiquetarSemanas(htmlP));
+        }
         if (cambio) {
           const ultimaEsUndo = ops.some(o => o.op === 'undo');
           if (!ultimaEsUndo) historial.push({ datos: copia, semana: semanaAntes });
@@ -514,7 +556,7 @@ Pedido: ${frase}`;
           tocadas.forEach(c => { if (ganttWeeksData[c]) limpiarVacios(ganttWeeksData[c]); });
           saveGanttWeeks();
         }
-        if (cambio || activeGanttWeekCode !== semanaAntes) renderGanttView();
+        if (cambio || activeGanttWeekCode !== semanaAntes) { renderGanttView(); if (cambio && !esUndo) resaltar(JSON.parse(copia)); }
         const avisosImp = avisos.filter(a => /^⚠️/.test(a));
         const avisosInfo = avisos.filter(a => !/^⚠️/.test(a));
         if (detalles.length) ultimoDetalle = detalles.concat(avisos.map(esc)).join('<br>');
@@ -525,8 +567,65 @@ Pedido: ${frase}`;
         if (quiereDetalle && avisosInfo.length) html += (html ? '<br>' : '') + avisosInfo.map(esc).join('<br>');
         if (avisosImp.length) html += (html ? '<br>' : '') + avisosImp.map(esc).join('<br>');
         if (errores.length) html += (html ? '<br>' : '') + errores.map(e => '✗ ' + esc(e)).join('<br>');
-        return salida(html || 'Listo.');
+        if (cambio && !esUndo && !opciones.devolver) html += ' <button type="button" class="gc-deshacer ml-1 rounded border border-slate-600 px-1.5 text-[10px] text-slate-300">↩️ Deshacer</button>';
+        semPedido = null;
+        return salida(etiquetarSemanas(html || 'Listo.'));
       }
+      let pendiente = null;
+      function activeDestino(tocadas, antes, W) { const l = [...tocadas].filter(c => W[c]); return l.find(c => c !== antes) || antes; }
+      function etiquetarSemanas(html) {
+        if (!window.inoferEtiquetaSemana) return html;
+        return String(html).replace(/(^|[^\w"'=-])(SEM-\d{1,2}(?:-\d{2})?)(?![\w-])/g, (m, a, c) => ganttWeeksData[c] ? a + inoferEtiquetaSemana(c) : m);
+      }
+      function cantidades(W, c) { const o = {}; Object.keys(((W || {})[c] || {}).machines || {}).forEach(m => (((W[c].machines[m] || {}).items) || []).forEach(it => { if (it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (q) o[m + '|' + it.part] = (o[m + '|' + it.part] || 0) + q; })); return o; }
+      function resumenDiferencias(A, B, tocadas) {
+        const out = [];
+        [...tocadas].forEach(c => {
+          const a = cantidades(A, c), b = cantidades(B, c); const ks = [...new Set(Object.keys(a).concat(Object.keys(b)))];
+          const lin = ks.filter(k => (a[k] || 0) !== (b[k] || 0)).map(k => { const [m, p] = k.split('|'); const d = (b[k] || 0) - (a[k] || 0); return `<span class="${d > 0 ? 'text-emerald-300' : 'text-rose-300'}">${esc(p)} (${esc(m)}) ${d > 0 ? '+' : ''}${d.toLocaleString('es-AR')}</span>`; });
+          if (lin.length) out.push(`<div><b class="text-white">${esc(window.inoferEtiquetaSemana ? inoferEtiquetaSemana(c) : c)}</b>: ${lin.slice(0, 12).join(' · ')}${lin.length > 12 ? ` · y ${lin.length - 12} más` : ''}</div>`);
+        });
+        return out.join('') || '<div>Cambios en horas auxiliares (set-up, limpieza).</div>';
+      }
+      function resaltar(antes) {
+        try {
+          const c = activeGanttWeekCode, a = (antes || {})[c], b = ganttWeeksData[c]; if (!b) return;
+          Object.keys(b.machines || {}).forEach(m => ((b.machines[m] || {}).items || []).forEach((it, i) => {
+            const prev = a && a.machines && a.machines[m] && (a.machines[m].items || []).find(x => x.part === it.part && !!x.isSharedCompanion === !!it.isSharedCompanion);
+            (it.dailyQty || []).forEach((q, d) => {
+              if ((Number(q) || 0) === (Number(prev && prev.dailyQty && prev.dailyQty[d]) || 0)) return;
+              const inp = document.querySelector(`.gantt-item-qty-input[data-mach="${m}"][data-item-idx="${i}"][data-day="${d}"]`);
+              if (inp) { inp.classList.add('ring-2', 'ring-amber-400'); setTimeout(() => inp.classList.remove('ring-2', 'ring-amber-400'), 12000); }
+            });
+          }));
+        } catch (e) { }
+      }
+      function horasLibres(week, mach) {
+        const cap = capDia(); const ms = mach ? [mach] : MAQS();
+        const fil = ms.map(m => { const lib = [1, 2, 3, 4, 5, 6].map(d => Math.max(0, cap - horasDia(week, m, d))); const tot = lib.slice(0, 5).reduce((a, b) => a + b, 0); return `<b>${esc(m)}</b>: ${Math.round(tot)} h libres lun–vie (${['lun', 'mar', 'mié', 'jue', 'vie', 'sáb'].map((n, i) => n + ' ' + Math.round(lib[i])).join(' · ')})`; });
+        return `🕒 ${esc(week.code)}:<br>` + fil.join('<br>');
+      }
+      function dondeEsta(parte) {
+        const pz = resolverPieza(String(parte || ''), getActiveGanttWeek() || { machines: {} }); const p = pz.part || parte;
+        const L = [];
+        Object.keys(ganttWeeksData).forEach(c => Object.keys(ganttWeeksData[c].machines || {}).forEach(m => ((ganttWeeksData[c].machines[m] || {}).items || []).forEach(it => { if (norm(it.part) !== norm(p) || it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (q) L.push({ c, m, q, s: ganttWeeksData[c].startDate || '' }); })));
+        if (!L.length) return `La ${esc(p)} no está programada en ninguna semana.`;
+        return `📍 ${esc(p)}: ` + L.sort((a, b) => a.s.localeCompare(b.s)).map(x => `${esc(x.c)} en la ${esc(x.m)} (${x.q.toLocaleString('es-AR')} u)`).join(' · ');
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.gc-aplicar, .gc-cancelar, .gc-deshacer'); if (!b) return;
+        if (b.classList.contains('gc-deshacer')) { procesar('deshacer'); return; }
+        const box = b.closest('div'); if (box) box.querySelectorAll('button').forEach(x => { x.disabled = true; x.classList.add('opacity-50'); });
+        if (!pendiente) { agregarMsg('bot', 'Ese cambio ya no está pendiente.'); return; }
+        const p = pendiente; pendiente = null;
+        if (b.classList.contains('gc-cancelar')) { agregarMsg('bot', 'Listo, no cambié nada.'); return; }
+        historial.push({ datos: p.antes, semana: p.semana }); if (historial.length > 30) historial.shift();
+        ganttWeeksData = JSON.parse(p.nuevo); if (ganttWeeksData[p.destino]) activeGanttWeekCode = p.destino;
+        p.tocadas.forEach(c => { if (ganttWeeksData[c]) limpiarVacios(ganttWeeksData[c]); });
+        saveGanttWeeks(); renderGanttView(); resaltar(JSON.parse(p.antes));
+        agregarMsg('bot', etiquetarSemanas(`✓ Aplicado. <button type="button" class="gc-deshacer ml-1 rounded border border-slate-600 px-1.5 text-[10px] text-slate-300">↩️ Deshacer</button>`));
+      });
+      window.inoferGanttAplicarPendiente = () => { const b = document.createElement('button'); b.className = 'gc-aplicar'; document.body.appendChild(b); b.click(); b.remove(); };
       window.inoferGanttChat = procesar;
       window.inoferGanttEjecutar = t => procesar(t, { devolver: true });
 
@@ -557,15 +656,18 @@ Pedido: ${frase}`;
 
       // ---------- semanas que planifica el asistente ----------
       const SEM_KEY = 'tablero_inyectoras_asistente_semanas_v1';
+      // Las semanas salen del pedido ("en la semana 46", "la que viene", "del 9 al 14 de noviembre"); si no nombra ninguna, la que está abierta
+      let semPedido = null;
       function semanasElegidas() {
-        let a = [];
-        try { a = JSON.parse(localStorage.getItem(SEM_KEY) || '[]'); } catch (e) { }
-        a = (Array.isArray(a) ? a : []).filter(c => ganttWeeksData[c]).sort((x, y) => (parseInt(x.replace(/\D/g, ''), 10) || 0) - (parseInt(y.replace(/\D/g, ''), 10) || 0));
+        const a = (semPedido || []).filter(c => ganttWeeksData[c]);
         return a.length ? a : (activeGanttWeekCode && ganttWeeksData[activeGanttWeekCode] ? [activeGanttWeekCode] : []);
       }
       function guardarSemanas(a) { try { localStorage.setItem(SEM_KEY, JSON.stringify(a)); } catch (e) { } }
       function renderSemanas() {
         const box = $('inoferGanttSemanas'); if (!box) return;
+        const et = window.inoferEtiquetaSemana ? inoferEtiquetaSemana(activeGanttWeekCode) : activeGanttWeekCode;
+        box.innerHTML = `<span class="text-[11px] text-slate-400">Si no decís la semana uso la que estás viendo: <b class="text-slate-200">${esc(et || '—')}</b>. Podés decir "en la semana 46", "la que viene" o "del 9 al 14 de noviembre".</span>`;
+        return;
         const sel = semanasElegidas();
         const codes = Object.keys(ganttWeeksData).sort((a, b) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b.replace(/\D/g, ''), 10) || 0));
         box.innerHTML = '<span class="text-[11px] font-bold text-slate-400">Semanas a planificar:</span>' + codes.map(c => `<button type="button" data-sem="${esc(c)}" class="inofer-sem-chip rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${sel.includes(c) ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200' : 'border-slate-700 text-slate-400 hover:text-white'}">${esc(c)}</button>`).join('');
@@ -665,7 +767,8 @@ Pedido: ${frase}`;
             maquinas[m] = { piezas: (md.items || []).filter(it => !it.isSharedCompanion).map(it => ({ pieza: it.part, porDia: it.dailyQty, uh: it.stdRate })),
               horasUsadasPorDia: [0, 1, 2, 3, 4, 5, 6].map(d => Math.round(horasDia(w, m, d) * 10) / 10) };
           });
-          const out = { semana: w.code, nombre: w.name, maquinas };
+          const inf = window.inoferSemanaInfo ? inoferSemanaInfo(w.code) : null;
+          const out = { semana: w.code, numero: inf ? inf.num : null, fechas: inf ? inf.rango : '', maquinas };
           if (perm.puedePrecios && typeof inoferFacturacion === 'function') out.facturacionSinIVA = Math.round(inoferFacturacion(w).total);
           return out;
         });
@@ -677,7 +780,15 @@ Pedido: ${frase}`;
           if (Number(c.pistonMm)) o.pis = Number(c.pistonMm);
           return o;
         });
-        return { semanasSeleccionadas: semanas, semanaActiva: activeGanttWeekCode, semanasExistentes: Object.keys(ganttWeeksData), capacidadHorasPorDia: cap,
+        // todas las semanas con algo programado (para que entienda "la semana 46" sin elegirla)
+        const hoyIso = new Date().toISOString().slice(0, 10);
+        const calendario = Object.keys(ganttWeeksData).map(c => {
+          const w = ganttWeeksData[c], inf = window.inoferSemanaInfo ? inoferSemanaInfo(c) : null; const porMaquina = {};
+          Object.keys(w.machines || {}).forEach(m => { const L = ((w.machines[m] || {}).items || []).filter(it => !it.isSharedCompanion).map(it => ({ p: it.part, u: (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0) })).filter(x => x.u); if (L.length) porMaquina[m] = L; });
+          return { codigo: c, numero: inf ? inf.num : null, fechas: inf ? inf.rango : '', lunes: inf ? inf.lunes : '', porMaquina };
+        }).filter(x => Object.keys(x.porMaquina).length || x.codigo === activeGanttWeekCode).sort((a, b) => String(a.lunes).localeCompare(String(b.lunes)));
+        const infA = window.inoferSemanaInfo ? inoferSemanaInfo(activeGanttWeekCode) : null;
+        return { hoy: hoyIso, numeroSemanaDeHoy: window.inoferSemanasEnTexto ? (inoferSemanasEnTexto('esta semana')[0] || {}).num : null, semanasDelPedido: semanas, semanaActiva: activeGanttWeekCode, numeroSemanaActiva: infA ? infA.num : null, calendario, capacidadHorasPorDia: cap,
           diasIndice: '0=domingo,1=lunes,2=martes,3=miércoles,4=jueves,5=viernes,6=sábado (se trabaja lunes a viernes salvo que pidan sábado)',
           setupPorMaquinaHoras: Object.fromEntries(MAQS().map(m => [m, typeof inoferSetupDe === 'function' ? inoferSetupDe(m).total : 0])),
           maquinasFueraDeServicio: MAQS().map(m => ({ m, e: typeof inoferMaquinaEstado === 'function' ? inoferMaquinaEstado(m) : { activa: true } })).filter(x => !x.e.activa).map(x => ({ maquina: x.m, motivo: x.e.motivo, desde: x.e.desde || null, hasta: x.e.hasta || null })),
@@ -687,7 +798,8 @@ Pedido: ${frase}`;
 Entendé el pedido aunque esté mal escrito, con abreviaturas o códigos incompletos (ej: "la 26608" = pieza que empieza con 26608). Usá el catálogo y el plan que te paso.
 Si el usuario pide CAMBIOS en el plan, devolvé operaciones. Si solo pregunta, contestá con los datos (sin operaciones).
 Respondé SIEMPRE solo con JSON: {"respuesta":"texto breve","ops":[...]}
-Operaciones (agregá "semana":"SEM-NN" si corresponde a una semana específica; si no, se usan las semanas seleccionadas):
+SEMANAS: el número de semana es el de la planilla de la planta (semana ISO, lunes a domingo). "calendario" trae TODAS las semanas con algo programado, con su "numero" y "fechas". Si el usuario nombra una semana ("semana 46", "la que viene", "del 9 al 14 de noviembre") poné en cada operación "semana": "46" (el NÚMERO; la app ubica las fechas). Si no nombra ninguna, usá la semana activa (no pongas "semana"). En las respuestas nombrá la semana como "Sem 46 (9 al 14 nov)".
+Operaciones:
 {"op":"aumentar","part","qty","mach"|null,"dias":[índices]|null,"sabado":false}  sumar piezas repartiéndolas en los días con capacidad (si no entra pasa a la próxima semana seleccionada)
 {"op":"reducir","part","qty","mach"|null}
 {"op":"set","part","mach"|null,"day","qty"}  fijar la cantidad de un día
@@ -700,7 +812,12 @@ Operaciones (agregá "semana":"SEM-NN" si corresponde a una semana específica; 
 {"op":"week","code":"SEM-NN"}  abrir otra semana
 {"op":"facturacion"}  cuánto factura (solo si puedeVerPrecios)
 {"op":"meta","monto":número|null,"pct":número|null,"incremental":true|false,"dias":null,"maquinas":null,"sinLimite":false}  llegar a un objetivo de facturación en pesos
-{"op":"show","mach"|null}
+{"op":"show","mach"|null}  mostrar lo programado (con "semana" si la nombran)
+{"op":"move_week","from":"45","to":"46","mach"|null}  pasar TODO lo de una semana (o de una máquina) a otra
+{"op":"copy_week","from":"45","to":"47","mach"|null}  copiar lo de una semana en otra
+{"op":"clear_week","semana":"46","mach"|null}  vaciar una semana (las piezas fijas 📌 quedan)
+{"op":"free","semana":"47"|null,"mach"|null}  horas libres por máquina y día
+{"op":"donde","part"}  en qué semanas y máquinas está programada una pieza
 Reglas de planta que respeta la app (no hace falta que las verifiques, pero tenelas en cuenta al proponer): piezas terminadas en -R no se inyectan; piezas del mismo portamolde (pm) no pueden estar en máquina el mismo día; cada pieza solo en sus máquinas compatibles (maq) y con su pistón (pis); no se programa nada en maquinasFueraDeServicio en esas fechas; no se programa menos que el lote mínimo (lote) salvo pedido explícito; cada pieza nueva en una máquina suma su set-up; capacidad por día según capacidadHorasPorDia.
 Si puedeModificar es false, no devuelvas operaciones de cambio y explicá que no tiene permiso.
 Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta" sin operaciones.`;
