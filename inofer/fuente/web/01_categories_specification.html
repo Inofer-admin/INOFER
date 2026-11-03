@@ -4967,6 +4967,18 @@ ${lines}${trendNote}`;
       let demandList = allAnalyzed.filter(x => x.qty > 0);
       // Ahorro de SET-UP: dentro de cada nivel de urgencia, las piezas del mismo pistón van seguidas
       if (typeof inoferOrdenarPorPiston === 'function') demandList = inoferOrdenarPorPiston(demandList);
+      // prioridad elegida en el armado en 3 pasos (parte 37): 'urgentes' (como siempre), 'cambios' o 'facturacion'
+      if (window.__inoferPrioridad === 'facturacion' || window.__inoferPrioridad === 'cambios') {
+        const catP = x => (window.inoferCatBuscar ? inoferCatBuscar(String(x.part || '').trim(), true) : null) || {};
+        const pos = new Map(demandList.map((x, i) => [x, i]));
+        if (window.__inoferPrioridad === 'facturacion') {
+          const val = x => { const c = catP(x); return (Number(c.precio) || 0) * (Number(x.stdRate) || Number(c.unitsPerHour) || 0); };
+          demandList = demandList.slice().sort((a, b) => (val(b) - val(a)) || (pos.get(a) - pos.get(b)));
+        } else {
+          const clave = x => { const c = catP(x); return String(Number(c.pistonMm) || 0).padStart(3, '0') + '|' + String(c.portamolde || '').toLowerCase(); };
+          demandList = demandList.slice().sort((a, b) => clave(a).localeCompare(clave(b)) || (pos.get(a) - pos.get(b)));
+        }
+      }
 
       const dailyHoursLimit = Number(document.getElementById('autoGanttDailyHours')?.value) || 16;
       const workDaysCount = Number(document.getElementById('autoGanttWorkDays')?.value) || 6;

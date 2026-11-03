@@ -727,6 +727,47 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.conBoton && r.sigueEn22 && r.aplicado && r.etiqueta, 'vista previa y aplicar: ' + JSON.stringify(r));
       ok(Number(r.martes) === 200, 'pedido con semana dicha: ' + JSON.stringify(r));
     });
+    await prueba('Armado del Gantt en 3 pasos: semanas, qué cargo, vista previa, aplicar, deshacer y 📌', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        switchTab('gantt'); await esperar(400);
+        const filasAntes = document.querySelectorAll('#viewGantt .gantt-item-qty-input').length;
+        const bA = document.getElementById('gtAuto'); if (!bA) return { sinBoton: true };
+        bA.click(); await esperar(200);
+        const w = document.getElementById('inoferArmado'); if (!w) return { sinVentana: true };
+        const tiles = w.querySelectorAll('[data-l]').length;
+        w.querySelectorAll('[data-l]')[2].click(); await esperar(50);
+        document.querySelector('#inoferArmado [data-n="2"]').click(); await esperar(50);
+        const p1 = /Se arma de la Sem \d+ a la Sem \d+/.test(document.getElementById('inoferArmado').textContent);
+        document.querySelector('#inoferArmado [data-a="ir2"]').click(); await esperar(50);
+        const pris = document.querySelectorAll('#inoferArmado [data-r]').length;
+        document.querySelector('#inoferArmado [data-r="cambios"]').click(); await esperar(50);
+        const st = inoferArmado3.estado();
+        const antesTxt = JSON.stringify(ganttWeeksData), antesOrd = JSON.stringify(productionOrders);
+        const P = inoferArmado3.previa();
+        const intacto = JSON.stringify(ganttWeeksData) === antesTxt && JSON.stringify(productionOrders) === antesOrd && !window.__inoferPrioridad;
+        st.paso = 3; document.querySelector('#inoferArmado [data-a="avanzado"]') ; // (sigue abierta)
+        inoferArmado3.aplicar(); await esperar(500); renderGanttView(); await esperar(300);
+        const franja = !!document.getElementById('inoferArmadoFranja') && /Armado aplicado/.test(document.getElementById('inoferArmadoFranja').textContent);
+        const aplicoSemanas = P.r.semanas.length === 2 && P.r.semanas.every(c => !!ganttWeeksData[c]);
+        // pines y colores en la grilla de siempre
+        activeGanttWeekCode = P.r.semanas[0]; renderGanttView(); await esperar(300);
+        let pin = document.querySelector('#viewGantt .inofer-pin'), fijo = null;
+        if (!pin) { const m = Object.keys(ganttWeeksData[activeGanttWeekCode].machines || {})[0] || '200V'; const W = ganttWeeksData[activeGanttWeekCode]; W.machines[m] = W.machines[m] || { aux: {}, items: [] }; W.machines[m].items.push({ part: 'PZA-PIN', desc: 'x', stdRate: 100, dailyQty: [0, 100, 0, 0, 0, 0, 0] }); renderGanttView(); await esperar(300); pin = document.querySelector('#viewGantt .inofer-pin'); }
+        if (pin) { const m = pin.getAttribute('data-pin-mach'), i = Number(pin.getAttribute('data-pin-idx')); pin.click(); await esperar(100); fijo = !!ganttWeeksData[activeGanttWeekCode].machines[m].items[i].fijo; ganttWeeksData[activeGanttWeekCode].machines[m].items[i].fijo = false; }
+        inoferArmado3.colorearUtil();
+        const util = [...document.querySelectorAll('#viewGantt td[colspan="2"]')].some(td => /%/.test(td.textContent) && td.style.background);
+        const filasDespues = document.querySelectorAll('#viewGantt .gantt-item-qty-input').length;
+        const c0 = window.confirm; window.confirm = () => true; inoferArmado3.deshacer(); window.confirm = c0; await esperar(300);
+        const volvio = JSON.stringify(ganttWeeksData) === antesTxt && !document.getElementById('inoferArmadoFranja');
+        return { tiles, p1, pris, intacto, franja, aplicoSemanas, pin: !!pin, fijo, util, volvio, filasAntes, filasDespues, prio: st.prioridad, filas: (P.filas || []).length };
+      });
+      ok(!r.sinBoton && !r.sinVentana && r.tiles === 6 && r.p1 && r.pris === 3 && r.prio === 'cambios', 'pasos 1 y 2: ' + JSON.stringify(r));
+      ok(r.intacto && r.filas >= 5, 'la vista previa no toca el Gantt: ' + JSON.stringify(r));
+      ok(r.franja && r.aplicoSemanas, 'aplicar + franja: ' + JSON.stringify(r));
+      ok(r.pin && r.fijo === true && r.util, '📌 y colores de utilización: ' + JSON.stringify(r));
+      ok(r.volvio, 'deshacer el armado: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

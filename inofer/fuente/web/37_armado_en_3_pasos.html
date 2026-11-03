@@ -1,0 +1,276 @@
+  <script>
+    // ===== Armado del Gantt en 3 pasos (⚡ Automático): semanas → qué cargo → vista previa → aplicar =====
+    // No cambia la grilla del Gantt. Agrega: franja "Armado aplicado" con Deshacer, borde amarillo en lo que cambió,
+    // colores en la fila UTILIZACIÓN y botón 📌 (fijar) en cada pieza. Usa el motor de siempre (scheduleOneMonthIntoGanttWeeks).
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const pad = n => String(n).padStart(2, '0');
+      const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const desdeIso = s => new Date(String(s).slice(0, 10) + 'T12:00:00');
+      const masDias = (s, n) => { const d = desdeIso(s); d.setDate(d.getDate() + n); return iso(d); };
+      const lunesDe = s => { const d = desdeIso(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const puede = () => (typeof inoferCan !== 'function' || inoferCan('gantt', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('gantt_auto'));
+      const cod = l => window.inoferCodigoSemana ? inoferCodigoSemana(l) : { code: 'SEM-?', num: '?', rango: l };
+      const val = id => { const e = $(id); return e ? (e.type === 'checkbox' ? e.checked : e.value) : null; };
+      const poner = (id, v) => { const e = $(id); if (!e) return; if (e.type === 'checkbox') e.checked = !!v; else e.value = v; };
+      function horasSemana(w, m) {
+        const md = ((w || {}).machines || {})[m]; if (!md) return 0; let h = 0;
+        (md.items || []).forEach(it => { if (it.isSharedCompanion) return; const u = Number(it.stdRate) || 0; if (!u) return; (it.dailyQty || []).forEach(q => { h += (Number(q) || 0) / u; }); });
+        Object.values(md.aux || {}).forEach(a => (a || []).forEach(x => { h += Number(x) || 0; }));
+        return h;
+      }
+      const piezasSemana = w => { let n = 0; Object.values((w || {}).machines || {}).forEach(md => (md.items || []).forEach(it => { if (!it.isSharedCompanion && (it.dailyQty || []).some(q => Number(q) > 0)) n++; })); return n; };
+      const colorPct = p => p >= 98 ? '#f97316' : (p >= 80 ? '#f59e0b' : '#22d3ee');
+
+      // ---------- estado del asistente ----------
+      let st = null;
+      function nuevoEstado() {
+        const hoyLun = lunesDe(iso(new Date()));
+        return { paso: 1, base: hoyLun, inicio: masDias(hoyLun, 7), n: 4, pedido: val('autoGanttTargetMCol') || 'M1', prioridad: 'urgentes',
+          crearOps: val('autoGanttCreateOrders') !== false, setup: val('autoGanttIncludeSetup') !== false, avanzado: false,
+          horas: val('autoGanttDailyHours') || '16', dias: val('autoGanttWorkDays') || '6', balance: val('autoGanttBalanceMode') || 'balance', alcance: val('autoGanttReachBasis') || 'disp', prev: null };
+      }
+      function ventana() {
+        let w = $('inoferArmado');
+        if (!w) {
+          w = document.createElement('div'); w.id = 'inoferArmado';
+          w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/75 p-3 sm:p-6';
+          document.body.appendChild(w);
+          w.addEventListener('click', e => { if (e.target === w) cerrar(); });
+          w.addEventListener('click', clic);
+          w.addEventListener('change', cambio);
+        }
+        return w;
+      }
+      const cerrar = () => { const w = $('inoferArmado'); if (w) w.remove(); st = null; };
+      function pasoChip(n, txt) {
+        const hecho = st.paso > n, act = st.paso === n;
+        return `<span class="flex items-center gap-2 ${act ? 'text-amber-300' : (hecho ? 'text-emerald-300' : 'text-slate-400')}"><span class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black ${act ? 'bg-amber-500 text-stone-900' : (hecho ? 'bg-emerald-500 text-emerald-950' : 'border-2 border-slate-600')}">${hecho ? '✓' : n}</span><span class="hidden sm:inline">${txt}</span></span>`;
+      }
+      function pintar() {
+        const w = ventana();
+        const fin = masDias(st.inicio, (nSemanas() - 1) * 7), a = cod(st.inicio), b = cod(fin);
+        const cab = `<div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-5 py-4"><div><div class="text-[11px] font-bold tracking-wider text-slate-400">PLAN GANTT${st.paso > 1 ? ` · SEM ${a.num}${nSemanas() > 1 ? ' A SEM ' + b.num : ''}` : ''}</div><div class="text-lg font-black text-white">Armar el Gantt automático</div></div>
+          <div class="flex items-center gap-2 text-xs font-bold">${pasoChip(1, 'Semanas')}<span class="h-0.5 w-6 bg-slate-700"></span>${pasoChip(2, 'Qué cargo')}<span class="h-0.5 w-6 bg-slate-700"></span>${pasoChip(3, 'Revisar y aplicar')}</div>
+          <button type="button" data-a="cerrar" class="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div>`;
+        const cuerpo = st.paso === 1 ? paso1() : (st.paso === 2 ? paso2() : paso3());
+        w.innerHTML = `<div class="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl">${cab}${cuerpo}</div>`;
+      }
+      const nSemanas = () => st.pedido === 'ALL_M1_M3' ? 12 : (st.pedido === 'ALL_M1_M6' ? 24 : st.n);
+
+      // ---------- paso 1: semanas ----------
+      function paso1() {
+        const hoyLun = lunesDe(iso(new Date())), fin = masDias(st.inicio, (nSemanas() - 1) * 7);
+        const tarjetas = []; for (let i = 0; i < 6; i++) {
+          const l = masDias(st.base, i * 7), c = cod(l), w = semanasG()[c.code]; const pz = piezasSemana(w);
+          const h = MAQS().reduce((s, m) => s + horasSemana(w, m), 0), cap = MAQS().length * (Number(st.horas) || 16) * (Number(st.dias) || 6), pct = cap ? Math.min(100, Math.round(h / cap * 100)) : 0;
+          const dentro = l >= st.inicio && l <= fin, et = l === hoyLun ? 'ESTA SEMANA' : (l === masDias(hoyLun, 7) ? 'LA PRÓXIMA' : (l < hoyLun ? 'YA PASÓ' : ''));
+          tarjetas.push(`<button type="button" data-l="${l}" aria-pressed="${dentro}" class="flex flex-col items-start gap-0.5 rounded-2xl border-2 p-3 text-left ${dentro ? 'border-amber-400 bg-amber-500/15' : 'border-slate-800 bg-slate-900 hover:border-slate-600'} ${l < hoyLun ? 'opacity-60' : ''}">
+            <span class="text-[10px] font-extrabold tracking-wide ${et === 'ESTA SEMANA' ? 'text-cyan-300' : 'text-slate-400'}">${et || '&nbsp;'}</span><span class="text-2xl font-black text-white">Sem ${c.num}</span><span class="text-xs text-slate-300">${esc(c.rango)}</span>
+            <span class="mt-1.5 block h-2 w-full overflow-hidden rounded-full bg-slate-800"><span class="block h-full" style="width:${pct}%;background:${colorPct(pct)}"></span></span>
+            <span class="text-[11px] font-bold ${pz ? 'text-amber-300' : 'text-emerald-300'}">${pz ? `${Math.round(h)} h · ${pz} pieza${pz === 1 ? '' : 's'}` : 'vacía'}</span></button>`);
+        }
+        const forz = st.pedido === 'ALL_M1_M3' || st.pedido === 'ALL_M1_M6';
+        const ocup = []; for (let i = 0; i < nSemanas(); i++) { const c = cod(masDias(st.inicio, i * 7)); if (piezasSemana(semanasG()[c.code])) ocup.push(c.num); }
+        const a = cod(st.inicio), b = cod(fin);
+        return `<div class="space-y-5 p-5">
+          <div><h2 class="text-2xl font-black text-white">¿Qué semanas querés armar?</h2><p class="text-sm text-slate-400">Tocá la semana en la que arranca y cuántas. Cada tarjeta muestra lo que ya tiene programado.</p></div>
+          <div class="flex items-stretch gap-2"><button type="button" data-a="ant" aria-label="Semanas anteriores" class="w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-lg font-black text-slate-300">‹</button><div class="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">${tarjetas.join('')}</div><button type="button" data-a="sig" aria-label="Semanas siguientes" class="w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-lg font-black text-slate-300">›</button></div>
+          <div class="flex flex-wrap items-center gap-2"><span class="text-sm font-bold text-slate-200">Cuántas semanas:</span>${forz ? `<span class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-bold text-amber-200">${nSemanas()} (por el pedido elegido)</span>` : [1, 2, 3, 4, 6, 8].map(k => `<button type="button" data-n="${k}" aria-pressed="${k === st.n}" class="min-h-[44px] min-w-[52px] rounded-xl border px-3 text-sm font-extrabold ${k === st.n ? 'border-amber-400 bg-amber-500 text-stone-900' : 'border-slate-700 bg-slate-900 text-slate-200'}">${k === 4 ? '4 · un mes' : k}</button>`).join('')}</div>
+          <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-700 bg-slate-900 p-4"><div><div class="text-base font-extrabold text-white">Se arma ${nSemanas() === 1 ? `la Sem ${a.num} · ${esc(a.rango)}` : `de la Sem ${a.num} a la Sem ${b.num} · ${esc(a.rango.split(' al ')[0])} al ${esc(b.rango.split(' al ')[1] || b.rango)}`}</div><div class="text-xs ${ocup.length ? 'text-amber-300' : 'text-emerald-300'}">${ocup.length ? `⚠ ${ocup.length === 1 ? 'La Sem ' + ocup[0] + ' ya tiene' : 'Las Sem ' + ocup.join(', ') + ' ya tienen'} programación: en el paso 3 ves qué cambia antes de aplicar.` : 'Las semanas elegidas están vacías.'}</div></div>
+            <div class="flex gap-2"><button type="button" data-a="cerrar" class="min-h-[44px] rounded-xl border border-slate-600 px-4 text-sm font-bold text-slate-200">Cancelar</button><button type="button" data-a="ir2" class="min-h-[44px] rounded-xl bg-amber-500 px-5 text-sm font-black text-stone-900">Siguiente →</button></div></div>
+          <button type="button" data-a="clasico" class="text-xs text-slate-400 underline">Abrir el analizador completo de la planilla (como antes)</button></div>`;
+      }
+      // ---------- paso 2: qué cargo ----------
+      function paso2() {
+        const sel = $('autoGanttTargetMCol'); const ops = sel ? [...sel.options].map(o => ({ v: o.value, t: o.textContent.trim() })) : [{ v: 'M1', t: 'Pedido M1' }];
+        const tarj = ops.filter(o => /^M[1-3]$/.test(o.v));
+        const resto = ops.filter(o => !/^M[1-3]$/.test(o.v));
+        const sinPlanilla = !String(val('autoGanttPasteArea') || '').trim();
+        const card = o => { const m = /^(.*?)\s*\((.*)\)\s*$/.exec(o.t) || [null, o.t, '']; const on = st.pedido === o.v;
+          return `<button type="button" data-p="${esc(o.v)}" aria-pressed="${on}" class="flex w-full items-center justify-between gap-3 rounded-2xl border-2 p-4 text-left ${on ? 'border-amber-400 bg-amber-500/15' : 'border-slate-800 bg-slate-900'}"><span class="text-base font-extrabold text-white">${esc(m[1])}</span><span class="text-right text-sm font-bold text-amber-200">${esc(m[2])}</span></button>`; };
+        const PRI = [['urgentes', 'Las más urgentes primero', 'Menor alcance en meses arriba de todo (como hasta ahora).'], ['cambios', 'Menos cambios de pistón y molde', 'Agrupa las piezas del mismo pistón y portamolde.'], ['facturacion', 'Más facturación primero', 'Las que más plata dejan por hora de máquina (usa los precios cargados).']];
+        const sw = (k, on, txt) => `<div class="flex items-center justify-between gap-3 border-b border-slate-800 py-2.5"><span class="text-sm text-slate-200">${txt}</span><button type="button" data-t="${k}" aria-pressed="${on}" aria-label="${esc(txt)}" class="flex h-8 w-[52px] shrink-0 items-center rounded-full p-[3px] ${on ? 'justify-end bg-amber-500' : 'justify-start bg-slate-700'}"><span class="block h-[26px] w-[26px] rounded-full ${on ? 'bg-amber-50' : 'bg-slate-400'}"></span></button></div>`;
+        const selA = (id, v, L) => `<select data-s="${id}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">${L.map(([a, b]) => `<option value="${a}" ${String(v) === String(a) ? 'selected' : ''}>${b}</option>`).join('')}</select>`;
+        return `<div class="grid gap-6 p-5 lg:grid-cols-2">
+          <div class="space-y-3"><h2 class="text-xl font-black text-white">¿Qué pedido cargo?</h2><p class="text-xs text-slate-400">Sale de tu planilla de análisis (pedidos M1 a M12).</p>
+            ${sinPlanilla ? '<div class="rounded-xl border border-rose-500/50 bg-rose-500/10 p-3 text-sm text-rose-100">No hay planilla de análisis cargada. Abrí el analizador completo y subila primero.</div>' : ''}
+            ${tarj.map(card).join('')}
+            <label class="flex items-center gap-2 text-xs text-slate-300">Otro: <select data-s="pedidoOtro" class="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white"><option value="">— elegir —</option>${resto.map(o => `<option value="${esc(o.v)}" ${st.pedido === o.v ? 'selected' : ''}>${esc(o.t)}</option>`).join('')}</select></label></div>
+          <div class="space-y-3"><h2 class="text-xl font-black text-white">¿Qué va primero?</h2>
+            ${PRI.map(([k, t, d]) => `<button type="button" data-r="${k}" aria-pressed="${st.prioridad === k}" class="flex w-full items-center gap-3 rounded-2xl border-2 p-3.5 text-left ${st.prioridad === k ? 'border-amber-400 bg-amber-500/15' : 'border-slate-800 bg-slate-900'}"><span class="h-5 w-5 shrink-0 rounded-full ${st.prioridad === k ? 'border-[6px] border-amber-400' : 'border-2 border-slate-500'}"></span><span><span class="block text-sm font-extrabold text-white">${t}</span><span class="block text-xs text-slate-400">${d}</span></span></button>`).join('')}
+            <div class="rounded-2xl border border-slate-800 bg-slate-900 px-4">${sw('crearOps', st.crearOps, 'Crear las órdenes de producción')}${sw('setup', st.setup, 'Sumar cambio de molde y alistamiento')}<div class="py-2.5 text-xs text-slate-400">📌 Las piezas fijas se respetan siempre.</div></div>
+            <div class="rounded-2xl border border-dashed border-slate-700 p-3 text-xs text-slate-300"><button type="button" data-a="avanzado" class="font-bold text-slate-200">⚙ Avanzado ${st.avanzado ? '▴' : '▾'}</button> <span class="text-slate-400">${st.horas} h por día · ${st.dias === '5' ? 'lunes a viernes' : (st.dias === '7' ? 'todos los días' : 'lunes a sábado')} · ${st.balance === 'balance' ? 'balancear máquinas' : 'primera máquina compatible'}</span>
+              ${st.avanzado ? `<div class="mt-2 grid gap-2 sm:grid-cols-2"><label class="text-[11px] text-slate-400">Horas por día ${selA('horas', st.horas, [['24', '24 h (3 turnos)'], ['16', '16 h (2 turnos)'], ['12', '12 h'], ['8', '8 h (1 turno)']])}</label><label class="text-[11px] text-slate-400">Días ${selA('dias', st.dias, [['6', 'Lunes a sábado'], ['5', 'Lunes a viernes'], ['7', 'Todos los días']])}</label><label class="text-[11px] text-slate-400">Máquinas ${selA('balance', st.balance, [['balance', 'Balancear carga'], ['primary', '1° máquina compatible']])}</label><label class="text-[11px] text-slate-400">Alcance ${selA('alcance', st.alcance, [['disp', 'Stock en estantería'], ['oc', 'Con OC en curso'], ['min', 'El menor de ambos']])}</label></div>` : ''}</div></div>
+          <div class="flex items-center justify-between gap-2 lg:col-span-2"><button type="button" data-a="ir1" class="min-h-[44px] rounded-xl border border-slate-600 px-4 text-sm font-bold text-slate-200">← Volver</button><button type="button" data-a="ir3" ${sinPlanilla ? 'disabled' : ''} class="min-h-[44px] rounded-xl bg-amber-500 px-5 text-sm font-black text-stone-900 disabled:opacity-40">Ver cómo quedaría →</button></div></div>`;
+      }
+      // ---------- paso 3: vista previa (se arma en una copia y se vuelve atrás) ----------
+      const semanasG = () => (typeof ganttWeeksData !== 'undefined' && ganttWeeksData) ? ganttWeeksData : {};
+      function aplicarAjustes() {
+        poner('autoGanttTargetMCol', st.pedido); poner('autoGanttCreateOrders', st.crearOps); poner('autoGanttIncludeSetup', st.setup);
+        poner('autoGanttDailyHours', st.horas); poner('autoGanttWorkDays', st.dias); poner('autoGanttBalanceMode', st.balance); poner('autoGanttReachBasis', st.alcance);
+        poner('autoGanttSortByReach', st.prioridad !== 'cambios' && st.prioridad !== 'facturacion' ? true : val('autoGanttSortByReach'));
+        window.__inoferPrioridad = st.prioridad;
+      }
+      function correr() {
+        aplicarAjustes();
+        const sel = st.pedido; let meses = [0];
+        if (sel === 'ALL_M1_M3') meses = [0, 1, 2]; else if (sel === 'ALL_M1_M6') meses = [0, 1, 2, 3, 4, 5]; else if (/^M\d+$/.test(sel)) meses = [Math.max(0, (parseInt(sel.slice(1), 10) || 1) - 1)];
+        const porMes = meses.length > 1 ? 4 : Math.max(1, Math.min(26, st.n));
+        const r = { semanas: [], prog: 0, crit: 0, ops: 0, sinLugar: 0, demanda: {} };
+        meses.forEach((mIdx, k) => {
+          const desde = masDias(lunesDe(st.inicio), k * porMes * 7);
+          try { (analyzeDemandListWithDatabase(undefined, mIdx) || []).filter(x => x.qty > 0).forEach(x => { const p = String(x.part || '').trim(); r.demanda[p] = (r.demanda[p] || 0) + x.qty; }); } catch (e) { }
+          const x = scheduleOneMonthIntoGanttWeeks(mIdx, cod(desde).num, desde, 'Pedido M' + (mIdx + 1), porMes);
+          r.semanas.push(...x.monthWeekCodes); r.prog += x.scheduledPartsCount; r.crit += x.criticalPartsCount; r.ops += x.createdOrdersCount; r.sinLugar += x.lotesSinLugar || 0;
+        });
+        return r;
+      }
+      function previa() {
+        const antesW = JSON.stringify(semanasG()), antesO = JSON.stringify(typeof productionOrders !== 'undefined' ? productionOrders : []), antesAct = activeGanttWeekCode;
+        let r = null, despuesW = antesW, despuesO = antesO, error = '';
+        try { r = correr(); despuesW = JSON.stringify(ganttWeeksData); despuesO = JSON.stringify(productionOrders); } catch (e) { error = e.message || String(e); }
+        ganttWeeksData = JSON.parse(antesW); productionOrders = JSON.parse(antesO); activeGanttWeekCode = antesAct; window.__inoferPrioridad = null;
+        if (error || !r) return { error: error || 'No se pudo armar' };
+        const A = JSON.parse(antesW), D = JSON.parse(despuesW);
+        const cap = (Number(st.horas) || 16) * (Number(st.dias) || 6);
+        const filas = MAQS().map(m => ({ m, celdas: r.semanas.slice(0, 8).map(c => ({ c, antes: Math.round(horasSemana(A[c], m) / cap * 100), despues: Math.round(horasSemana(D[c], m) / cap * 100) })) }));
+        const prog = {}; r.semanas.forEach(c => Object.keys((D[c] || {}).machines || {}).forEach(m => ((D[c].machines[m] || {}).items || []).forEach(it => { if (it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); const p = String(it.part).trim(); prog[p] = (prog[p] || 0) + q; })));
+        const noEntran = Object.keys(r.demanda).filter(p => !(prog[p] > 0)).map(p => ({ p, q: r.demanda[p] }));
+        const parcial = Object.keys(r.demanda).filter(p => prog[p] > 0 && prog[p] < r.demanda[p] * 0.95).map(p => ({ p, q: r.demanda[p], hecho: prog[p] }));
+        const fijas = r.semanas.reduce((s, c) => s + Object.values((A[c] || {}).machines || {}).reduce((t, md) => t + (md.items || []).filter(it => it.fijo).length, 0), 0);
+        const reemplaza = r.semanas.filter(c => piezasSemana(A[c]));
+        return { r, despuesW, despuesO, antesW, antesO, filas, noEntran, parcial, fijas, reemplaza, entran: Object.keys(prog).filter(p => prog[p] > 0 && r.demanda[p]).length };
+      }
+      function paso3() {
+        const P = st.prev;
+        if (!P || P.error) return `<div class="space-y-3 p-5"><div class="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-sm text-rose-100">No pude armar la vista previa: ${esc((P && P.error) || '')}</div><button type="button" data-a="ir2" class="rounded-xl border border-slate-600 px-4 py-2 text-sm text-slate-200">← Volver</button></div>`;
+        const etq = c => (window.inoferEtiquetaSemana ? inoferEtiquetaSemana(c) : c);
+        const cols = P.filas[0] ? P.filas[0].celdas.map(x => x.c) : [];
+        return `<div class="grid gap-5 p-5 lg:grid-cols-[1.35fr_1fr]">
+          <div class="space-y-2"><div class="flex items-baseline justify-between"><h2 class="text-lg font-black text-white">Ocupación de cada máquina</h2><span class="text-[11px] text-slate-400">antes → después</span></div>
+            <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900"><table class="w-full text-xs"><thead class="bg-slate-950 text-[10px] font-extrabold text-slate-400"><tr><th class="px-3 py-2 text-left">MÁQUINA</th>${cols.map(c => `<th class="px-2 py-2 text-left">${esc(etq(c))}</th>`).join('')}</tr></thead><tbody>
+              ${P.filas.map(f => `<tr class="border-t border-slate-800"><td class="px-3 py-2.5 text-sm font-black text-white">${esc(f.m)}</td>${f.celdas.map(x => `<td class="px-2 py-2"><div class="text-[11px] text-slate-300"><span class="text-slate-500">${x.antes}%</span> → <b style="color:${colorPct(x.despues)}">${x.despues}%</b></div><div class="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div class="h-full" style="width:${Math.min(100, x.despues)}%;background:${colorPct(x.despues)}"></div></div></td>`).join('')}</tr>`).join('')}
+            </tbody></table></div>
+            <div class="flex gap-4 text-[11px] text-slate-400"><span>■ <span style="color:#22d3ee">hay lugar</span></span><span>■ <span style="color:#f59e0b">más de 80%</span></span><span>■ <span style="color:#f97316">llena</span></span></div></div>
+          <div class="space-y-3">
+            <div class="grid grid-cols-3 gap-2"><div class="rounded-xl border border-emerald-800 bg-emerald-950 p-3"><div class="text-2xl font-black text-emerald-300">${P.entran}</div><div class="text-[11px] text-emerald-200">piezas entran</div></div><div class="rounded-xl border border-orange-800 bg-orange-950 p-3"><div class="text-2xl font-black text-orange-300">${P.noEntran.length}</div><div class="text-[11px] text-orange-200">no entran</div></div><div class="rounded-xl border border-slate-700 bg-slate-900 p-3"><div class="text-2xl font-black text-white">${P.r.ops}</div><div class="text-[11px] text-slate-300">órdenes nuevas</div></div></div>
+            ${P.noEntran.length || P.parcial.length ? `<div class="max-h-56 space-y-1.5 overflow-y-auto rounded-2xl border border-orange-800 bg-slate-900 p-3"><div class="text-sm font-extrabold text-orange-300">No entran o entran en parte</div>${P.noEntran.slice(0, 20).map(x => `<div class="border-b border-slate-800 pb-1 text-xs"><b class="text-white">${esc(x.p)}</b> · ${x.q.toLocaleString('es-AR')} u <span class="block text-slate-400">No hubo lugar en sus máquinas (capacidad, lote mínimo, portamolde o pistón).</span></div>`).join('')}${P.parcial.slice(0, 10).map(x => `<div class="border-b border-slate-800 pb-1 text-xs"><b class="text-white">${esc(x.p)}</b> · entraron ${x.hecho.toLocaleString('es-AR')} de ${x.q.toLocaleString('es-AR')} u</div>`).join('')}<div class="text-[11px] text-slate-400">Podés sumar semanas o más horas por día, o pedirle al asistente que la ponga en otra máquina.</div></div>` : '<div class="rounded-2xl border border-emerald-800 bg-emerald-950/50 p-3 text-sm text-emerald-200">✓ Entra todo el pedido.</div>'}
+            <div class="space-y-1 rounded-2xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">${P.fijas ? `<div>📌 ${P.fijas} pieza${P.fijas === 1 ? '' : 's'} fija${P.fijas === 1 ? '' : 's'} se respeta${P.fijas === 1 ? '' : 'n'}.</div>` : ''}${P.reemplaza.length ? `<div>↺ ${P.reemplaza.map(c => esc(etq(c))).join(', ')} ya tenía${P.reemplaza.length === 1 ? '' : 'n'} programación: se reemplaza por lo nuevo.</div>` : ''}<div>🛟 Antes de aplicar se guarda una copia: se puede deshacer.</div></div></div>
+          <div class="flex items-center justify-between gap-2 lg:col-span-2"><button type="button" data-a="ir2" class="min-h-[44px] rounded-xl border border-slate-600 px-4 text-sm font-bold text-slate-200">← Cambiar algo</button><button type="button" data-a="aplicar" class="min-h-[44px] rounded-xl bg-emerald-500 px-6 text-sm font-black text-emerald-950">✓ Aplicar al Gantt</button></div></div>`;
+      }
+      // ---------- aplicar, franja y deshacer ----------
+      let aplicado = null; // {antesW, antesO, semanas, texto, noEntran}
+      function aplicar() {
+        const P = st.prev; if (!P || P.error) return;
+        try { window.inoferGanttGuardarAntes && inoferGanttGuardarAntes('Antes del armado automático'); } catch (e) { }
+        ganttWeeksData = JSON.parse(P.despuesW); productionOrders = JSON.parse(P.despuesO);
+        if (P.r.semanas[0]) activeGanttWeekCode = P.r.semanas[0];
+        const etq = c => (window.inoferEtiquetaSemana ? inoferEtiquetaSemana(c) : c);
+        aplicado = { antesW: P.antesW, antesO: P.antesO, semanas: P.r.semanas, noEntran: P.noEntran, parcial: P.parcial,
+          texto: `Armado aplicado: ${esc(etq(P.r.semanas[0]))}${P.r.semanas.length > 1 ? ' a ' + esc(etq(P.r.semanas[P.r.semanas.length - 1])) : ''}. Entraron ${P.entran} piezas${P.noEntran.length ? ` · ${P.noEntran.length} no entraron` : ''}${P.r.ops ? ` · ${P.r.ops} órdenes nuevas` : ''}. Las celdas con borde amarillo son las que cambiaron.` };
+        try { saveGanttWeeks(); } catch (e) { } try { saveProductionOrders(); } catch (e) { } try { refreshAll(); } catch (e) { } try { renderGanttView(); } catch (e) { }
+        cerrar(); toast('✓ Gantt armado'); pintarFranja(); marcar();
+      }
+      function deshacer() {
+        if (!aplicado || !confirm('¿Deshacer el armado? El Gantt y las órdenes vuelven a como estaban antes.')) return;
+        ganttWeeksData = JSON.parse(aplicado.antesW); productionOrders = JSON.parse(aplicado.antesO); aplicado = null;
+        try { saveGanttWeeks(); } catch (e) { } try { saveProductionOrders(); } catch (e) { } try { refreshAll(); } catch (e) { } try { renderGanttView(); } catch (e) { }
+        pintarFranja(); toast('↩ Armado deshecho');
+      }
+      function pintarFranja() {
+        const vg = $('viewGantt'); let b = $('inoferArmadoFranja');
+        if (!aplicado || !vg) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('div'); b.id = 'inoferArmadoFranja'; b.className = 'mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-700 bg-emerald-950/80 px-3 py-2 text-xs text-emerald-100'; const bar = $('gtBar'); (bar && bar.parentElement === vg ? bar.after(b) : vg.insertBefore(b, vg.firstChild)); }
+        b.innerHTML = `<span>✓ <b>${aplicado.texto}</b></span><span class="flex gap-2">${aplicado.noEntran.length || aplicado.parcial.length ? '<button type="button" data-fa="ver" class="rounded-lg border border-emerald-500 px-2.5 py-1 font-bold">Ver lo que no entró</button>' : ''}<button type="button" data-fa="deshacer" class="rounded-lg border border-slate-500 px-2.5 py-1 font-bold text-slate-100">↩ Deshacer el armado</button><button type="button" data-fa="cerrar" aria-label="Cerrar aviso" class="rounded-lg px-2 py-1 text-slate-300">✕</button></span>`;
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('[data-fa]'); if (!b) return;
+        if (b.dataset.fa === 'deshacer') deshacer();
+        else if (b.dataset.fa === 'cerrar') { aplicado = null; pintarFranja(); document.querySelectorAll('.inofer-cambio').forEach(x => x.classList.remove('inofer-cambio', 'ring-2', 'ring-amber-400')); }
+        else if (b.dataset.fa === 'ver' && aplicado) toast('No entraron: ' + aplicado.noEntran.map(x => x.p).concat(aplicado.parcial.map(x => x.p + ' (en parte)')).slice(0, 20).join(', '));
+      });
+      // borde amarillo en las celdas que cambió el armado (semana que se está viendo)
+      function marcar() {
+        if (!aplicado) return;
+        const A = JSON.parse(aplicado.antesW), c = activeGanttWeekCode, W = semanasG()[c]; if (!W || !aplicado.semanas.includes(c)) return;
+        Object.keys(W.machines || {}).forEach(m => ((W.machines[m] || {}).items || []).forEach((it, i) => {
+          const pv = (((A[c] || {}).machines || {})[m] || {}).items ? A[c].machines[m].items.find(x => x.part === it.part && !!x.isSharedCompanion === !!it.isSharedCompanion) : null;
+          (it.dailyQty || []).forEach((q, d) => {
+            if ((Number(q) || 0) === (Number(pv && pv.dailyQty && pv.dailyQty[d]) || 0)) return;
+            const inp = document.querySelector(`.gantt-item-qty-input[data-mach="${m}"][data-item-idx="${i}"][data-day="${d}"]`);
+            if (inp) inp.classList.add('inofer-cambio', 'ring-2', 'ring-amber-400');
+          });
+        }));
+      }
+      // colores en la fila UTILIZACIÓN (celeste hay lugar · amarillo +80% · naranja llena)
+      function colorearUtil() {
+        const vg = $('viewGantt'); if (!vg) return;
+        vg.querySelectorAll('tr').forEach(tr => {
+          const tds = tr.children; if (!tds[1] || !/UTILIZACI[ÓO]N SEMANAL/.test(tds[1].textContent)) return;
+          [...tds].forEach(td => { if (td.getAttribute('colspan') !== '2') return; const p = parseFloat(String(td.textContent).replace(',', '.')); if (isNaN(p)) return;
+            td.style.background = p >= 98 ? 'rgba(249,115,22,0.22)' : (p >= 80 ? 'rgba(245,158,11,0.2)' : (p > 0 ? 'rgba(34,211,238,0.14)' : '')); });
+        });
+      }
+      // botón 📌 en cada pieza (columna Acción): el armado automático no la mueve
+      function pines() {
+        const W = semanasG()[activeGanttWeekCode]; if (!W) return;
+        document.querySelectorAll('#viewGantt .del-gantt-item-btn').forEach(del => {
+          const m = del.getAttribute('data-del-gantt-mach'), i = Number(del.getAttribute('data-del-gantt-idx'));
+          const it = (((W.machines || {})[m] || {}).items || [])[i]; if (!it || it.isSharedCompanion) return;
+          let b = del.parentElement.querySelector('.inofer-pin');
+          if (!b) { b = document.createElement('button'); b.type = 'button'; b.className = 'inofer-pin rounded px-1.5 py-0.5 text-[10px] font-bold border'; b.setAttribute('data-pin-mach', m); b.setAttribute('data-pin-idx', String(i)); del.parentElement.insertBefore(b, del); }
+          b.textContent = it.fijo ? '📌 fija' : '📌'; b.title = it.fijo ? 'Fija: el armado automático no la mueve. Tocá para soltarla.' : 'Fijar: que el armado automático no la mueva';
+          b.style.cssText = it.fijo ? 'background:#fef3c7;border-color:#f59e0b;color:#92400e' : 'background:#f8fafc;border-color:#cbd5e1;color:#475569';
+        });
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-pin'); if (!b) return;
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) { toast('Tu usuario no puede modificar el Gantt'); return; }
+        const W = semanasG()[activeGanttWeekCode]; const it = W && (((W.machines || {})[b.getAttribute('data-pin-mach')] || {}).items || [])[Number(b.getAttribute('data-pin-idx'))]; if (!it) return;
+        it.fijo = !it.fijo; try { saveGanttWeeks(); } catch (er) { } pines(); toast(it.fijo ? `📌 ${it.part} quedó fija` : `${it.part} ya no está fija`);
+      });
+      function despuesDeDibujar() { try { colorearUtil(); pines(); marcar(); pintarFranja(); } catch (e) { } }
+      function envolver() {
+        if (typeof window.renderGanttView !== 'function' || window.renderGanttView.__armado3) return;
+        const r0 = window.renderGanttView; const f = function () { const r = r0.apply(this, arguments); setTimeout(despuesDeDibujar, 0); return r; };
+        Object.assign(f, r0); f.__armado3 = true; window.renderGanttView = f;
+      }
+      setInterval(() => { try { envolver(); const vg = $('viewGantt'); if (vg && !vg.classList.contains('hidden')) { colorearUtil(); pines(); } } catch (e) { } }, 2000);
+
+      // ---------- clics del asistente ----------
+      function clic(e) {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.dataset.l) { st.inicio = b.dataset.l; return pintar(); }
+        if (b.dataset.n) { st.n = Number(b.dataset.n); if (/^ALL_/.test(st.pedido)) st.pedido = 'M1'; return pintar(); }
+        if (b.dataset.p) { st.pedido = b.dataset.p; return pintar(); }
+        if (b.dataset.r) { st.prioridad = b.dataset.r; return pintar(); }
+        if (b.dataset.t) { st[b.dataset.t] = !st[b.dataset.t]; return pintar(); }
+        const a = b.dataset.a;
+        if (a === 'cerrar') return cerrar();
+        if (a === 'ant') { st.base = masDias(st.base, -28); return pintar(); }
+        if (a === 'sig') { st.base = masDias(st.base, 28); return pintar(); }
+        if (a === 'avanzado') { st.avanzado = !st.avanzado; return pintar(); }
+        if (a === 'ir1') { st.paso = 1; return pintar(); }
+        if (a === 'ir2') { st.paso = 2; return pintar(); }
+        if (a === 'ir3') { st.paso = 3; b.disabled = true; b.textContent = 'Armando la vista previa…'; setTimeout(() => { st.prev = previa(); pintar(); }, 30); return; }
+        if (a === 'aplicar') return aplicar();
+        if (a === 'clasico') { cerrar(); try { inoferGanttVista.abrirSeccion('autoGanttMonthPanel'); } catch (er) { } }
+      }
+      function cambio(e) {
+        const s = e.target.dataset && e.target.dataset.s; if (!s) return;
+        if (s === 'pedidoOtro') { if (e.target.value) st.pedido = e.target.value; } else st[s] = e.target.value;
+        pintar();
+      }
+      function abrir() {
+        if (!puede()) { toast('Tu usuario no puede armar el Gantt automático'); return; }
+        st = nuevoEstado(); pintar();
+      }
+      window.inoferArmado3 = { abrir, previa: () => { st.prev = previa(); return st.prev; }, estado: () => st, aplicar, deshacer, colorearUtil, pines };
+      // ⚡ Automático abre los 3 pasos (el analizador completo sigue en "Abrir el analizador completo")
+      document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('#gtAuto'); if (!b) return; e.preventDefault(); e.stopImmediatePropagation(); abrir(); }, true);
+    })();
+  </script>
