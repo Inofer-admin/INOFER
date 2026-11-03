@@ -393,6 +393,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         fin.querySelector('.cro-fin').click(); await w(200); crono.remove(); fin.remove();
         const terminado = !inoferCronoActiva('200N');
         const b0 = new Date(fecha + 'T' + t.ini + ':00').getTime(); act.desde = new Date(b0 + 60 * 60000).toISOString(); act.hasta = new Date(b0 + 90 * 60000).toISOString();
+        // la OP puesta en cada máquina (modo tablet) manda sobre lo que sugiere el Gantt
+        [['200V', 'ct-1'], ['200N', 'ct-2']].forEach(([m, id]) => { const o = inoferPonerOp(m, id); if (o && o.montada) o.montada.desde = fecha + 'T00:00:00.000Z'; });
         inoferCierreTurno({ fecha, turno: t.id }); await w(400);
         const filas = [...document.querySelectorAll('#ctModal .ct-row')].map(x => x.dataset.m);
         const ok200V = document.querySelector('#ctModal .ct-row[data-m="200V"] .ct-ok').value;
@@ -411,6 +413,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const listo = document.querySelectorAll('#ctModal .ct-row.listo').length; const toastTxt = document.getElementById('toastNotification').textContent;
         const usada = ((inoferModLocal('mantenimiento') || {}).cronoParadas || []).some(x => x.maq === '200N' && x.usada);
         document.getElementById('ctModal').remove();
+        ['ct-1', 'ct-2'].forEach(id => { const o = productionOrders.find(x => x.id === id); if (o) delete o.montada; });
         return { empezo, terminado, filas: filas.join(','), ok200V, cronoChip, z, l1: (o1.logs || []).length, ok1: ((o1.logs || [])[0] || {}).okPcs, par2: (l2.paradas || []).map(p => p.min).join(','), origen: l2.origen, listo, usada, toastTxt };
       });
       ok(r.empezo && r.terminado, 'el cronómetro no anduvo: ' + JSON.stringify(r));
@@ -625,6 +628,40 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.chips === 10 && r.dia === 1, 'chips: ' + JSON.stringify(r));
       ok(r.cods.length === 2 && r.cods[0] === r.esperado[0] && r.start1 === r.lunes && r.start2 > r.start1 && /^Semana \d+ · /.test(r.nombre), 'semanas armadas: ' + JSON.stringify(r));
       ok(r.mismo && r.resumen, 'reutiliza la semana por fecha y muestra el resumen: ' + JSON.stringify(r));
+    });
+    await prueba('Modo tablet: elegir qué OP está puesta en la máquina', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        productionOrders.push({ id: 'ord-mt1', ordNumber: '7701', part: 'PZA-MT1', machine: nom('H50'), status: 'En Proceso', qtyTarget: 500, logs: [] });
+        productionOrders.push({ id: 'ord-mt2', ordNumber: '7702', part: 'PZA-MT2', machine: nom('H50'), status: 'En Proceso', qtyTarget: 500, logs: [] });
+        productionOrders.push({ id: 'ord-mt3', ordNumber: '7703', part: 'PZA-MT3', machine: nom('Z30'), status: 'En Proceso', qtyTarget: 500, logs: [] });
+        const traza = []; traza.push('pre' + productionOrders.some(o => o.id === 'ord-mt2'));
+        saveProductionOrders(); traza.push('post' + productionOrders.some(o => o.id === 'ord-mt2'));
+        for (let i = 0; i < 6; i++) { await esperar(300); traza.push(i + ':' + productionOrders.some(o => o.id === 'ord-mt2') + '/' + productionOrders.length); }
+        let enNube = false; for (let i = 0; i < 16 && !enNube; i++) { await esperar(500); const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json(); enNube = ((n.modules || {}).orders || []).some(o => o.id === 'ord-mt2'); }
+        let local = productionOrders.some(o => o.id === 'ord-mt2');
+        for (let i = 0; i < 20 && !local; i++) { if (i === 0) { try { lastLocalChangeAt = 0; pendingCloudOps = 0; fetchCloudRecords(true); } catch (e) { } } await esperar(500); local = productionOrders.some(o => o.id === 'ord-mt2'); }
+        if (!enNube || !local) return { sinTarjeta: true, traza, enNube, local, pend: typeof pendingCloudOps !== 'undefined' ? pendingCloudOps : '?' };
+        localStorage.setItem('tablero_inyectoras_mimaquina_v1', 'H50'); switchTab('mimaq'); await esperar(400); try { inoferPintarHoy(); } catch (e) { } await esperar(300);
+        const bOp = document.getElementById('mmOp'); if (!bOp) return { sinBoton: true, vis: !document.getElementById('viewMiMaq').classList.contains('hidden'), txt: document.getElementById('viewMiMaq').innerText.slice(0, 300) };
+        bOp.click(); await esperar(200);
+        if (!document.querySelector('.mo-elegir[data-o="ord-mt2"]')) return { sinTarjeta: true, modal: ((document.getElementById('inoferPlantaModal') || {}).innerText || 'SIN MODAL').slice(0, 400), maqs: productionOrders.filter(o => /^ord-mt/.test(o.id)).map(o => o.machine + '>' + (inoferCargaRapida.maqDeOrden ? inoferCargaRapida.maqDeOrden(o) : '?')) };
+        const tarjetas = document.querySelectorAll('.mo-elegir[data-o]').length;
+        document.querySelector('.mo-elegir[data-o="ord-mt2"]').click(); await esperar(300);
+        const txt = document.getElementById('viewMiMaq').textContent;
+        const m1 = inoferOpMontada('H50');
+        // pasar una OP de otra máquina
+        inoferPonerOp('H50', 'ord-mt3'); await esperar(100);
+        const m2 = inoferOpMontada('H50'), viejaLibre = !productionOrders.find(o => o.id === 'ord-mt2').montada, z30 = productionOrders.find(o => o.id === 'ord-mt3').machine;
+        productionOrders = productionOrders.filter(o => !/^ord-mt/.test(o.id)); saveProductionOrders();
+        localStorage.removeItem('tablero_inyectoras_mimaquina_v1'); switchTab('hoy');
+        return { tarjetas, txt: /PZA-MT2/.test(txt) && /OP puesta en la máquina/.test(txt), m1: m1 && m1.id, m2: m2 && m2.id, viejaLibre, z30 };
+      });
+      ok(!r.sinTarjeta, 'tarjetas: ' + JSON.stringify(r));
+      ok(!r.sinBoton, 'no aparece el botón Cambiar OP: ' + JSON.stringify(r));
+      ok(r.tarjetas >= 2 && r.txt && r.m1 === 'ord-mt2', 'elegir OP: ' + JSON.stringify(r));
+      ok(r.m2 === 'ord-mt3' && r.viejaLibre && /H-?50/i.test(r.z30), 'cambiar a una OP de otra máquina: ' + JSON.stringify(r));
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {

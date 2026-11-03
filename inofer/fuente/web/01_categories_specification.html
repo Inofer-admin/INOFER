@@ -2431,6 +2431,8 @@ ${lines}${trendNote}`;
         window.google.script.run.guardarModuloEstado(moduleKey, moduleData);
       } else if (cloudApiUrl) {
         pendingCloudOps++;
+        // copia de lo que se manda AHORA: si mientras viaja el equipo cambia algo (mismo array), no se pisa con la respuesta vieja
+        let enviadoTxt = null; try { enviadoTxt = JSON.stringify(moduleData); } catch (e) {}
         try { window.inoferModPendiente && window.inoferModPendiente(moduleKey, moduleData, 'enviando'); } catch (e) {}
         fetch(cloudApiUrl, {
           method: 'POST',
@@ -2439,7 +2441,7 @@ ${lines}${trendNote}`;
         }).then(r => r.json()).then(inoferHandleCloudReply).then(d => {
           const fallo = !d || (d.status === 'error' && d.error !== 'permiso');
           try { window.inoferModPendiente && window.inoferModPendiente(moduleKey, moduleData, fallo ? 'error' : 'ok'); } catch (e) {}
-          try { if (!fallo && window.inoferAdoptar) window.inoferAdoptar(moduleKey, moduleData, d); } catch (e) {}
+          try { if (!fallo && window.inoferAdoptar) window.inoferAdoptar(moduleKey, enviadoTxt != null ? { __txt: enviadoTxt } : moduleData, d); } catch (e) {}
         }).catch(() => { try { window.inoferModPendiente && window.inoferModPendiente(moduleKey, moduleData, 'error'); } catch (e) {} }).finally(() => { pendingCloudOps = Math.max(0, pendingCloudOps - 1); lastLocalChangeAt = Date.now(); });
       }
     }

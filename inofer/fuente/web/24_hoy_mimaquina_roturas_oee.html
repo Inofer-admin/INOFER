@@ -79,8 +79,27 @@
         });
         return { q, piezas };
       }
+      // OP puesta a mano en la máquina (modo tablet → 🔄 Cambiar OP). Queda en la orden: o.montada = {maq, desde, por}
+      const esAbierta = o => !esDemo(o) && o.status !== 'Completada' && (!window.inoferCargaRapida || inoferCargaRapida.abierta(o));
+      function opMontada(m) { return ordenes().find(o => o.montada && o.montada.maq === m && maqDe(o) === m && esAbierta(o)) || null; }
+      window.inoferOpMontada = opMontada;
+      function ponerOp(m, ordId) {
+        const ahora = new Date().toISOString(), por = window.inoferUsuarioEtiqueta ? inoferUsuarioEtiqueta() : '';
+        let cambio = false;
+        ordenes().forEach(o => { if (o.montada && o.montada.maq === m && String(o.id) !== String(ordId)) { delete o.montada; o.modificadoAt = ahora; cambio = true; } });
+        const o = ordId ? ordenes().find(x => String(x.id) === String(ordId)) : null;
+        if (o) {
+          if (maqDe(o) !== m) { try { const c = GANTT_MACHINES_CONFIG.find(x => x.id === m); o.machine = c ? c.name : m; } catch (e) { o.machine = m; } }
+          o.montada = { maq: m, desde: ahora, por }; o.modificadoAt = ahora; cambio = true;
+          if (o.status === 'Pendiente' || !o.status) o.status = 'En Proceso';
+        }
+        if (cambio) { try { saveProductionOrders(); } catch (e) { } }
+        return o;
+      }
+      window.inoferPonerOp = ponerOp;
       function ordenActual(m) {
-        const abiertas = ordenes().filter(o => !esDemo(o) && maqDe(o) === m && o.status !== 'Completada' && (!window.inoferCargaRapida || inoferCargaRapida.abierta(o)));
+        const mont = opMontada(m); if (mont) return mont;
+        const abiertas = ordenes().filter(o => maqDe(o) === m && esAbierta(o));
         if (!abiertas.length) return null;
         const prog = programadoDia(m, hoy()).piezas.map(norm);
         const ult = o => (o.logs || []).reduce((a, l) => { const k = String(l.date || '') + String(l.startTime || ''); return k > a ? k : a; }, '');
@@ -207,7 +226,8 @@
             <div class="text-right">${e.activa ? '<div class="rounded-2xl bg-emerald-500/15 px-4 py-2 text-lg font-black text-emerald-300">● EN SERVICIO</div>' : `<div class="rounded-2xl bg-rose-500/20 px-4 py-2 text-lg font-black text-rose-200">⛔ PARADA</div><div class="mt-1 text-xs text-rose-200">${esc(e.motivo || '')}</div>`}</div>
           </div>
           <div class="rounded-3xl border border-slate-700 bg-slate-900/90 p-5">
-            ${o ? `<div class="text-xs font-bold uppercase tracking-wider text-slate-500">Orden en curso</div><div class="mt-1 flex flex-wrap items-baseline justify-between gap-2"><span class="text-4xl font-black text-white">${esc(o.part)}</span><span class="text-lg text-slate-400">OP ${esc(o.ordNumber)}</span></div>
+            ${puede ? `<div class="mb-3 flex flex-wrap items-center justify-between gap-2"><span class="text-xs font-bold uppercase tracking-wider text-slate-500">${o ? (o.montada && o.montada.maq === m ? `OP puesta en la máquina <span class="normal-case font-normal text-slate-400">· ${esc((o.montada.por || '').replace(/\s*\(@.*\)$/, ''))} ${esc(String(o.montada.desde || '').slice(8, 10) + '/' + String(o.montada.desde || '').slice(5, 7) + ' ' + new Date(o.montada.desde || Date.now()).toTimeString().slice(0, 5))}</span>` : 'Orden en curso <span class="normal-case font-normal text-amber-300">· sugerida, confirmala</span>') : 'Sin OP en la máquina'}</span><button type="button" id="mmOp" class="rounded-2xl border-2 border-cyan-400/70 bg-cyan-500/15 px-5 py-3 text-lg font-black text-cyan-100 active:scale-[0.98]">🔄 ${o ? 'CAMBIAR OP' : 'ELEGIR OP'}</button></div>` : ''}
+            ${o ? `${puede ? '' : '<div class="text-xs font-bold uppercase tracking-wider text-slate-500">Orden en curso</div>'}<div class="mt-1 flex flex-wrap items-baseline justify-between gap-2"><span class="text-4xl font-black text-white">${esc(o.part)}</span><span class="text-lg text-slate-400">OP ${esc(o.ordNumber)}</span></div>
               <div class="mt-3 h-6 overflow-hidden rounded-full bg-slate-800"><div class="flex h-full items-center justify-end bg-gradient-to-r from-amber-500 to-emerald-400 pr-2 text-xs font-black text-slate-950" style="width:${Math.max(6, a.pct)}%">${a.pct}%</div></div>
               <div class="mt-2 grid grid-cols-3 gap-2 text-center"><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hechas</div><div class="text-2xl font-black text-emerald-300">${n0(a.ok)}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Faltan</div><div class="text-2xl font-black text-white">${n0(Math.max(0, a.t - a.ok))}</div></div><div class="rounded-2xl bg-slate-950/70 p-3"><div class="text-[10px] uppercase text-slate-500">Hoy</div><div class="text-2xl font-black text-amber-300">${n0(h.ok)}${p.q ? `<span class="text-sm text-slate-500"> / ${n0(p.q)}</span>` : ''}</div></div></div>`
             : `<div class="py-4 text-center text-xl text-slate-300">No hay ninguna orden abierta en esta máquina.${p.q ? '<div class="mt-1 text-sm text-amber-300">Hay piezas programadas hoy: avisale al supervisor.</div>' : ''}</div>`}
@@ -221,6 +241,24 @@
           <div class="text-center"><button type="button" id="mmCambiar" class="text-xs text-slate-500 underline">Cambiar de máquina o salir del modo tablet</button></div>
         </div>`;
       }
+      // Elegir qué OP está puesta en la máquina (pantalla grande, para tocar con el dedo)
+      function elegirOp(m) {
+        if (!m || !can('ordenes', 'edit')) return;
+        const actual = opMontada(m), prog = programadoDia(m, hoy()).piezas.map(norm);
+        const tarjeta = (o, otra) => { const a = avance(o), es = actual && actual.id === o.id, p = prog.includes(norm(o.part));
+          return `<button type="button" class="mo-elegir w-full rounded-2xl border-2 p-4 text-left active:scale-[0.99] ${es ? 'border-emerald-400 bg-emerald-500/15' : 'border-slate-700 bg-slate-950/70 hover:border-cyan-400'}" data-m="${esc(m)}" data-o="${esc(o.id)}" ${otra ? 'data-otra="1"' : ''}>
+            <div class="flex flex-wrap items-baseline justify-between gap-2"><span class="text-2xl font-black text-white">${esc(o.part)}</span><span class="text-base font-bold text-slate-300">OP ${esc(o.ordNumber || '—')}</span></div>
+            <div class="mt-1 flex flex-wrap gap-2 text-xs">${es ? '<span class="rounded-lg bg-emerald-500 px-2 py-0.5 font-black text-emerald-950">PUESTA AHORA</span>' : ''}${p ? '<span class="rounded-lg bg-amber-500/20 px-2 py-0.5 font-bold text-amber-200">📅 programada hoy</span>' : ''}${otra ? `<span class="rounded-lg bg-slate-700 px-2 py-0.5 font-bold text-slate-200">en la ${esc(maqDe(o) || o.machine || '?')}</span>` : ''}<span class="text-slate-400">${n0(a.ok)} de ${n0(a.t)} · ${a.pct}%</span></div>
+            <div class="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full bg-emerald-400" style="width:${Math.max(3, a.pct)}%"></div></div></button>`; };
+        const propias = ordenes().filter(o => maqDe(o) === m && esAbierta(o)).sort((a, b) => (prog.includes(norm(b.part)) - prog.includes(norm(a.part))) || String(a.ordNumber || '').localeCompare(String(b.ordNumber || ''), 'es', { numeric: true }));
+        const otras = ordenes().filter(o => maqDe(o) !== m && esAbierta(o)).sort((a, b) => String(a.part).localeCompare(String(b.part)));
+        modalBase(`🔄 ¿Qué OP está puesta en la ${esc(m)}?`, `<div class="space-y-2">
+            ${propias.length ? propias.map(o => tarjeta(o, false)).join('') : '<div class="rounded-2xl border border-slate-700 bg-slate-950/70 p-4 text-center text-slate-300">No hay órdenes abiertas de esta máquina.</div>'}
+            ${otras.length ? `<button type="button" class="mo-mas w-full rounded-xl border border-slate-700 py-3 text-sm font-bold text-slate-300">Ver OP abiertas de otras máquinas (${otras.length})</button><div id="moOtras" class="hidden space-y-2">${otras.map(o => tarjeta(o, true)).join('')}</div>` : ''}
+            ${actual ? `<button type="button" class="mo-elegir w-full rounded-xl border border-rose-500/40 py-3 text-sm font-bold text-rose-200" data-m="${esc(m)}" data-o="">Sacar la OP (la máquina queda sin pieza puesta)</button>` : ''}
+            <p class="text-xs text-slate-400">La OP que elijas queda como "puesta" en la ${esc(m)} para todos: la usan Cargar turno, el Cierre de turno, Hoy y la tele. Si la orden no está, pedile al supervisor que la cree.</p></div>`);
+      }
+      window.inoferElegirOp = elegirOp;
       function botonVolver() {
         let b = $('mmVolver');
         if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'mmVolver'; b.className = 'fixed bottom-4 left-4 z-[60] hidden rounded-2xl border border-amber-500/50 bg-slate-900/95 px-4 py-3 text-sm font-black text-amber-300 shadow-2xl'; document.body.appendChild(b); b.addEventListener('click', () => switchTab('mimaq')); }
@@ -339,6 +377,14 @@
         }
         if (e.target.closest && e.target.closest('#mmCargar')) { const m = miMaq(), o = ordenActual(m); inoferCargaRapida.abrir({ maq: m, ordId: o ? o.id : '' }); }
         if (e.target.closest && e.target.closest('#mmRotura')) avisarRotura(miMaq());
+        if (e.target.closest && e.target.closest('#mmOp')) elegirOp(miMaq());
+        if ((b = e.target.closest && e.target.closest('.mo-elegir'))) {
+          const m = b.dataset.m, id = b.dataset.o;
+          if (b.dataset.otra && !confirm('Esta OP está en otra máquina. ¿Pasarla a la ' + m + '?')) return;
+          const o = ponerOp(m, id); const w = $('inoferPlantaModal'); if (w) w.remove();
+          showToast(o ? `✓ En la ${m} quedó la OP ${o.ordNumber || ''} · ${o.part}` : `La ${m} quedó sin OP puesta`); pintarTodo();
+        }
+        if ((b = e.target.closest && e.target.closest('.mo-mas'))) { const L = $('moOtras'); if (L) L.classList.toggle('hidden'); }
         if (e.target.closest && e.target.closest('#mmCambiar')) elegirMaq();
         if (e.target.closest && e.target.closest('#hoyMiMaq')) elegirMaq();
         if (e.target.closest && e.target.closest('#hoyIrMant')) switchTab('mant');

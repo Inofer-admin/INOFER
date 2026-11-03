@@ -193,6 +193,8 @@
       }
       function ordenSugerida(m, fecha) {
         const L = abiertasDe(m); if (!L.length) return null;
+        const mont = window.inoferOpMontada ? inoferOpMontada(m) : null; // la OP puesta en la máquina (modo tablet)
+        if (mont && String((mont.montada || {}).desde || '').slice(0, 10) <= fecha) return mont;
         const prog = L.find(o => programadoDia(m, fecha, o.part) > 0);
         if (prog) return prog;
         let best = null;

@@ -59,7 +59,7 @@
             const disp = !window.inoferMaquinaDisponible || inoferMaquinaDisponible(m.id, f);
             const par = window.inoferCronoActiva ? inoferCronoActiva(m.id) : null;
             const abiertas = ordenes().filter(o => maqId(o) === m.id && window.inoferCargaRapida && inoferCargaRapida.abierta(o));
-            const o = abiertas[0];
+            const o = (window.inoferOpMontada && inoferOpMontada(m.id)) || abiertas[0];
             let pct = 0; try { const mm = o ? computeOrderMetrics(o) : null; pct = mm ? Math.min(100, Math.round(mm.progressPct || 0)) : 0; } catch (e) { }
             const hecho = ordenes().filter(x => maqId(x) === m.id).reduce((a, x) => a + (x.logs || []).filter(l => l.date === f).reduce((b, l) => b + (Number(l.okPcs) || 0), 0), 0);
             const prog = programado(f, m.id);

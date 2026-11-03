@@ -29,7 +29,7 @@
         recordar(k, nube);
         if (d.versiones) window.__inoferVersiones = Object.assign({}, window.__inoferVersiones || {}, { [k]: d.versiones[k] });
         const actual = local(k);
-        const sinCambiosLocales = JSON.stringify(actual) === JSON.stringify(enviado);
+        const sinCambiosLocales = JSON.stringify(actual) === (enviado && typeof enviado.__txt === 'string' ? enviado.__txt : JSON.stringify(enviado));
         if (sinCambiosLocales && JSON.stringify(nube) !== JSON.stringify(actual)) {
           try { applyCloudModules({ [k]: nube, __parcial: true }); } catch (e) { }
           if (d.fusion && d.fusion.deOtros) { try { showToast('🔄 Se sumaron cambios que hicieron otros equipos al mismo tiempo'); } catch (e) { } }
