@@ -411,7 +411,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin' };
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin' };
 // área 'a|b' = alcanza con tener permiso en cualquiera de las dos
 function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
@@ -422,7 +422,7 @@ function modulosVisibles(u) {
     if (k === 'users') return; // nunca se envía la lista de usuarios por acá
     const area = MODULO_AREA[k];
     if (!area) return;
-    if (k === 'turnos' || k === 'presentacion' || k === 'operarios' || (area === 'admin' ? ((k === 'config' && puede(u, 'ia', 'view')) || u.rol === 'admin') : puedeArea_(u, area, 'view'))) out[k] = all[k];
+    if (k === 'turnos' || k === 'presentacion' || k === 'operarios' || k === 'lotes' || (area === 'admin' ? ((k === 'config' && puede(u, 'ia', 'view')) || u.rol === 'admin') : puedeArea_(u, area, 'view'))) out[k] = all[k];
   });
   return out;
 }

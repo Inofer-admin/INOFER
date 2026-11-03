@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.11.03.10" />
+  <meta name="inofer-version" content="2026.11.03.11" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18654,6 +18654,7 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           { tab: 'tabDashboardBtn', ico: '📊', t: 'Tablero y velocímetros', d: 'Utilización y paradas' },
           { tab: 'tabRecordsBtn', ico: '🕒', t: 'Historial de partes', d: 'Partes de horas cargados', n: () => cuenta('recordCountBadge') },
           { accion: () => window.inoferElegirMiMaquina && inoferElegirMiMaquina(), vis: () => !!sesion() && can('ordenes', 'edit'), ico: '📱', t: 'Modo tablet de máquina', d: 'Fijar este equipo a una inyectora' },
+          { accion: () => window.inoferEtiquetasLote && inoferEtiquetasLote(), vis: () => !!sesion() && can('ordenes', 'view') && !!window.inoferEtiquetasLote, ico: '🏷️', t: 'Etiquetas de lote', d: 'Una por cajón, con QR a la ficha del lote' },
           { accion: () => $('openNewEntryModalBtn') && $('openNewEntryModalBtn').click(), vis: () => !!sesion() && !!$('openNewEntryModalBtn') && can('partes', 'edit') && pk('partes_cargar'), ico: '➕', t: 'Cargar horas', d: 'Parte de horas manual' },
           { accion: () => window.inoferAvisosCelular && inoferAvisosCelular(), vis: () => !!sesion() && !!window.inoferAvisosCelular, ico: '📲', t: 'Avisos al celular', d: 'Roturas, paradas y turnos en tu teléfono' }
         ] },
@@ -21907,6 +21908,195 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
       setInterval(() => { try { envolverGuardar(); envolverDibujo(); aviso(); } catch (e) { } }, 1500);
       window.addEventListener('DOMContentLoaded', () => setTimeout(() => { try { envolverGuardar(); envolverDibujo(); } catch (e) { } }, 200));
       window.inoferRepartir24 = { repartirSemana, excedidas, horasDia, CAP };
+    })();
+  </script>
+  <script>
+    // ===== Etiquetas de lote (trazabilidad): una etiqueta por cajón con QR a una ficha pública (lote.html) =====
+    // Lote = fecha de fabricación + máquina (DDMMAA-MAQ). Cajones = cantidad ÷ piezas por cajón (catálogo: embalaje).
+    // El QR lleva los datos dentro del link (#d=…): la ficha no consulta la nube ni pide ingreso.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const pad = n => String(n).padStart(2, '0');
+      const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+      const fmtF = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || ''); };
+      const norm = s => (window.inoferNormTxt ? inoferNormTxt(s) : String(s || '').toLowerCase().trim());
+      const BASE = () => (/github\.io$/.test(location.hostname) ? location.origin + location.pathname.replace(/index\.html$/, '').replace(/[^/]*$/, '') : 'https://inofer-admin.github.io/INOFER/inofer/');
+      // ---------- mail de contacto (módulo de nube "lotes", lo edita el admin) ----------
+      const KEY = 'tablero_inyectoras_lotes_v1';
+      let cfg = { mail: '' }; try { cfg = Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { }
+      function guardarCfg(subir) { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { } if (subir) { try { pushCloudModuleState('lotes', cfg); } catch (e) { } } }
+      if (typeof window.applyCloudModules === 'function') {
+        const _am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const r = _am.apply(this, arguments);
+          try { if (mods && mods.lotes && typeof mods.lotes === 'object' && JSON.stringify(mods.lotes) !== JSON.stringify(cfg)) { cfg = Object.assign({ mail: '' }, mods.lotes); guardarCfg(false); } } catch (e) { }
+          return r;
+        };
+      }
+      const esAdmin = () => typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol === 'admin';
+      // ---------- datos ----------
+      const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden ? inoferCargaRapida.maqDeOrden(o) : '') || String(o.machine || '');
+      const catDe = p => (window.inoferCatBuscar ? inoferCatBuscar(String(p || '').trim()) : (typeof partsCatalog !== 'undefined' ? partsCatalog.find(c => norm(c.part) === norm(p)) : null)) || null;
+      const codigoLote = (fecha, m) => { const x = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(fecha || '')); return (x ? x[3] + x[2] + x[1].slice(2) : String(fecha || '')) + '-' + String(m || '').toUpperCase(); };
+      // último fardo que se retiró a esa máquina hasta la fecha (del material de la pieza)
+      function fardoDe(mat, m, fecha) {
+        const st = (window.inoferModLocal && inoferModLocal('stock')) || {}; const M = st.materiales || {};
+        const k = Object.keys(M).find(x => norm(x) === norm(mat)); if (!k) return null;
+        const L = (M[k].fardos || []).filter(f => f.retiro && norm(f.retiro.maquina) === norm(m) && String(f.retiro.fecha || '').slice(0, 10) <= fecha);
+        L.sort((a, b) => String(b.retiro.fecha || '').localeCompare(String(a.retiro.fecha || '')) || (b.numero || 0) - (a.numero || 0));
+        return L[0] || null;
+      }
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []).filter(o => o && o.part);
+      function datosBase(o, log, fecha) {
+        const m = maqDe(o), c = catDe(o.part) || {}, mat = o.material || c.material || '';
+        const f = fardoDe(mat, m, fecha);
+        return { pz: o.part, ds: c.desc || '', lt: codigoLote(fecha, m), f: fmtF(fecha), tu: (log && log.turno) || '', mq: m, op: o.ordNumber || '', opr: (log && log.operator) || '', mo: o.mold || c.mold || '', al: String(mat).toUpperCase(), an: f ? (f.analisis || '') : '', fa: f ? ('N° ' + (f.numero || '?') + (f.origen === 'recuperado' ? ' · recuperado ' + (f.grado || '') + '°' : ' · nuevo')) : '', ml: cfg.mail || '' };
+      }
+      const b64 = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      function linkFicha(d, tipo) {
+        const x = tipo === 'c' ? { t: 'c', pz: d.pz, ds: d.ds, lt: d.lt, f: d.f, q: d.q, cj: d.cj, ncj: d.ncj, al: d.al, ml: d.ml } : Object.assign({ t: 'p' }, d);
+        Object.keys(x).forEach(k => { if (x[k] === '' || x[k] == null) delete x[k]; });
+        return BASE() + 'lote.html#d=' + b64(JSON.stringify(x));
+      }
+      function svgQr(txt) {
+        const q = window.inoferQR(txt, 'M'), n = q.getModuleCount(), m = 2; let p = '';
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) p += 'M' + (c + m) + ' ' + (r + m) + 'h1v1h-1z';
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 2 * m} ${n + 2 * m}" width="100%" height="100%" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${p}" fill="#000"/></svg>`;
+      }
+      function cajones(total, porCajon) {
+        total = Math.max(0, Math.round(Number(total) || 0)); porCajon = Math.max(0, Math.round(Number(porCajon) || 0));
+        if (!total) return [];
+        if (!porCajon || porCajon >= total) return [total];
+        const n = Math.ceil(total / porCajon), out = []; for (let i = 0; i < n; i++) out.push(i < n - 1 ? porCajon : total - porCajon * (n - 1));
+        return out;
+      }
+      function etiquetas(st) {
+        const o = ordenes().find(x => x.id === st.ordId); if (!o) return [];
+        const log = (o.logs || []).find(l => l.id === st.logId) || null;
+        const fecha = (log && log.date) || st.fecha || hoy();
+        const base = datosBase(o, log, fecha); if (st.turno && !log) base.tu = st.turno;
+        const L = cajones(st.total, st.porCajon);
+        return L.map((q, i) => { const d = Object.assign({}, base, { q, cj: i + 1, ncj: L.length }); return Object.assign(d, { url: linkFicha(d, st.tipo) }); });
+      }
+      // ---------- hoja para imprimir ----------
+      const CSS = `@page{size:A4;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;color:#0f172a}
+        .hoja{display:grid;grid-template-columns:100mm 100mm;grid-auto-rows:70mm;gap:0 2mm;justify-content:center}
+        .et{width:100mm;height:70mm;border:0.4mm solid #0f172a;border-radius:2mm;overflow:hidden;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
+        .cab{display:flex;justify-content:space-between;align-items:center;background:#0f172a;color:#fff;padding:2mm 3.5mm}.cab b{font-size:4.2mm;letter-spacing:.6mm}.cab span{font-size:2.4mm;color:#fcd34d;font-weight:700}
+        .cu{flex:1;display:flex;gap:3mm;padding:3mm 3.5mm}.iz{flex:1;min-width:0;display:flex;flex-direction:column;gap:1.8mm}
+        .l{font-size:2.1mm;font-weight:700;color:#475569}.pz{font-size:7.5mm;font-weight:900;line-height:1}.ds{font-size:2.7mm;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .lt{border:0.4mm dashed #0f172a;border-radius:1.5mm;padding:1mm 2mm}.lt b{display:block;font-family:Consolas,monospace;font-size:4.6mm}
+        .g{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2mm}.g b{display:block;font-size:3.3mm}
+        .qr{width:33mm;display:flex;flex-direction:column;align-items:center;gap:1mm}.qr div{width:33mm;height:33mm}.qr small{font-size:2.1mm;text-align:center;color:#334155}
+        body.una .hoja{display:block}body.una .et{border:none;border-radius:0}`;
+      function htmlEtiqueta(d) {
+        return `<div class="et"><div class="cab"><b>INOFER</b><span>LOTE DE PRODUCCIÓN</span></div><div class="cu"><div class="iz">
+          <div><div class="l">PIEZA</div><div class="pz">${esc(d.pz)}</div><div class="ds">${esc(d.ds)}</div></div>
+          <div class="lt"><span class="l">N° DE LOTE</span><b>${esc(d.lt)}</b></div>
+          <div class="g"><div><span class="l">FECHA</span><b>${esc(d.f)}</b></div><div><span class="l">TURNO</span><b>${esc(d.tu || '—')}</b></div><div><span class="l">CANTIDAD</span><b>${(Number(d.q) || 0).toLocaleString('es-AR')} u</b></div>
+          <div><span class="l">MÁQUINA</span><b>${esc(d.mq)}</b></div><div><span class="l">OP</span><b>${esc(d.op || '—')}</b></div><div><span class="l">CAJÓN</span><b>${d.cj} de ${d.ncj}</b></div></div></div>
+          <div class="qr"><div>${svgQr(d.url)}</div><small>Escaneá con la cámara para ver los datos del lote</small></div></div></div>`;
+      }
+      function htmlHoja(L, formato) {
+        return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Etiquetas ${esc(L[0] ? L[0].lt : '')}</title><style>${CSS}${formato === 'una' ? '@page{size:100mm 70mm;margin:0}' : ''}</style></head><body class="${formato === 'una' ? 'una' : ''}"><div class="hoja">${L.map(htmlEtiqueta).join('')}</div></body></html>`;
+      }
+      function imprimir(html) {
+        let f = $('inoferLoteFrame'); if (f) f.remove();
+        f = document.createElement('iframe'); f.id = 'inoferLoteFrame'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(f);
+        f.contentDocument.open(); f.contentDocument.write(html); f.contentDocument.close();
+        setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('No se pudo abrir la impresión'); } }, 300);
+      }
+      // ---------- ventana ----------
+      let st = null;
+      function abrir(opc) {
+        opc = opc || {};
+        const L = ordenes().slice().sort((a, b) => { const u = o => (o.logs || []).reduce((m, l) => (String(l.date || '') > m ? String(l.date) : m), ''); return u(b).localeCompare(u(a)); });
+        const o = (opc.ordId && L.find(x => x.id === opc.ordId)) || L[0];
+        st = { ordId: o ? o.id : '', logId: '', fecha: hoy(), turno: '', total: 0, porCajon: 0, tipo: 'p', formato: 'a4', buscar: '' };
+        elegirOrden(st.ordId, opc.logId); pintar();
+      }
+      function elegirOrden(id, logId) {
+        st.ordId = id; const o = ordenes().find(x => x.id === id); if (!o) return;
+        const logs = (o.logs || []).slice().sort((a, b) => (String(b.date || '') + (b.startTime || '')).localeCompare(String(a.date || '') + (a.startTime || '')));
+        const l = (logId && logs.find(x => x.id === logId)) || logs[0] || null;
+        st.logId = l ? l.id : ''; st.total = l ? (Number(l.okPcs) || 0) : 0; if (l) st.fecha = l.date || st.fecha;
+        const c = catDe(o.part) || {}; st.porCajon = Number(c.embalaje) || 0;
+      }
+      function pintar() {
+        let w = $('inoferLotes');
+        if (!w) {
+          w = document.createElement('div'); w.id = 'inoferLotes'; w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+          document.body.appendChild(w);
+          w.addEventListener('click', clic); w.addEventListener('change', cambio); w.addEventListener('input', escribir);
+          w.addEventListener('click', e => { if (e.target === w) cerrar(); });
+        }
+        const L = ordenes(), q = norm(st.buscar);
+        const vis = L.filter(o => !q || norm(o.part).includes(q) || norm(o.ordNumber).includes(q)).slice(0, 60);
+        const o = L.find(x => x.id === st.ordId);
+        const logs = o ? (o.logs || []).slice().sort((a, b) => (String(b.date || '') + (b.startTime || '')).localeCompare(String(a.date || '') + (a.startTime || ''))) : [];
+        const ets = etiquetas(st), c = o ? (catDe(o.part) || {}) : {};
+        const inp = 'w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-white';
+        const chip = (on) => `rounded-xl border px-3 py-2 text-sm font-bold ${on ? 'border-amber-400 bg-amber-500 text-stone-900' : 'border-slate-700 bg-slate-900 text-slate-200'}`;
+        w.innerHTML = `<div class="w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 text-slate-100 shadow-2xl">
+          <div class="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-5 py-4"><div><div class="text-[11px] font-bold tracking-wider text-slate-400">TRAZABILIDAD</div><div class="text-lg font-black text-white">🏷️ Etiquetas de lote</div></div><button type="button" data-a="cerrar" class="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div>
+          <div class="grid gap-5 p-5 lg:grid-cols-2">
+            <div class="space-y-3">
+              <label class="block text-xs font-bold text-slate-300">1. Orden de producción
+                <input data-k="buscar" value="${esc(st.buscar)}" placeholder="Buscar por pieza o N° de OP" class="${inp} mt-1">
+                <select data-k="ordId" class="${inp} mt-1.5">${vis.map(x => `<option value="${esc(x.id)}" ${x.id === st.ordId ? 'selected' : ''}>${esc(x.part)} · OP ${esc(x.ordNumber || '—')} · ${esc(maqDe(x))} · ${esc(x.status || '')}</option>`).join('')}${o && !vis.includes(o) ? `<option value="${esc(o.id)}" selected>${esc(o.part)} · OP ${esc(o.ordNumber || '—')}</option>` : ''}</select></label>
+              <label class="block text-xs font-bold text-slate-300">2. Turno que se embala
+                <select data-k="logId" class="${inp} mt-1"><option value="">— sin turno cargado (elegir fecha) —</option>${logs.slice(0, 40).map(l => `<option value="${esc(l.id)}" ${l.id === st.logId ? 'selected' : ''}>${esc(fmtF(l.date))} · ${esc(l.turno || l.startTime || '')} · ${esc(l.operator || '')} · ${(Number(l.okPcs) || 0).toLocaleString('es-AR')} buenas</option>`).join('')}</select></label>
+              ${st.logId ? '' : `<div class="grid grid-cols-2 gap-2"><label class="text-xs font-bold text-slate-300">Fecha<input type="date" data-k="fecha" value="${esc(st.fecha)}" class="${inp} mt-1"></label><label class="text-xs font-bold text-slate-300">Turno<input data-k="turno" value="${esc(st.turno)}" placeholder="Mañana" class="${inp} mt-1"></label></div>`}
+              <div class="grid grid-cols-2 gap-2">
+                <label class="text-xs font-bold text-slate-300">3. Cantidad a embalar<input type="number" min="0" data-k="total" value="${st.total || ''}" class="${inp} mt-1"></label>
+                <label class="text-xs font-bold text-slate-300">Piezas por cajón<input type="number" min="0" data-k="porCajon" value="${st.porCajon || ''}" placeholder="embalaje" class="${inp} mt-1"><span class="mt-0.5 block text-[10px] font-normal text-slate-400">${Number(c.embalaje) ? 'de la base de datos' : 'se guarda en la pieza al imprimir'}</span></label>
+              </div>
+              <div class="space-y-1.5"><div class="text-xs font-bold text-slate-300">4. Qué muestra el QR</div><div class="flex flex-wrap gap-2"><button type="button" data-tipo="p" aria-pressed="${st.tipo === 'p'}" class="${chip(st.tipo === 'p')}">Ficha completa (planta)</button><button type="button" data-tipo="c" aria-pressed="${st.tipo === 'c'}" class="${chip(st.tipo === 'c')}">Ficha para cliente</button></div>
+                <p class="text-[11px] text-slate-400">${st.tipo === 'c' ? 'Pieza, lote, fecha, cantidad, cajón, material y mail. Sin operario ni análisis.' : 'Todo: turno, operario, OP, molde, aleación, N° de análisis y fardo.'} Cualquiera que escanee la caja lo ve.</p></div>
+              <div class="space-y-1.5"><div class="text-xs font-bold text-slate-300">5. Impresora</div><div class="flex flex-wrap gap-2"><button type="button" data-fmt="a4" aria-pressed="${st.formato === 'a4'}" class="${chip(st.formato === 'a4')}">Hoja A4 (8 por hoja)</button><button type="button" data-fmt="una" aria-pressed="${st.formato === 'una'}" class="${chip(st.formato === 'una')}">Etiquetadora 10 × 7 cm</button></div></div>
+              ${esAdmin() ? `<label class="block text-xs font-bold text-slate-300">✉️ Mail de contacto en la ficha (solo admin)<input type="email" data-k="mail" value="${esc(cfg.mail)}" placeholder="calidad@…" class="${inp} mt-1"></label>` : ''}
+            </div>
+            <div class="space-y-3">
+              <div class="flex items-baseline justify-between"><span class="text-sm font-black text-white">Vista previa</span><span class="text-xs text-slate-400">${ets.length ? `${ets.length} ${ets.length === 1 ? 'cajón' : 'cajones'} → ${ets.length} etiqueta${ets.length === 1 ? '' : 's'}` : 'Cargá la cantidad'}</span></div>
+              ${ets[0] ? `<iframe title="Vista previa de la etiqueta" class="w-full rounded-xl bg-white" style="height:300px;border:0" srcdoc="${esc(htmlHoja([ets[0]], 'a4').replace('@page{size:A4;margin:8mm}', '').replace('<body class="">', '<body style="padding:6px;zoom:1.15">'))}"></iframe>` : '<div class="rounded-xl border border-dashed border-slate-700 p-6 text-center text-sm text-slate-400">Elegí la orden y la cantidad.</div>'}
+              ${ets.length > 1 ? `<div class="text-xs text-slate-300">Cajones: ${ets.map(e => (e.q).toLocaleString('es-AR')).join(' · ')} u</div>` : ''}
+              ${ets[0] ? `<div class="flex flex-wrap gap-2"><button type="button" data-a="imprimir" class="min-h-[44px] flex-1 rounded-xl bg-emerald-500 px-5 text-sm font-black text-emerald-950">🖨️ Imprimir ${ets.length} etiqueta${ets.length === 1 ? '' : 's'}</button><a href="${esc(ets[0].url)}" target="_blank" rel="noopener" class="flex min-h-[44px] items-center rounded-xl border border-slate-600 px-4 text-sm font-bold text-slate-200">Ver la ficha</a></div>` : ''}
+            </div>
+          </div></div>`;
+      }
+      const cerrar = () => { const w = $('inoferLotes'); if (w) w.remove(); st = null; };
+      function clic(e) {
+        const b = e.target.closest('button'); if (!b) return;
+        if (b.dataset.tipo) { st.tipo = b.dataset.tipo; return pintar(); }
+        if (b.dataset.fmt) { st.formato = b.dataset.fmt; return pintar(); }
+        if (b.dataset.a === 'cerrar') return cerrar();
+        if (b.dataset.a === 'imprimir') {
+          const ets = etiquetas(st); if (!ets.length) return;
+          const o = ordenes().find(x => x.id === st.ordId), c = o && catDe(o.part);
+          if (c && Number(st.porCajon) > 0 && Number(c.embalaje) !== Number(st.porCajon) && (typeof inoferCan !== 'function' || inoferCan('catalogo', 'edit'))) {
+            c.embalaje = Number(st.porCajon); try { savePartsCatalog(); } catch (er) { }
+          }
+          imprimir(htmlHoja(ets, st.formato));
+        }
+      }
+      function cambio(e) {
+        const k = e.target.dataset && e.target.dataset.k; if (!k) return;
+        if (k === 'ordId') { elegirOrden(e.target.value); return pintar(); }
+        if (k === 'logId') { const o = ordenes().find(x => x.id === st.ordId); const l = o && (o.logs || []).find(x => x.id === e.target.value); st.logId = e.target.value; if (l) { st.total = Number(l.okPcs) || 0; st.fecha = l.date || st.fecha; } return pintar(); }
+        if (k === 'mail') { cfg.mail = String(e.target.value || '').trim(); guardarCfg(true); toast('✉️ Mail guardado para todas las fichas'); return pintar(); }
+        if (k === 'buscar') return;
+        st[k] = (k === 'total' || k === 'porCajon') ? Number(e.target.value) || 0 : e.target.value; pintar();
+      }
+      function escribir(e) {
+        if (e.target.dataset && e.target.dataset.k === 'buscar') {
+          st.buscar = e.target.value; const pos = e.target.selectionStart; pintar();
+          const n = document.querySelector('#inoferLotes [data-k="buscar"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (er) { } }
+        }
+      }
+      window.inoferEtiquetasLote = abrir;
+      window.inoferLotes = { codigoLote, cajones, etiquetas: s => etiquetas(s), linkFicha, htmlHoja, cfg: () => cfg, estado: () => st };
     })();
   </script>
 </body>

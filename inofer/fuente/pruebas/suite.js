@@ -798,6 +798,39 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.h[1] <= 24.01 && r.h[1] > 23 && Math.abs(r.h[2] - 6) < 0.01, 'lo escrito (3000 = 30 h el lunes) no quedó lunes 24 h + martes 6 h: ' + JSON.stringify(r));
       ok(Math.max(...r.h2) <= 24.01 && r.total === 5000 && r.q[2] > 0 && r.q[3] > 0, 'reparto en días siguientes: ' + JSON.stringify(r));
     });
+    await prueba('Etiquetas de lote: lote fecha-máquina, una por cajón y QR a la ficha sin ingreso', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const cat = partsCatalog.find(c => !/-R$/.test(c.part)); const embAntes = cat.embalaje;
+        productionOrders.push({ id: 'ord-lote', ordNumber: '8801', part: cat.part, machine: nom('200V'), status: 'En Proceso', qtyTarget: 5000, material: 'ALSI', logs: [{ id: 'lg-lote', date: '2026-11-03', turno: 'Mañana', operator: 'Pedro', okPcs: 1000, startTime: '06:00', endTime: '14:00' }] });
+        inoferEtiquetasLote({ ordId: 'ord-lote' }); await esperar(100);
+        const w = document.getElementById('inoferLotes'); if (!w) return { sinVentana: true };
+        const pc = w.querySelector('[data-k="porCajon"]'); pc.value = '300'; pc.dispatchEvent(new Event('change', { bubbles: true })); await esperar(50);
+        const ets = inoferLotes.etiquetas(inoferLotes.estado());
+        const txt = document.getElementById('inoferLotes').textContent;
+        document.querySelector('#inoferLotes [data-tipo="c"]').click(); await esperar(50);
+        const etsC = inoferLotes.etiquetas(inoferLotes.estado());
+        const dec = u => JSON.parse(decodeURIComponent(escape(atob(u.split('#d=')[1].replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((u.split('#d=')[1].length + 3) % 4)))));
+        const dP = dec(ets[0].url), dC = dec(etsC[0].url);
+        const hoja = inoferLotes.htmlHoja(ets, 'a4');
+        const menu = typeof GRUPOS === 'undefined';
+        document.querySelector('#inoferLotes [data-a="cerrar"]').click();
+        productionOrders = productionOrders.filter(o => o.id !== 'ord-lote'); cat.embalaje = embAntes;
+        return { n: ets.length, qs: ets.map(e => e.q), lt: ets[0].lt, cj: ets[3] && ets[3].cj + '/' + ets[3].ncj, url: ets[0].url, dP, dC, txt: /4 cajones/.test(txt), svgs: (hoja.match(/<svg/g) || []).length };
+      });
+      ok(!r.sinVentana, 'no se abrió la ventana');
+      ok(r.n === 4 && r.qs.join(',') === '300,300,300,100' && r.cj === '4/4' && r.txt, 'cajones: ' + JSON.stringify(r));
+      ok(r.lt === '031126-200V' && /lote\.html#d=/.test(r.url) && r.dP.opr === 'Pedro' && r.dP.op === '8801' && r.dP.tu === 'Mañana', 'lote y ficha completa: ' + JSON.stringify(r));
+      ok(r.dC.t === 'c' && !r.dC.opr && !r.dC.an && r.dC.lt === '031126-200V' && r.dC.q === 300, 'ficha cliente sin datos internos: ' + JSON.stringify(r.dC));
+      ok(r.svgs === 4, 'QR en cada etiqueta: ' + r.svgs);
+      // la ficha pública abre sola, sin ingresar
+      const p = await A.context().newPage();
+      await p.goto('file://' + path.join(FUENTE, 'tienda', 'lote.html') + '#d=' + r.url.split('#d=')[1]);
+      const ficha = await p.evaluate(() => document.body.innerText);
+      await p.close();
+      ok(/031126-200V/.test(ficha) && /Pedro/.test(ficha) && /8801/.test(ficha), 'ficha pública: ' + ficha.slice(0, 200));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

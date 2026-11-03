@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>INOFER · Lote</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f1f5f9; color: #0f172a; font: 15px/1.4 Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+  .mono { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; }
+  .lbl { font-size: 11px; font-weight: 600; color: #475569; letter-spacing: .3px; }
+  .val { font-size: 17px; font-weight: 800; }
+  .card { background: #fff; border-radius: 14px; padding: 14px 16px; }
+  .fila { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 14px; }
+  .fila span { color: #475569; } .fila b { text-align: right; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  h2 { margin: 0 0 6px; font-size: 13px; color: #334155; }
+  /* ficha para cliente */
+  .cli { background: #f8fafc; }
+  .cli .tile { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
+</style>
+</head>
+<body>
+<main id="app"><p style="padding:24px">Cargando…</p></main>
+<script>
+  (function () {
+    var app = document.getElementById('app');
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function leer() {
+      var h = location.hash.replace(/^#/, ''); var m = /(?:^|&)d=([^&]+)/.exec(h); if (!m) return null;
+      try { var b = m[1].replace(/-/g, '+').replace(/_/g, '/'); while (b.length % 4) b += '='; return JSON.parse(decodeURIComponent(escape(atob(b)))); } catch (e) { return null; }
+    }
+    var d = leer();
+    if (!d) { app.innerHTML = '<div style="padding:32px 20px"><h1 style="font-size:22px">INOFER</h1><p>Este código no tiene datos de lote o no se pudo leer. Escanealo de nuevo.</p></div>'; return; }
+    var n = function (x) { return (Number(x) || 0).toLocaleString('es-AR'); };
+    var caja = d.cj ? (d.cj + (d.ncj ? ' de ' + d.ncj : '')) : '';
+    var fila = function (t, v) { return v ? '<div class="fila"><span>' + t + '</span><b>' + esc(v) + '</b></div>' : ''; };
+    document.title = 'INOFER · Lote ' + (d.lt || '');
+    if (d.t === 'c') {
+      document.body.className = 'cli';
+      app.innerHTML =
+        '<div style="padding:24px 22px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e8f0;background:#fff"><span style="font-size:20px;font-weight:900;letter-spacing:2px">INOFER</span><span class="lbl" style="font-size:12px">Identificación de lote</span></div>' +
+        '<div style="padding:22px;display:flex;flex-direction:column;gap:18px;flex-grow:1">' +
+        '<div><div class="lbl">PIEZA</div><div style="font-size:38px;font-weight:900;line-height:1.05">' + esc(d.pz) + '</div><div style="color:#334155">' + esc(d.ds || '') + '</div></div>' +
+        '<div style="border-radius:16px;background:#0f172a;color:#fff;padding:18px"><div class="lbl" style="color:#cbd5e1">N° DE LOTE</div><div class="mono" style="font-size:24px;font-weight:800;color:#fde68a">' + esc(d.lt) + '</div></div>' +
+        '<div class="grid2">' +
+        '<div class="tile"><div class="lbl">FECHA DE FABRICACIÓN</div><div class="val">' + esc(d.f) + '</div></div>' +
+        '<div class="tile"><div class="lbl">CANTIDAD</div><div class="val">' + n(d.q) + ' u</div></div>' +
+        (caja ? '<div class="tile"><div class="lbl">CAJÓN</div><div class="val">' + esc(caja) + '</div></div>' : '') +
+        (d.al ? '<div class="tile"><div class="lbl">MATERIAL</div><div class="val">' + esc(d.al) + '</div></div>' : '') +
+        '</div>' +
+        '<div class="tile" style="font-size:14px;color:#334155"><div style="font-weight:800;color:#0f172a;margin-bottom:4px">¿Algún problema con esta pieza?</div>Comunicate con INOFER indicando el N° de lote.' + (d.ml ? '<div style="margin-top:6px"><a href="mailto:' + esc(d.ml) + '?subject=' + encodeURIComponent('Lote ' + (d.lt || '') + ' · ' + (d.pz || '')) + '" style="color:#b45309;font-weight:700">' + esc(d.ml) + '</a></div>' : '') + '</div>' +
+        '</div><div style="padding:16px 22px 24px;font-size:12px;color:#475569;text-align:center">Fabricado por INOFER</div>';
+      return;
+    }
+    var app0 = location.href.replace(/lote\.html.*$/, 'index.html');
+    app.innerHTML =
+      '<div style="padding:22px 20px 26px;background:#0f172a;color:#fff;display:flex;flex-direction:column;gap:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:18px;font-weight:900;letter-spacing:2px">INOFER</span><span style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;background:#fcd34d;color:#422006">FICHA DE LOTE</span></div>' +
+      '<span style="font-size:12px;color:#cbd5e1">Pieza</span><span style="font-size:34px;font-weight:900;line-height:1.05">' + esc(d.pz) + '</span><span style="color:#e2e8f0">' + esc(d.ds || '') + '</span>' +
+      '<span class="mono" style="align-self:flex-start;margin-top:4px;font-size:15px;font-weight:800;padding:6px 10px;border:1px dashed #fcd34d;border-radius:6px;color:#fde68a">' + esc(d.lt) + '</span></div>' +
+      '<div style="padding:16px;display:flex;flex-direction:column;gap:12px;flex-grow:1">' +
+      '<div class="card grid2">' +
+      '<div><div class="lbl">FECHA</div><div class="val">' + esc(d.f) + '</div></div>' +
+      '<div><div class="lbl">TURNO</div><div class="val">' + esc(d.tu || '—') + '</div></div>' +
+      '<div><div class="lbl">CANTIDAD EN EL CAJÓN</div><div class="val">' + n(d.q) + ' u</div></div>' +
+      '<div><div class="lbl">CAJÓN</div><div class="val">' + esc(caja || '—') + '</div></div></div>' +
+      '<div class="card"><h2>Producción</h2>' + fila('Máquina', d.mq) + fila('Orden de producción', d.op) + fila('Operario', d.opr) + fila('Molde / versión', d.mo) + '</div>' +
+      ((d.al || d.an || d.fa) ? '<div class="card"><h2>Material</h2>' + fila('Aleación', d.al) + fila('N° de análisis', d.an) + fila('Fardo', d.fa) + '</div>' : '') +
+      '<p style="font-size:12px;color:#475569;text-align:center;margin:4px 0">Datos del momento en que se imprimió la etiqueta.</p>' +
+      (d.ml ? '<p style="font-size:13px;text-align:center;margin:0"><a href="mailto:' + esc(d.ml) + '" style="color:#b45309">' + esc(d.ml) + '</a></p>' : '') +
+      '</div><div style="padding:14px 16px 22px"><a href="' + esc(app0) + '" style="min-height:48px;border-radius:12px;background:#0f172a;color:#fff;font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;text-decoration:none">Abrir INOFER (pide ingresar)</a></div>';
+  })();
+</script>
+</body>
+</html>

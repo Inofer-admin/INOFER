@@ -1,6 +1,6 @@
 // INOFER MES — Service Worker: permite abrir la app sin internet.
 // Los datos de la nube (Apps Script / Gemini) nunca se guardan en caché.
-const CACHE = 'inofer-v9';
+const CACHE = 'inofer-v10';
 const CACHE_PUSH = 'inofer-push'; // dónde pedir los avisos de este equipo (lo guarda la página)
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
@@ -28,6 +28,12 @@ self.addEventListener('fetch', e => {
   // Solo se cachea la propia app y las librerías conocidas; todo lo demás va directo a internet
   if (url.origin !== self.location.origin && !LIBS.includes(req.url) && !/fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) return;
   if (/script\.google|googleusercontent|generativelanguage/.test(url.hostname)) return; // datos en vivo
+  // Otras páginas propias (ficha de lote, privacidad): red primero y se guardan con su propio nombre
+  if (req.mode === 'navigate' && /\.html$/.test(url.pathname) && !url.pathname.endsWith('index.html')) {
+    e.respondWith(fetch(url.pathname, { cache: 'no-cache' }).then(r => { if (r.ok) { const cp = r.clone(); caches.open(CACHE).then(c => c.put(url.pathname, cp)); } return r; })
+      .catch(() => caches.match(url.pathname)));
+    return;
+  }
   const isPage = req.mode === 'navigate' || url.pathname.endsWith('index.html');
   if (isPage) {
     // Red primero (para recibir actualizaciones), caché si no hay internet
