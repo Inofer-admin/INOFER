@@ -19,7 +19,8 @@
       function codigoSemana(lun) {
         lun = lunesDe(lun); const num = numIso(lun), dom = domingoDe(lun);
         const W = semanas();
-        const ya = Object.keys(W).find(c => W[c] && W[c].startDate && domingoDe(W[c].startDate) === dom);
+        const mismas = Object.keys(W).filter(c => W[c] && W[c].startDate && domingoDe(W[c].startDate) === dom);
+        const ya = mismas.includes('SEM-' + num) ? 'SEM-' + num : mismas[0]; // si hay dos semanas con las mismas fechas, la que tiene el número correcto
         let code = ya || 'SEM-' + num;
         if (!ya && W[code] && W[code].startDate && domingoDe(W[code].startDate) !== dom) code = 'SEM-' + num + '-' + String(desdeIso(lun).getFullYear()).slice(2);
         return { code, num, rango: rango(lun), lunes: lun, existe: !!ya };

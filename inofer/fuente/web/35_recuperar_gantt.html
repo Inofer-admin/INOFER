@@ -1,0 +1,91 @@
+  <script>
+    // ===== Recuperar el Gantt: volver semanas a como estaban (copia antes del armado automático o copia diaria de Drive) =====
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const enNube = () => typeof cloudApiUrl !== 'undefined' && !!cloudApiUrl && !!sesion() && sesion().modo === 'nube';
+      const api = async body => { const d = await inoferCloudPost(Object.assign({ token: inoferAuthToken() }, body)); if (!d || d.status === 'error') throw new Error((d && d.error) || 'Sin respuesta de la nube'); return d; };
+      const CLAVE = 'tablero_inyectoras_gantt_antes_v1';
+      const copia = o => JSON.parse(JSON.stringify(o || {}));
+      const fFecha = iso => iso ? String(iso).slice(8, 10) + '/' + String(iso).slice(5, 7) : '—';
+      const fHora = iso => { try { const d = new Date(iso); return fFecha(d.toISOString().slice(0, 10)) + ' ' + d.toTimeString().slice(0, 5); } catch (e) { return ''; } };
+      function guardarAntes(motivo) {
+        try { localStorage.setItem(CLAVE, JSON.stringify({ at: new Date().toISOString(), motivo, semanas: copia(typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {}) })); } catch (e) { }
+      }
+      window.inoferGanttGuardarAntes = guardarAntes;
+      // antes de cada armado automático se guarda una copia en este equipo (para poder deshacerlo)
+      function envolver() {
+        if (typeof window.scheduleOneMonthIntoGanttWeeks === 'function' && !window.scheduleOneMonthIntoGanttWeeks.__antes) {
+          const f0 = window.scheduleOneMonthIntoGanttWeeks; let ult = 0;
+          const f = function () { if (Date.now() - ult > 5000) guardarAntes('Antes del armado automático'); ult = Date.now(); return f0.apply(this, arguments); };
+          f.__antes = true; window.scheduleOneMonthIntoGanttWeeks = f;
+        }
+      }
+      envolver(); setTimeout(envolver, 1500);
+      function resumen(w) {
+        if (!w || !w.machines) return { piezas: 0, h: 0, txt: 'vacía' };
+        let h = 0, piezas = 0;
+        Object.values(w.machines).forEach(md => {
+          ((md && md.items) || []).forEach(it => { if (it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (!q) return; piezas++; const u = Number(it.stdRate) || 0; if (u) h += q / u; });
+          Object.values((md && md.aux) || {}).forEach(a => (a || []).forEach(x => { h += Number(x) || 0; }));
+        });
+        return { piezas, h: Math.round(h), txt: piezas ? `${piezas} pza${piezas === 1 ? '' : 's'} · ≈${Math.round(h)} h` : 'vacía' };
+      }
+      const firma = w => { try { return JSON.stringify((w || {}).machines || {}); } catch (e) { return ''; } };
+      function ventana(titulo) {
+        const v = $('inoferRecGantt'); if (v) v.remove();
+        const w = document.createElement('div'); w.id = 'inoferRecGantt';
+        w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full max-w-4xl space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl"><div class="flex items-center justify-between gap-2"><h3 class="text-base font-black text-white">${titulo}</h3><button type="button" class="rg-x rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div><div class="rg-cuerpo space-y-3 text-sm text-slate-300">Cargando…</div></div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => { if (e.target === w || e.target.closest('.rg-x')) w.remove(); });
+        return w;
+      }
+      async function abrir() {
+        if (!esAdmin()) { toast('Solo el administrador puede recuperar el Gantt'); return; }
+        const w = ventana('♻️ Recuperar el Gantt como estaba'); const cuerpo = w.querySelector('.rg-cuerpo');
+        const fuentes = [];
+        try { const a = JSON.parse(localStorage.getItem(CLAVE) || 'null'); if (a && a.semanas) fuentes.push({ tipo: 'local', id: 'local', titulo: `${a.motivo || 'Copia en este equipo'} · ${fHora(a.at)}`, sub: 'Guardada en este equipo', semanas: a.semanas }); } catch (e) { }
+        let error = '';
+        if (enNube()) { try { (await api({ action: 'ganttCopias' })).copias.forEach(c => fuentes.push({ tipo: 'nube', id: c.id, titulo: `Copia diaria de Drive · ${fHora(c.fecha)}`, sub: c.nombre })); } catch (e) { error = e.message; } }
+        if (!fuentes.length) { cuerpo.innerHTML = `<p>No hay copias para recuperar.${error ? ' ' + esc(error) : ''} La copia diaria se activa en 🧾 Cambios → 💾 Almacenamiento.</p>`; return; }
+        cuerpo.innerHTML = `<p class="text-[13px] text-slate-400">1. Elegí de qué momento querés recuperar el Gantt:</p><div class="grid gap-2 sm:grid-cols-2">${fuentes.slice(0, 12).map((f, i) => `<button type="button" data-f="${i}" class="rg-f rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-left hover:border-cyan-400"><div class="font-bold text-white">${esc(f.titulo)}</div><div class="text-[11px] text-slate-400">${esc(f.sub || '')}</div></button>`).join('')}</div><div class="rg-sem"></div>`;
+        w.addEventListener('click', async e => {
+          const b = e.target.closest('.rg-f'); if (!b) return;
+          w.querySelectorAll('.rg-f').forEach(x => x.classList.toggle('border-cyan-400', x === b));
+          const f = fuentes[Number(b.dataset.f)]; const box = w.querySelector('.rg-sem'); box.innerHTML = '<p>Cargando la copia…</p>';
+          let sem = f.semanas;
+          if (!sem) { try { sem = (await api({ action: 'ganttDeCopia', id: f.id })).gantt; } catch (er) { box.innerHTML = `<p class="text-rose-300">${esc(er.message)}</p>`; return; } }
+          pintarSemanas(box, sem, f);
+        });
+      }
+      function pintarSemanas(box, sem, fuente) {
+        const ahora = typeof ganttWeeksData !== 'undefined' ? ganttWeeksData : {};
+        const codes = [...new Set(Object.keys(sem || {}).concat(Object.keys(ahora)))].sort((a, b) => String(((sem[a] || ahora[a]) || {}).startDate || '').localeCompare(String(((sem[b] || ahora[b]) || {}).startDate || '')) || a.localeCompare(b));
+        const filas = codes.map(c => { const enC = sem[c], enA = ahora[c], igual = enC && enA && firma(enC) === firma(enA); return { c, enC, enA, igual }; });
+        box.innerHTML = `<p class="mt-2 text-[13px] text-slate-400">2. Tildá las semanas que querés volver a como estaban en esa copia (las que cambiaron ya vienen tildadas):</p>
+          <div class="max-h-[50vh] overflow-y-auto rounded-xl border border-slate-800"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-950 text-[10px] uppercase text-slate-500"><tr><th class="px-2 py-2 text-left">Recuperar</th><th class="text-left">Semana</th><th class="text-left">Fechas</th><th class="text-left">En la copia</th><th class="text-left">Ahora</th></tr></thead><tbody>
+          ${filas.map(x => { const w = x.enC || x.enA; const marcar = x.enC && !x.igual; return `<tr class="border-t border-slate-800 ${x.igual ? 'opacity-50' : ''}"><td class="px-2 py-1.5">${x.enC ? `<input type="checkbox" class="rg-c h-4 w-4" data-c="${esc(x.c)}" ${marcar ? 'checked' : ''} ${x.igual ? 'disabled' : ''}>` : `<label class="flex items-center gap-1 text-rose-300"><input type="checkbox" class="rg-b h-4 w-4" data-c="${esc(x.c)}"> borrar</label>`}</td>
+            <td class="font-bold text-white">${esc(x.c)}<div class="text-[10px] font-normal text-slate-400">${esc((x.enC || {}).name || (x.enA || {}).name || '')}</div></td><td class="text-slate-300">${fFecha(w.startDate)}</td>
+            <td class="${x.enC ? 'text-emerald-300' : 'text-slate-500'}">${x.enC ? resumen(x.enC).txt : 'no existía'}</td><td class="${x.igual ? 'text-slate-400' : 'text-amber-300'}">${x.enA ? resumen(x.enA).txt : 'no existe'}${x.igual ? ' (igual)' : ''}</td></tr>`; }).join('')}
+          </tbody></table></div>
+          <div class="flex flex-wrap items-center justify-between gap-2"><span class="text-[11px] text-slate-400">Antes de recuperar se guarda una copia de cómo está ahora, por si querés deshacerlo.</span><button type="button" class="rg-ok rounded-xl bg-cyan-400 px-4 py-2 text-sm font-black text-cyan-950">♻️ Recuperar las tildadas</button></div>`;
+        box.querySelector('.rg-ok').addEventListener('click', () => {
+          const rec = [...box.querySelectorAll('.rg-c:checked')].map(i => i.dataset.c), bor = [...box.querySelectorAll('.rg-b:checked')].map(i => i.dataset.c);
+          if (!rec.length && !bor.length) { toast('Tildá al menos una semana'); return; }
+          if (!confirm(`¿Recuperar ${rec.length} semana${rec.length === 1 ? '' : 's'}${bor.length ? ' y borrar ' + bor.length : ''}?\n\n${rec.join(', ')}${bor.length ? '\nBorrar: ' + bor.join(', ') : ''}`)) return;
+          guardarAntes('Antes de recuperar una copia');
+          rec.forEach(c => { ganttWeeksData[c] = copia(sem[c]); });
+          bor.forEach(c => { delete ganttWeeksData[c]; });
+          if (rec.length) activeGanttWeekCode = rec[0]; else if (!ganttWeeksData[activeGanttWeekCode]) activeGanttWeekCode = Object.keys(ganttWeeksData)[0];
+          try { saveGanttWeeks(); } catch (e) { } try { renderGanttView(); } catch (e) { } try { refreshAll(); } catch (e) { }
+          const v = $('inoferRecGantt'); if (v) v.remove();
+          toast(`✓ Gantt recuperado: ${rec.join(', ')}${bor.length ? ' · borradas: ' + bor.join(', ') : ''}`);
+        });
+      }
+      window.inoferRecuperarGantt = abrir;
+    })();
+  </script>

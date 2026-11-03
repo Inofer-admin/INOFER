@@ -663,6 +663,29 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.tarjetas >= 2 && r.txt && r.m1 === 'ord-mt2', 'elegir OP: ' + JSON.stringify(r));
       ok(r.m2 === 'ord-mt3' && r.viejaLibre && /H-?50/i.test(r.z30), 'cambiar a una OP de otra máquina: ' + JSON.stringify(r));
     });
+    await prueba('Recuperar el Gantt desde una copia', async () => {
+      const pedir = ruta => new Promise((res, rej) => http.get(`http://127.0.0.1:${PUERTO_NUBE}` + ruta, r => { let b = ''; r.on('data', c => b += c); r.on('end', () => res(b)); }).on('error', rej));
+      await pedir('/__run?f=' + encodeURIComponent("(function(){ PropertiesService.getScriptProperties().setProperty('RESPALDOS', JSON.stringify([{ id: 'copia-prueba', fecha: new Date().toISOString(), nombre: 'INOFER respaldo prueba' }])); })"));
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json();
+        const nube = (n.modules || {}).gantt || {}; const code = Object.keys(nube).find(c => Object.values((nube[c] || {}).machines || {}).some(m => (m.items || []).length));
+        if (!code) return { sinSemana: true };
+        const antes = JSON.stringify(nube[code].machines);
+        ganttWeeksData[code].machines = {}; // se "rompe" la semana en este equipo
+        ganttWeeksData['SEM-RG-NUEVA'] = { code: 'SEM-RG-NUEVA', name: 'nueva', startDate: '2030-01-07', machines: {} };
+        inoferRecuperarGantt(); await esperar(800);
+        const f = document.querySelector('#inoferRecGantt .rg-f:not([data-f="0"])') || document.querySelector('#inoferRecGantt .rg-f'); f.click(); await esperar(800);
+        const chk = document.querySelector(`#inoferRecGantt .rg-c[data-c="${code}"]`); const marcada = chk && chk.checked;
+        const bor = document.querySelector('#inoferRecGantt .rg-b[data-c="SEM-RG-NUEVA"]'); if (bor) bor.checked = true;
+        document.querySelector('#inoferRecGantt .rg-ok').click(); await esperar(500);
+        const vuelta = JSON.stringify(ganttWeeksData[code].machines) === antes, borrada = !ganttWeeksData['SEM-RG-NUEVA'];
+        const local = JSON.parse(localStorage.getItem('tablero_inyectoras_gantt_antes_v1') || 'null');
+        return { code, marcada, vuelta, borrada, guardoAntes: !!(local && local.semanas && local.semanas['SEM-RG-NUEVA']) };
+      });
+      ok(!r.sinSemana, 'no había semana con piezas en la nube');
+      ok(r.marcada && r.vuelta && r.borrada && r.guardoAntes, 'recuperar: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

@@ -33,6 +33,7 @@
           { accion: () => window.inoferAlmacenamiento && inoferAlmacenamiento(), vis: () => esAdmin() && !!window.inoferAlmacenamiento, ico: '💾', t: 'Almacenamiento', d: 'Espacio y archivo de órdenes' },
           { accion: () => window.inoferAvisosAdmin && inoferAvisosAdmin(), vis: () => esAdmin() && !!window.inoferAvisosAdmin, ico: '📣', t: 'Quién recibe avisos', d: 'Avisos al celular por usuario' },
           { tab: 'tabPapeleraBtn', ico: '🗑️', t: 'Papelera', d: 'Recuperar lo borrado' },
+          { accion: () => window.inoferRecuperarGantt && inoferRecuperarGantt(), vis: () => esAdmin() && !!window.inoferRecuperarGantt, ico: '♻️', t: 'Recuperar el Gantt', d: 'Volver semanas a como estaban' },
           { accion: () => $('inoferMenuUsers') && $('inoferMenuUsers').click(), vis: () => esAdmin() && !!$('inoferMenuUsers'), ico: '🛡️', t: 'Usuarios y permisos', d: 'Altas, claves y permisos' },
           { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }
         ] }

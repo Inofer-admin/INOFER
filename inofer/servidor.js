@@ -2250,6 +2250,33 @@ function accionPush(u, body) {
   return null;
 }
 
+// =====================================================================
+// RESTAURAR EL GANTT DESDE UNA COPIA DE SEGURIDAD (solo administrador)
+// Lee el módulo gantt de una copia diaria de Drive (RESPALDOS) y lo devuelve; el equipo elige qué semanas recuperar.
+// =====================================================================
+function ganttDeHoja_(ss) {
+  const sh = ss.getSheetByName(STATE_SHEET_NAME); if (!sh) return null;
+  const rows = sh.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || '') !== 'gantt') continue;
+    let val = String(rows[i][1] || ''); for (let c = 3; c < rows[i].length; c++) val += String(rows[i][c] || '');
+    try { return JSON.parse(val); } catch (e) { return null; }
+  }
+  return null;
+}
+function accionGanttCopias(u, body) {
+  if (['ganttCopias', 'ganttDeCopia'].indexOf(body.action) === -1) return null;
+  if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede recuperar copias.' };
+  const lista = jsonSeguro_(PropertiesService.getScriptProperties().getProperty('RESPALDOS'), []);
+  if (body.action === 'ganttCopias') return { status: 'ok', copias: lista.map(function (x) { return { id: x.id, fecha: x.fecha, nombre: x.nombre }; }) };
+  const c = lista.filter(function (x) { return x.id === String(body.id || ''); })[0];
+  if (!c) return { status: 'error', error: 'No encontré esa copia.' };
+  let g = null;
+  try { g = ganttDeHoja_(SpreadsheetApp.openById(c.id)); } catch (e) { return { status: 'error', error: 'No se pudo abrir la copia: ' + (e.message || e) }; }
+  if (!g) return { status: 'error', error: 'Esa copia no tiene Gantt guardado.' };
+  return { status: 'ok', copia: { id: c.id, fecha: c.fecha, nombre: c.nombre }, gantt: g };
+}
+
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
   const cuenta = accionCuenta(body);
@@ -2272,6 +2299,8 @@ function doPost(e) {
   if (rot) return respuesta(rot);
   const psh = accionPush(u, body);
   if (psh) return respuesta(psh);
+  const gcp = accionGanttCopias(u, body);
+  if (gcp) return respuesta(gcp);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };
