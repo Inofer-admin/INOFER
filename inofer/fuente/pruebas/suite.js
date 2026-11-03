@@ -768,6 +768,36 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.pin && r.fijo === true && r.util, '📌 y colores de utilización: ' + JSON.stringify(r));
       ok(r.volvio, 'deshacer el armado: ' + JSON.stringify(r));
     });
+    await prueba('Gantt: escribir el número entero en la celda y ningún día de más de 24 h (se reparte)', async () => {
+      const prep = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        switchTab('gantt'); await esperar(300);
+        const pad = n => String(n).padStart(2, '0'); const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 7);
+        const lunes = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        const code = inoferSemanaDeLunes(lunes, true);
+        const W = ganttWeeksData[code]; W.machines = { '200V': { aux: {}, items: [{ id: 'gi-24', part: 'PZA-24H', desc: 'x', stdRate: 100, dailyQty: [0, 0, 0, 0, 0, 0, 0], totalQty: 0 }] } };
+        activeGanttWeekCode = code; renderGanttView(); await esperar(300);
+        return { code };
+      });
+      const sel = '#viewGantt .gantt-item-qty-input[data-mach="200V"][data-item-idx="0"][data-day="1"]';
+      await A.click(sel); await A.keyboard.press('Control+A'); await A.keyboard.type('3000', { delay: 60 });
+      const enFoco = await A.evaluate(s => document.activeElement === document.querySelector(s) && document.activeElement.value, sel);
+      await A.keyboard.press('Enter'); await A.waitForTimeout(600);
+      const r = await A.evaluate(async code => {
+        const W = ganttWeeksData[code], it = W.machines['200V'].items.find(x => x.part === 'PZA-24H');
+        const h = [0, 1, 2, 3, 4, 5, 6].map(d => inoferRepartir24.horasDia(W.machines['200V'], d));
+        // pieza de 50 h en un solo día (como si viniera del asistente o de mover semanas)
+        it.dailyQty = [0, 0, 5000, 0, 0, 0, 0]; saveGanttWeeks(); await new Promise(res => setTimeout(res, 300));
+        const h2 = [0, 1, 2, 3, 4, 5, 6].map(d => inoferRepartir24.horasDia(W.machines['200V'], d));
+        const total = W.machines['200V'].items.filter(x => x.part === 'PZA-24H').reduce((s, x) => s + x.dailyQty.reduce((a, b) => a + b, 0), 0);
+        const q = it.dailyQty.slice();
+        delete ganttWeeksData[code]; saveGanttWeeks(); renderGanttView();
+        return { lunes: q[1], h, h2, total, q };
+      }, prep.code);
+      ok(enFoco === '3000', 'se pierde el foco al escribir: ' + enFoco);
+      ok(r.h[1] <= 24.01 && r.h[1] > 23 && Math.abs(r.h[2] - 6) < 0.01, 'lo escrito (3000 = 30 h el lunes) no quedó lunes 24 h + martes 6 h: ' + JSON.stringify(r));
+      ok(Math.max(...r.h2) <= 24.01 && r.total === 5000 && r.q[2] > 0 && r.q[3] > 0, 'reparto en días siguientes: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

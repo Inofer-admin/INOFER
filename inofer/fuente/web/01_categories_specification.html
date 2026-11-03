@@ -4163,7 +4163,9 @@ ${lines}${trendNote}`;
 
       // Attach event listeners for Items daily qty inputs
       container.querySelectorAll('.gantt-item-qty-input').forEach(inp => {
-        inp.addEventListener('input', (e) => {
+        // Se escribe el número entero (1000) y se guarda al salir de la celda o con Enter (antes redibujaba en cada dígito y se perdía el foco)
+        inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); } });
+        inp.addEventListener('change', (e) => {
           const mId = inp.getAttribute('data-mach');
           const itemIdx = Number(inp.getAttribute('data-item-idx'));
           const dayIdx = Number(inp.getAttribute('data-day'));
@@ -5018,7 +5020,7 @@ ${lines}${trendNote}`;
       const usedHours = {};
       const totalMachHours = { '200V': 0, '200N': 0, '180': 0, 'H50': 0, 'Z30': 0 };
       ['200V', '200N', '180', 'H50', 'Z30'].forEach(m => {
-        usedHours[m] = [[0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0], [0,0,0,0,0,0,0]];
+        usedHours[m] = monthWeekCodes.map(() => [0, 0, 0, 0, 0, 0, 0]);
       });
       // Piezas fijas (📌 importadas del Gantt de Excel o marcadas a mano): quedan donde están, ocupan horas y descuentan demanda
       const fijosQty = {};
@@ -5196,11 +5198,11 @@ ${lines}${trendNote}`;
           if (loteMinPieza) {
             const suC = includeSetup && typeof inoferSetupDe === 'function' ? inoferSetupDe(mId).total : 0;
             let libreC = 0;
-            for (let w2 = 0; w2 < 4; w2++) for (const d2 of activeDayIndices) { if (typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(mId, ganttWeeksData[monthWeekCodes[w2]], d2)) continue; libreC += Math.max(0, dailyHoursLimit - usedHours[mId][w2][d2]); }
+            for (let w2 = 0; w2 < monthWeekCodes.length; w2++) for (const d2 of activeDayIndices) { if (typeof inoferMaquinaDisponibleDia === 'function' && !inoferMaquinaDisponibleDia(mId, ganttWeeksData[monthWeekCodes[w2]], d2)) continue; libreC += Math.max(0, dailyHoursLimit - usedHours[mId][w2][d2]); }
             if ((libreC - suC) * stdRate < Math.min(remainingQty, loteMinPieza)) { continue; }
           }
           maqAnterior = mId;
-          for (let wIdx = 0; wIdx < 4; wIdx++) {
+          for (let wIdx = 0; wIdx < monthWeekCodes.length; wIdx++) {
             if (remainingQty <= 0) break;
             const wCode = monthWeekCodes[wIdx];
             const weekObj = ganttWeeksData[wCode];

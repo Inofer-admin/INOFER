@@ -1,0 +1,163 @@
+  <script>
+    // ===== Ningún día de una máquina puede pasar de 24 h: lo que sobra se reparte en los días siguientes =====
+    // Corre solo al guardar el Gantt (carga a mano, asistente, mover semanas, Excel, armado). Si no entra en la semana,
+    // sigue en la semana siguiente (misma máquina). Además: escribir números enteros en las celdas sin perder el foco.
+    (function () {
+      const CAP = 24;
+      const pad = n => String(n).padStart(2, '0');
+      const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const masDias = (s, n) => { const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); d.setDate(d.getDate() + n); return iso(d); };
+      const lunesDe = s => { const d = new Date(String(s).slice(0, 10) + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+      const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+      const semanas = () => (typeof ganttWeeksData !== 'undefined' && ganttWeeksData) ? ganttWeeksData : {};
+      const tasa = it => { if (Number(it.stdRate) > 0) return Number(it.stdRate); const c = window.inoferCatBuscar ? inoferCatBuscar(String(it.part || '').trim()) : null; return c && Number(c.unitsPerHour) > 0 ? Number(c.unitsPerHour) : 0; };
+      function horasDia(md, d) {
+        let h = 0; if (!md) return 0;
+        (md.items || []).forEach(it => { if (it.isSharedCompanion) return; const u = tasa(it); if (u) h += (Number((it.dailyQty || [])[d]) || 0) / u; });
+        Object.values(md.aux || {}).forEach(a => { h += Number((a || [])[d]) || 0; });
+        return h;
+      }
+      // días donde se puede seguir: lun..sáb (y domingo solo si se trabaja los 7 días)
+      const diasLab = () => (String((document.getElementById('autoGanttWorkDays') || {}).value) === '7' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6]);
+      const disponible = (m, w, d) => typeof inoferMaquinaDisponibleDia !== 'function' || inoferMaquinaDisponibleDia(m, w, d);
+      function companera(md, it) {
+        if (!it.sharedWithPart || it.isSharedCompanion) return null;
+        return (md.items || []).find(x => x.isSharedCompanion && String(x.part).toLowerCase() === String(it.sharedWithPart).toLowerCase()) || null;
+      }
+      function sumar(md, it, d, q, molde) {
+        let dst = (md.items || []).find(x => !x.isSharedCompanion && x.part === it.part);
+        if (!dst) { dst = JSON.parse(JSON.stringify(it)); dst.id = 'gi-rep-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); dst.dailyQty = [0, 0, 0, 0, 0, 0, 0]; md.items = md.items || []; md.items.push(dst); }
+        dst.dailyQty = dst.dailyQty || [0, 0, 0, 0, 0, 0, 0]; dst.dailyQty[d] = (Number(dst.dailyQty[d]) || 0) + q;
+        dst.totalQty = dst.dailyQty.reduce((a, b) => a + (Number(b) || 0), 0);
+        if (molde) { // la pieza que sale al mismo tiempo en el mismo molde va igual
+          let c = companera(md, dst);
+          if (!c) { c = JSON.parse(JSON.stringify(molde)); c.id = 'gi-rep-sis-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); c.dailyQty = [0, 0, 0, 0, 0, 0, 0]; md.items.push(c); }
+          c.dailyQty = c.dailyQty || [0, 0, 0, 0, 0, 0, 0]; c.dailyQty[d] = (Number(c.dailyQty[d]) || 0) + q; c.totalQty = c.dailyQty.reduce((a, b) => a + (Number(b) || 0), 0);
+        }
+      }
+      // reparte los excesos de una semana; devuelve lo que movió
+      function repartirSemana(code, opc) {
+        opc = opc || {}; const W = semanas()[code]; if (!W || !W.machines) return [];
+        const movidas = [], lab = diasLab();
+        const lunesW = (window.inoferSemanaInfo && (inoferSemanaInfo(code) || {}).lunes) || lunesDe(W.startDate || iso(new Date()));
+        Object.keys(W.machines).forEach(m => {
+          const md = W.machines[m]; if (!md || !(md.items || []).length) return;
+          for (let d = 0; d < 7; d++) {
+            let exc = horasDia(md, d) - CAP; if (exc <= 0.01) continue;
+            // primero se mueven las no fijas, de la última cargada a la primera
+            const cand = (md.items || []).filter(it => !it.isSharedCompanion && (Number((it.dailyQty || [])[d]) || 0) > 0 && tasa(it));
+            const orden = cand.filter(it => !it.fijo).reverse().concat(cand.filter(it => it.fijo).reverse());
+            for (let k = 0; k < orden.length && exc > 0.01; k++) {
+              const it = orden[k], u = tasa(it), comp = companera(md, it);
+              let mover = Math.min(Number(it.dailyQty[d]) || 0, Math.ceil(exc * u - 1e-6));
+              if (mover <= 0) continue;
+              let resto = mover; const dest = [];
+              // días siguientes de esta semana y hasta 4 semanas más
+              for (let s = 0; s <= 4 && resto > 0; s++) {
+                const cW = s === 0 ? code : (window.inoferSemanaDeLunes ? inoferSemanaDeLunes(masDias(lunesW, 7 * s), true) : null);
+                const WT = cW && semanas()[cW]; if (!WT) continue;
+                WT.machines = WT.machines || {};
+                if (!WT.machines[m]) WT.machines[m] = { aux: { CMA: [0, 0, 0, 0, 0, 0, 0], CMO: [0, 0, 0, 0, 0, 0, 0], ALIS: [0, 0, 0, 0, 0, 0, 0], DESG: [0, 0, 0, 0, 0, 0, 0], LING: [0, 0, 0, 0, 0, 0, 0], LIMP: [0, 0, 0, 0, 0, 0, 0], CPIS: [0, 0, 0, 0, 0, 0, 0] }, items: [] };
+                const mdT = WT.machines[m];
+                for (const e of lab) {
+                  if (resto <= 0) break;
+                  if (s === 0 && e <= d) continue;
+                  if (!disponible(m, WT, e)) continue;
+                  const libre = CAP - horasDia(mdT, e); if (libre <= 0.25) continue;
+                  const q = Math.min(resto, Math.floor(libre * u)); if (q <= 0) continue;
+                  sumar(mdT, it, e, q, comp);
+                  resto -= q; dest.push({ code: cW, d: e, q });
+                }
+              }
+              const hecho = mover - resto; if (hecho <= 0) continue;
+              it.dailyQty[d] -= hecho; it.totalQty = it.dailyQty.reduce((a, b) => a + (Number(b) || 0), 0);
+              if (comp) { comp.dailyQty[d] = Math.max(0, (Number(comp.dailyQty[d]) || 0) - hecho); comp.totalQty = comp.dailyQty.reduce((a, b) => a + (Number(b) || 0), 0); }
+              exc -= hecho / u;
+              movidas.push({ part: it.part, m, code, d, q: hecho, dest });
+            }
+            if (exc > 0.01) movidas.push({ part: '', m, code, d, sinLugar: true, h: Math.round(exc * 10) / 10 });
+          }
+        });
+        return movidas;
+      }
+      function excedidas(desde) {
+        const out = [];
+        Object.keys(semanas()).forEach(c => {
+          const W = semanas()[c]; if (!W || !W.machines) return;
+          if (desde && W.startDate && lunesDe(W.startDate) < desde) return;
+          Object.keys(W.machines).forEach(m => { for (let d = 0; d < 7; d++) { const h = horasDia(W.machines[m], d); if (h > CAP + 0.01) out.push({ code: c, m, d, h: Math.round(h * 10) / 10 }); } });
+        });
+        return out;
+      }
+      function texto(movidas) {
+        const ok = movidas.filter(x => !x.sinLugar);
+        const et = c => (window.inoferEtiquetaSemana ? inoferEtiquetaSemana(c).split(' · ')[0] : c);
+        const partes = ok.slice(0, 3).map(x => `${x.part} (${x.m}, ${DIAS[x.d]}): pasé ${x.q.toLocaleString('es-AR')} a ${[...new Set(x.dest.map(y => (y.code !== x.code ? et(y.code) + ' ' : '') + DIAS[y.d]))].join(', ')}`);
+        const sin = movidas.filter(x => x.sinLugar);
+        return (partes.length ? '⚖️ Pasaba de 24 h por día. ' + partes.join(' · ') + (ok.length > 3 ? ` y ${ok.length - 3} más` : '') : '') + (sin.length ? ` ⚠️ ${sin.length} día(s) siguen pasados de 24 h (no hay lugar en las semanas siguientes).` : '');
+      }
+      // antes de cada guardado del Gantt se reparten los días pasados de 24 h (desde la semana pasada en adelante)
+      let enCurso = false;
+      function envolverGuardar() {
+        if (typeof window.saveGanttWeeks !== 'function' || window.saveGanttWeeks.__rep24) return;
+        const g0 = window.saveGanttWeeks;
+        const f = function () {
+          if (!enCurso && window.__inoferSinRepartir !== true) {
+            enCurso = true;
+            try {
+              const desde = masDias(lunesDe(iso(new Date())), -7);
+              const codes = [...new Set(excedidas(desde).map(x => x.code))];
+              const mov = []; codes.forEach(c => mov.push(...repartirSemana(c)));
+              if (mov.length) { const t = texto(mov); window.__inoferUltimoReparto = mov; setTimeout(() => { try { showToast(t); } catch (e) { } try { renderGanttView(); } catch (e) { } }, 0); }
+            } catch (e) { console.warn('reparto 24 h', e); }
+            enCurso = false;
+          }
+          return g0.apply(this, arguments);
+        };
+        Object.assign(f, g0); f.__rep24 = true; window.saveGanttWeeks = f;
+        try { saveGanttWeeks = f; } catch (e) { }
+      }
+      // aviso arriba del Gantt si alguna semana (desde la pasada) ya tiene días de más de 24 h
+      function aviso() {
+        const vg = document.getElementById('viewGantt'); if (!vg || vg.classList.contains('hidden')) return;
+        const ex = excedidas(masDias(lunesDe(iso(new Date())), -7));
+        let b = document.getElementById('inoferAviso24');
+        if (!ex.length) { if (b) b.remove(); return; }
+        if (!b) {
+          b = document.createElement('div'); b.id = 'inoferAviso24'; b.className = 'mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-500 bg-orange-50 px-3 py-2 text-xs text-orange-900';
+          const bar = document.getElementById('gtBar'); (bar && bar.parentElement === vg ? bar.after(b) : vg.insertBefore(b, vg.firstChild));
+        }
+        const et = c => (window.inoferEtiquetaSemana ? inoferEtiquetaSemana(c).split(' · ')[0] : c);
+        const txt = ex.slice(0, 4).map(x => `${et(x.code)} ${x.m} ${DIAS[x.d]} ${x.h} h`).join(' · ');
+        const firma = ex.map(x => x.code + x.m + x.d + x.h).join('|');
+        if (b.dataset.f === firma) return; b.dataset.f = firma;
+        b.innerHTML = `<span>⚠️ <b>Hay días con más de 24 h:</b> ${txt}${ex.length > 4 ? ` y ${ex.length - 4} más` : ''}.</span><button type="button" id="inoferRepartir24" class="rounded-lg bg-orange-600 px-3 py-1.5 font-bold text-white">⚖️ Repartir en los días siguientes</button>`;
+      }
+      document.addEventListener('click', e => {
+        if (!(e.target.closest && e.target.closest('#inoferRepartir24'))) return;
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) { try { showToast('Tu usuario no puede modificar el Gantt'); } catch (er) { } return; }
+        try { window.inoferGanttGuardarAntes && inoferGanttGuardarAntes('Antes de repartir los días de más de 24 h'); } catch (er) { }
+        saveGanttWeeks(); // el envoltorio reparte y avisa
+        setTimeout(() => { try { refreshAll(); } catch (er) { } aviso(); }, 50);
+      });
+      // ---- escribir 1000 de una (la celda no se redibuja mientras se está escribiendo) ----
+      document.addEventListener('input', e => { const t = e.target; if (t && t.classList && (t.classList.contains('gantt-item-qty-input') || t.classList.contains('gantt-aux-input'))) t.__escribiendo = true; }, true);
+      document.addEventListener('change', e => { const t = e.target; if (t) t.__escribiendo = false; }, true);
+      function envolverDibujo() {
+        if (typeof window.renderGanttView !== 'function' || window.renderGanttView.__noPisar) return;
+        const r0 = window.renderGanttView;
+        const f = function () {
+          const a = document.activeElement;
+          if (a && a.__escribiendo && a.closest && a.closest('#viewGantt')) {
+            if (!a.__esperaDibujo) { a.__esperaDibujo = true; a.addEventListener('blur', () => { a.__esperaDibujo = false; setTimeout(() => { try { window.renderGanttView(); } catch (er) { } }, 0); }, { once: true }); }
+            return;
+          }
+          return r0.apply(this, arguments);
+        };
+        Object.assign(f, r0); f.__noPisar = true; window.renderGanttView = f;
+      }
+      setInterval(() => { try { envolverGuardar(); envolverDibujo(); aviso(); } catch (e) { } }, 1500);
+      window.addEventListener('DOMContentLoaded', () => setTimeout(() => { try { envolverGuardar(); envolverDibujo(); } catch (e) { } }, 200));
+      window.inoferRepartir24 = { repartirSemana, excedidas, horasDia, CAP };
+    })();
+  </script>

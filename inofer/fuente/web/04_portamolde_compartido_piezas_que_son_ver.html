@@ -308,7 +308,7 @@
         showToast(`🚫 No se puede: ${part} y ${c.otra} comparten el portamolde ${c.pm} y la ${c.otra} ya está el ${INOFER_DIAS[c.dia]} en la ${c.mach}. Elegí otro día o la misma máquina.`);
       }
     }, true);
-    document.addEventListener('input', ev => {
+    document.addEventListener('change', ev => {
       const inp = ev.target;
       if (!inp || !inp.classList || !inp.classList.contains('gantt-item-qty-input')) return;
       const val = parseInt(inp.value) || 0;
