@@ -19,7 +19,11 @@
           ref.insertBefore(b, ref.firstChild);
         }
       }
+      const TIENDA_MS = 'https://apps.microsoft.com/detail/9NB214C08FSM';
+      window.INOFER_TIENDA_MS = TIENDA_MS;
       async function instalar() {
+        // en Windows, la versión de la Microsoft Store (sin avisos de SmartScreen)
+        if (/windows/i.test(navigator.userAgent) && !/xbox/i.test(navigator.userAgent)) { window.open(TIENDA_MS, '_blank', 'noopener'); try { showToast('📲 Se abre la Microsoft Store: tocá "Obtener" o "Instalar"'); } catch (e) { } return; }
         if (aviso) { aviso.prompt(); try { await aviso.userChoice; } catch (e) { } aviso = null; pintar(); return; }
         const ios = /iphone|ipad|ipod/i.test(navigator.userAgent), android = /android/i.test(navigator.userAgent);
         const txt = ios ? 'En el iPhone/iPad: tocá el botón Compartir (cuadrado con flecha) → "Agregar a pantalla de inicio".'
