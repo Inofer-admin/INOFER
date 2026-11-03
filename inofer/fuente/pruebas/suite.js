@@ -538,6 +538,60 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(ui.filas >= 1 && ui.t2, 'tabla del administrador: ' + JSON.stringify(ui));
       await A.evaluate(() => inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'avisosPush', moduleData: {} }));
     });
+    await prueba('Indicadores: se elige el tipo de gráfico y se guarda para todos', async () => {
+      const r = await A.evaluate(async () => {
+        switchTab('kpi'); await new Promise(res => setTimeout(res, 300));
+        const k = INOFER_KPI_DEF[0].key; const o = inoferKpiData(k);
+        if (o.datos.length < 4) { ['2026-05', '2026-06', '2026-07', '2026-08'].forEach((mes, i) => o.datos.push({ mes, valor: 95 + i })); }
+        inoferKpiActual = k; inoferRenderKpi(); await new Promise(res => setTimeout(res, 300));
+        const tipos = {};
+        for (const [t] of INOFER_KPI_GRAFICOS) {
+          const sel = document.getElementById('kpiTipoGraf'); sel.value = t; sel.dispatchEvent(new Event('change')); await new Promise(res => setTimeout(res, 250));
+          const ch = inoferKpiCharts.main; tipos[t] = ch ? [ch.data.datasets[0].type || 'line', ch.data.datasets.length] : null;
+        }
+        const guardado = inoferKpiData(k).grafico;
+        const sel = document.getElementById('kpiTipoGraf'); sel.value = 'linea'; sel.dispatchEvent(new Event('change'));
+        return { tipos, guardado };
+      });
+      ok(r.tipos.barras && r.tipos.barras[0] === 'bar' && r.tipos.semaforo[0] === 'bar' && r.tipos.linea[0] === 'line' && r.tipos.tendencia[1] === 3, 'tipos: ' + JSON.stringify(r.tipos));
+      ok(r.guardado === 'tendencia', 'no se guardó el tipo: ' + r.guardado);
+    });
+    await prueba('Stock por fardos: ingreso con análisis, suma y retiro de un fardo elegido', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        switchTab('stock'); await esperar(300);
+        const v = document.getElementById('viewStock');
+        v.querySelector('.st-nuevo[data-t="fardos"]').click(); await esperar(100);
+        let f = v.querySelector('.st-form-fardos');
+        f.querySelector('[name="clave"]').value = 'alsi-prueba'; f.querySelector('[name="analisis"]').value = 'AN-77';
+        const n = f.querySelector('[name="n"]'); n.value = '3'; n.dispatchEvent(new Event('input', { bubbles: true }));
+        const dist = f.querySelector('[name="distinto"]'); dist.checked = true; dist.dispatchEvent(new Event('change', { bubbles: true }));
+        f.querySelectorAll('.st-fkgi').forEach((i, j) => { i.value = String(1000 + j * 10); }); f.querySelector('.st-fkgi').dispatchEvent(new Event('input', { bubbles: true }));
+        const total = f.querySelector('.st-ftotal').textContent;
+        f.requestSubmit(); await esperar(200);
+        // segundo ingreso: 1 fardo de 500 kg con otro análisis
+        v.querySelector('.st-nuevo[data-t="fardos"]').click(); await esperar(100);
+        f = v.querySelector('.st-form-fardos'); f.querySelector('[name="clave"]').value = 'ALSI-PRUEBA'; f.querySelector('[name="analisis"]').value = 'AN-78'; f.querySelector('[name="kg"]').value = '500'; f.requestSubmit(); await esperar(200);
+        const d = D => inoferModLocal('stock').materiales['ALSI-PRUEBA'];
+        const antes = { n: d().fardos.length, nums: d().fardos.map(x => x.numero).join(','), movs: d().movimientos.map(m => m.kg).join(',') };
+        const fila = [...v.querySelectorAll('.st-fardos')].find(b => b.dataset.k === 'ALSI-PRUEBA'); const celda = fila ? fila.textContent.replace(/\s+/g, ' ') : '';
+        // retirar el fardo N° 2
+        v.querySelector('.st-nuevo[data-t="retiro"]').click(); await esperar(100);
+        const fr = v.querySelector('.st-form-retiro'); const sel = fr.querySelector('.st-rmat'); sel.value = 'ALSI-PRUEBA'; sel.dispatchEvent(new Event('change', { bubbles: true })); await esperar(100);
+        const fr2 = v.querySelector('.st-form-retiro'); const f2 = d().fardos.find(x => x.numero === 2);
+        fr2.querySelector(`[name="fardo"][value="${f2.id}"]`).checked = true; fr2.querySelector('[name="maquina"]').value = '200V'; fr2.requestSubmit(); await esperar(200);
+        const fila2 = [...v.querySelectorAll('.st-fardos')].find(b => b.dataset.k === 'ALSI-PRUEBA'); const celda2 = fila2 ? fila2.textContent.replace(/\s+/g, ' ') : '';
+        inoferVerFardos('ALSI-PRUEBA'); await esperar(100); const modalTxt = (document.getElementById('inoferPlantaModal') || {}).textContent || ''; document.getElementById('inoferPlantaModal')?.remove();
+        const ret = d().fardos.find(x => x.numero === 2).retiro;
+        const S = inoferModLocal('stock'); delete S.materiales['ALSI-PRUEBA']; inoferModGuardar('stock');
+        return { total, antes, celda, celda2, ret, modal: /Análisis AN-77/.test(modalTxt) && /En depósito: 3 fardos/.test(modalTxt) };
+      });
+      ok(/3 fardos · 3[.,]030 kg/.test(r.total), 'total en vivo: ' + r.total);
+      ok(r.antes.n === 4 && r.antes.nums === '1,2,3,4' && r.antes.movs === '3030,500', 'ingresos: ' + JSON.stringify(r.antes));
+      ok(/4 fardos/.test(r.celda) && /3[.,]530 kg/.test(r.celda), 'en depósito: ' + r.celda);
+      ok(r.ret && r.ret.maquina === '200V' && /3 fardos/.test(r.celda2) && /2[.,]520 kg/.test(r.celda2), 'retiro: ' + JSON.stringify(r));
+      ok(r.modal, 'ventana de fardos');
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

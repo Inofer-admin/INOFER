@@ -671,7 +671,9 @@
             else if (alcanza && difDias(alcanza, hoyIso()) <= 7) { alerta = `con lo programado se termina el ${fDia(alcanza)}`; nivel = 'rojo'; }
             else if (bajoMin && difDias(bajoMin, hoyIso()) <= 7) { alerta = `con lo programado queda bajo el mínimo el ${fDia(bajoMin)}`; nivel = 'amarillo'; }
           }
-          return { nombre, minimo: min, stock: r.stock, desde: r.desde, sinDatos: r.sinDatos, c7, prog14, alcanza, bajoMin, alerta, nivel, movimientos: d.movimientos || [] };
+          const enDep = (d.fardos || []).filter(f => !f.retiro);
+          const dep = { n: enDep.length, kg: enDep.reduce((a, f) => a + (Number(f.kg) || 0), 0), total: (d.fardos || []).length };
+          return { nombre, minimo: min, stock: r.stock, desde: r.desde, sinDatos: r.sinDatos, c7, prog14, alcanza, bajoMin, alerta, nivel, movimientos: d.movimientos || [], dep };
         });
         const piezas = {};
         Object.keys(S.terminado || {}).forEach(p => { piezas[p] = 1; });
@@ -694,7 +696,34 @@
         const C = calcStock(), edit = editStock();
         const est = s => s.stock == null ? '<span class="text-slate-500">Sin datos</span>' : `<b class="${s.nivel === 'rojo' ? 'text-rose-300' : (s.nivel ? 'text-amber-300' : 'text-white')}">${n0(s.stock)} kg</b>`;
         const fm = stockForm;
-        const form = fm ? `<form class="inofer-planta-form st-form rounded-2xl border border-teal-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
+        const MAQL = (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+        const formFardos = fm && fm.tipo === 'fardos' ? `<form class="inofer-planta-form st-form st-form-fardos rounded-2xl border border-teal-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
+          <div class="sm:col-span-4 text-sm font-black text-teal-300">📦 Ingreso de fardos cerrados</div>
+          <label class="text-[11px] text-slate-400">Material<input name="clave" list="stMatList" required value="${esc(fm.clave || '')}" class="${INP} w-full"><datalist id="stMatList">${C.materiales.map(m => `<option value="${esc(m.nombre)}">`).join('')}</datalist></label>
+          <label class="text-[11px] text-slate-400">N° de análisis<input name="analisis" required placeholder="Ej: 2611-045" class="${INP} w-full"></label>
+          <label class="text-[11px] text-slate-400">Cantidad de fardos<input type="number" name="n" min="1" max="200" step="1" value="1" required class="st-fn ${INP} w-full"></label>
+          <label class="text-[11px] text-slate-400">Kg de cada fardo<input type="number" name="kg" min="0.1" step="0.1" required class="st-fkg ${INP} w-full"></label>
+          <label class="sm:col-span-4 flex items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" name="distinto" class="st-fdist h-4 w-4 accent-teal-500"> Cada fardo pesa distinto (cargo el peso de cada uno)</label>
+          <div class="st-fkgs sm:col-span-4 hidden grid grid-cols-2 gap-2 sm:grid-cols-6"></div>
+          <label class="text-[11px] text-slate-400">Fecha de ingreso<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
+          <label class="sm:col-span-2 text-[11px] text-slate-400">Proveedor / remito<input name="nota" class="${INP} w-full"></label>
+          <div class="st-ftotal flex items-end text-sm font-black text-white">—</div>
+          <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-teal-400 bg-teal-500 text-slate-950">Guardar fardos</button></div></form>` : '';
+        const conFardos = C.materiales.filter(m => m.dep.n);
+        const matRet = fm && fm.tipo === 'retiro' ? (fm.clave && conFardos.some(m => m.nombre === fm.clave) ? fm.clave : (conFardos[0] || {}).nombre || '') : '';
+        const fardosDep = matRet ? (((D('stock').materiales || {})[matRet] || {}).fardos || []).filter(f => !f.retiro).sort((a, b) => (a.numero || 0) - (b.numero || 0)) : [];
+        const formRetiro = fm && fm.tipo === 'retiro' ? `<form class="inofer-planta-form st-form st-form-retiro rounded-2xl border border-orange-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
+          <div class="sm:col-span-4 text-sm font-black text-orange-300">📤 Retiro de fardos del depósito</div>
+          ${conFardos.length ? `<label class="text-[11px] text-slate-400">Material<select name="clave" class="st-rmat ${INP} w-full">${conFardos.map(m => `<option value="${esc(m.nombre)}" ${m.nombre === matRet ? 'selected' : ''}>${esc(m.nombre)} · ${m.dep.n} en depósito</option>`).join('')}</select></label>
+          <label class="text-[11px] text-slate-400">Va a la máquina<select name="maquina" class="${INP} w-full"><option value="">— (sin especificar)</option>${MAQL.map(m => `<option>${esc(m)}</option>`).join('')}<option value="Otro destino">Otro destino</option></select></label>
+          <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
+          <label class="text-[11px] text-slate-400">Nota<input name="nota" class="${INP} w-full"></label>
+          <div class="sm:col-span-4 text-[11px] font-bold text-slate-300">¿Qué fardo${fardosDep.length > 1 ? 's' : ''} se retira${fardosDep.length > 1 ? 'n' : ''}?</div>
+          <div class="sm:col-span-4 grid gap-1.5 sm:grid-cols-3">${fardosDep.map(f => `<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-slate-200 has-[:checked]:border-orange-400 has-[:checked]:bg-orange-500/15"><input type="checkbox" name="fardo" value="${esc(f.id)}" class="h-4 w-4 accent-orange-500" ${fm.fardoId === f.id ? 'checked' : ''}><span><b class="text-white">Fardo N° ${f.numero}</b> · ${n1(f.kg)} kg<span class="block text-[10px] text-slate-400">Análisis ${esc(f.analisis || '—')} · entró ${fDia(f.fecha)}</span></span></label>`).join('')}</div>
+          <p class="sm:col-span-4 text-[11px] text-slate-400">El fardo sale del depósito. El stock total del material lo sigue descontando la producción de los turnos.</p>
+          <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-orange-400 bg-orange-500 text-slate-950">Retirar</button></div>`
+          : `<div class="sm:col-span-4 text-xs text-slate-400">No hay fardos cerrados en el depósito. Cargalos con 📦 Ingreso de fardos.</div><div class="sm:col-span-4 flex justify-end"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cerrar</button></div>`}</form>` : '';
+        const form = fm && (fm.tipo === 'fardos' || fm.tipo === 'retiro') ? formFardos + formRetiro : fm ? `<form class="inofer-planta-form st-form rounded-2xl border border-teal-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
           <div class="sm:col-span-4 text-sm font-black text-teal-300">${{ ingreso: '📥 Ingreso de material', conteo: '🔢 Conteo físico de material', despacho: '🚚 Despacho de piezas', conteoP: '🔢 Conteo de piezas terminadas', ingresoP: '📥 Ingreso de piezas (sin OP)' }[fm.tipo]}</div>
           ${fm.tipo === 'ingreso' || fm.tipo === 'conteo' ? `<label class="text-[11px] text-slate-400">Material<input name="clave" list="stMatList" required value="${esc(fm.clave || '')}" class="${INP} w-full"><datalist id="stMatList">${C.materiales.map(m => `<option value="${esc(m.nombre)}">`).join('')}</datalist></label>
             <label class="text-[11px] text-slate-400">${fm.tipo === 'conteo' ? 'Kg que hay realmente' : 'Kg que ingresan'}<input type="number" step="0.1" min="0" name="cant" required class="${INP} w-full"></label>`
@@ -708,15 +737,16 @@
         v.innerHTML = `<div class="rounded-2xl border border-teal-500/30 bg-slate-900/80 p-4 shadow-xl space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">📦 Stock</h2>
             <p class="text-xs text-slate-400">El consumo de material sale solo de los turnos cargados (piezas buenas + scrap + arranque × peso con colada de la base de datos). Las piezas producidas suman al stock de terminado; los despachos restan.</p></div>
-            ${edit ? `<div class="flex flex-wrap gap-2"><button type="button" class="st-nuevo ${BTN} border-teal-500/50 bg-teal-500/15 text-teal-200" data-t="ingreso">📥 Ingreso de material</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteo">🔢 Conteo de material</button><button type="button" class="st-nuevo ${BTN} border-amber-500/50 bg-amber-500/10 text-amber-200" data-t="despacho">🚚 Despacho</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteoP">🔢 Conteo de piezas</button></div>` : ''}</div>
+            ${edit ? `<div class="flex flex-wrap gap-2"><button type="button" class="st-nuevo ${BTN} border-teal-400 bg-teal-500 text-slate-950" data-t="fardos">📦 Ingreso de fardos</button><button type="button" class="st-nuevo ${BTN} border-orange-500/50 bg-orange-500/10 text-orange-200" data-t="retiro">📤 Retiro de fardos</button><button type="button" class="st-nuevo ${BTN} border-teal-500/50 bg-teal-500/15 text-teal-200" data-t="ingreso">📥 Ingreso por kg</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteo">🔢 Conteo de material</button><button type="button" class="st-nuevo ${BTN} border-amber-500/50 bg-amber-500/10 text-amber-200" data-t="despacho">🚚 Despacho</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteoP">🔢 Conteo de piezas</button></div>` : ''}</div>
           ${form}
-          <div><div class="mb-2 text-sm font-black text-white">🧱 Materiales</div><div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Material</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">Mínimo</th><th class="pr-2 text-right">Consumo 7 días</th><th class="pr-2 text-right">Programado 14 días</th><th class="pr-2">Alcanza hasta</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
+          <div><div class="mb-2 text-sm font-black text-white">🧱 Materiales</div><div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Material</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">En depósito</th><th class="pr-2 text-right">Mínimo</th><th class="pr-2 text-right">Consumo 7 días</th><th class="pr-2 text-right">Programado 14 días</th><th class="pr-2">Alcanza hasta</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
             ${C.materiales.map(s => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(s.nombre)}</td><td class="pr-2 text-right">${est(s)}${s.desde ? `<div class="text-[10px] text-slate-500">desde ${fFecha(s.desde)}</div>` : ''}</td>
+              <td class="pr-2 text-right">${s.dep.total ? `<button type="button" class="st-fardos text-right" data-k="${esc(s.nombre)}" title="Ver los fardos"><b class="text-teal-200">${s.dep.n} fardo${s.dep.n === 1 ? '' : 's'}</b><span class="block text-[10px] text-slate-400 underline">${n0(s.dep.kg)} kg · ver</span></button>` : '<span class="text-slate-600">—</span>'}</td>
               <td class="pr-2 text-right">${edit ? `<input type="number" min="0" step="1" class="st-min ${INP} w-20 text-right" data-g="materiales" data-k="${esc(s.nombre)}" value="${s.minimo || ''}" placeholder="—">` : (s.minimo ? n0(s.minimo) : '—')}</td>
               <td class="pr-2 text-right text-slate-300">${n0(s.c7)} kg</td><td class="pr-2 text-right text-slate-300">${n0(s.prog14)} kg</td>
               <td class="pr-2 ${s.alcanza && difDias(s.alcanza, hoyIso()) <= 7 ? 'text-rose-300 font-bold' : 'text-slate-300'}">${s.stock == null ? '—' : (s.alcanza ? fDia(s.alcanza) : 'más de 4 semanas')}</td>
               <td class="pr-2 text-[11px] ${s.nivel === 'rojo' ? 'text-rose-300' : (s.nivel ? 'text-amber-300' : 'text-emerald-300')}">${s.sinDatos ? '<span class="text-slate-500">Cargá un conteo inicial</span>' : esc(s.alerta || 'OK')}</td>
-              <td class="text-right"><button type="button" class="st-movs text-[11px] text-slate-400 hover:text-white" data-g="materiales" data-k="${esc(s.nombre)}">movimientos</button></td></tr>`).join('') || '<tr><td colspan="8" class="py-3 text-slate-400">No hay materiales en la base de datos.</td></tr>'}
+              <td class="text-right"><button type="button" class="st-movs text-[11px] text-slate-400 hover:text-white" data-g="materiales" data-k="${esc(s.nombre)}">movimientos</button></td></tr>`).join('') || '<tr><td colspan="9" class="py-3 text-slate-400">No hay materiales en la base de datos.</td></tr>'}
           </tbody></table></div></div>
           ${C.sinPeso.length ? `<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">⚠️ ${C.sinPeso.length} pieza${C.sinPeso.length > 1 ? 's' : ''} del Gantt sin peso o material en la base de datos (no se cuentan en el consumo): ${C.sinPeso.slice(0, 15).map(esc).join(', ')}${C.sinPeso.length > 15 ? '…' : ''}. Completalos en Órdenes → Base de datos (material y peso c/colada).</div>` : ''}
           <div><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">🧩 Producto terminado</span><input id="stBuscar" value="${esc(stockBuscar)}" placeholder="Buscar pieza…" class="${INP} w-48"></div>
@@ -733,7 +763,45 @@
         const L = (d.movimientos || []).slice().sort((a, b) => String(b.fecha + (b.cargadoAt || '')).localeCompare(String(a.fecha + (a.cargadoAt || ''))));
         const u = g === 'materiales' ? 'kg' : 'u';
         const w = modal(`Movimientos · ${esc(k)}`, L.length ? `<table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fecha</th><th class="pr-2">Tipo</th><th class="pr-2 text-right">Cantidad</th><th class="pr-2">Nota</th><th class="pr-2">Cargó</th><th></th></tr></thead><tbody>${L.map(m => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 text-slate-300">${fDia(m.fecha)}</td><td class="pr-2 text-white">${esc(m.tipo)}</td><td class="pr-2 text-right font-bold text-white">${n1(g === 'materiales' ? m.kg : m.cant)} ${u}</td><td class="pr-2 text-slate-400">${esc(m.nota || '')}</td><td class="pr-2 text-[10px] text-slate-500">${esc(m.por || '')}</td><td class="text-right">${edit ? `<button type="button" class="stm-del text-slate-500 hover:text-rose-300" data-id="${esc(m.id)}">🗑️</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="text-xs text-slate-400">Sin movimientos cargados.</div>', 'max-w-2xl');
-        w.addEventListener('click', e => { const b = e.target.closest('.stm-del'); if (!b || !editStock() || !confirm('¿Borrar este movimiento?')) return; d.movimientos = d.movimientos.filter(m => m.id !== b.dataset.id); guardarMod('stock'); verMovimientos(g, k); renderStock(); programarAvisos(); });
+        w.addEventListener('click', e => { const b = e.target.closest('.stm-del'); if (!b || !editStock()) return; const mv = (d.movimientos || []).find(m => m.id === b.dataset.id); if (!confirm(mv && mv.fardos && mv.fardos.length ? `¿Borrar este ingreso? También se borran sus ${mv.fardos.length} fardo(s).` : '¿Borrar este movimiento?')) return; if (mv && mv.fardos) d.fardos = (d.fardos || []).filter(f => !mv.fardos.includes(f.id)); d.movimientos = d.movimientos.filter(m => m.id !== b.dataset.id); guardarMod('stock'); verMovimientos(g, k); renderStock(); programarAvisos(); });
+      }
+      let fardosVerRet = false;
+      function verFardos(k) {
+        const S = D('stock'); const d = ((S.materiales || {})[k]) || {}; const edit = editStock();
+        const L = (d.fardos || []).slice().sort((a, b) => (b.numero || 0) - (a.numero || 0));
+        const dep = L.filter(f => !f.retiro), vis = fardosVerRet ? L : dep;
+        const porAn = {}; dep.forEach(f => { const a = f.analisis || '—'; porAn[a] = porAn[a] || { n: 0, kg: 0 }; porAn[a].n++; porAn[a].kg += Number(f.kg) || 0; });
+        const w = modal(`🧱 Fardos · ${esc(k)}`, `<div class="flex flex-wrap items-center gap-2 text-xs"><span class="rounded-lg bg-teal-500/15 px-2.5 py-1.5 font-black text-teal-200">En depósito: ${dep.length} fardo${dep.length === 1 ? '' : 's'} · ${n0(dep.reduce((a, f) => a + (Number(f.kg) || 0), 0))} kg</span>
+            ${Object.keys(porAn).sort().map(a => `<span class="rounded-lg border border-slate-700 px-2 py-1 text-slate-300">Análisis <b class="text-white">${esc(a)}</b>: ${porAn[a].n} · ${n0(porAn[a].kg)} kg</span>`).join('')}
+            <label class="ml-auto flex items-center gap-1.5 text-slate-300"><input type="checkbox" class="stf-ret h-4 w-4" ${fardosVerRet ? 'checked' : ''}> Ver también los retirados</label></div>
+          ${vis.length ? `<div class="max-h-[60vh] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fardo</th><th class="pr-2">Análisis</th><th class="pr-2 text-right">Kg</th><th class="pr-2">Ingresó</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
+            ${vis.map(f => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-black text-white">N° ${f.numero}</td><td class="pr-2 text-slate-200">${esc(f.analisis || '—')}</td><td class="pr-2 text-right font-bold text-white">${n1(f.kg)}</td><td class="pr-2 text-slate-400">${fDia(f.fecha)}${f.nota ? `<span class="block text-[10px] text-slate-500">${esc(f.nota)}</span>` : ''}</td>
+              <td class="pr-2">${f.retiro ? `<span class="text-orange-300">Retirado ${fDia(f.retiro.fecha)}${f.retiro.maquina ? ' → ' + esc(f.retiro.maquina) : ''}</span><span class="block text-[10px] text-slate-500">${esc(f.retiro.por || '')}${f.retiro.nota ? ' · ' + esc(f.retiro.nota) : ''}</span>` : '<span class="font-bold text-teal-300">En depósito</span>'}</td>
+              <td class="whitespace-nowrap text-right">${edit ? (f.retiro ? `<button type="button" class="stf-volver text-[11px] text-slate-300 hover:text-white" data-id="${esc(f.id)}">↩ Volver al depósito</button>` : `<button type="button" class="stf-retirar text-[11px] font-bold text-orange-300 hover:text-orange-200" data-id="${esc(f.id)}">📤 Retirar</button>`) : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="text-xs text-slate-400">No hay fardos en el depósito.</div>'}`, 'max-w-3xl');
+        w.addEventListener('change', e => { if (e.target.classList.contains('stf-ret')) { fardosVerRet = e.target.checked; verFardos(k); } });
+        w.addEventListener('click', e => {
+          const b = e.target.closest('button'); if (!b || !editStock()) return;
+          if (b.classList.contains('stf-retirar')) { cerrarModal(); stockForm = { tipo: 'retiro', clave: k, fardoId: b.dataset.id }; renderStock(); const vv = $('viewStock'); if (vv) vv.scrollIntoView({ behavior: 'smooth' }); return; }
+          if (b.classList.contains('stf-volver')) { const f = (d.fardos || []).find(x => x.id === b.dataset.id); if (!f || !confirm(`¿El fardo N° ${f.numero} vuelve al depósito (se anula el retiro)?`)) return; delete f.retiro; guardarMod('stock'); verFardos(k); renderStock(); toast('✓ El fardo volvió al depósito'); }
+        });
+      }
+      window.inoferVerFardos = verFardos;
+      function pintarKgsFardos(form) {
+        const n = Math.max(1, Math.min(200, Math.round(Number(form.querySelector('.st-fn').value) || 1)));
+        const dist = form.querySelector('.st-fdist').checked, box = form.querySelector('.st-fkgs'), base = form.querySelector('.st-fkg');
+        base.required = !dist; base.disabled = dist;
+        box.classList.toggle('hidden', !dist);
+        if (dist) {
+          const prev = [...box.querySelectorAll('input')].map(i => i.value);
+          box.innerHTML = Array.from({ length: n }, (_, i) => `<label class="text-[10px] text-slate-400">Fardo ${i + 1} (kg)<input type="number" name="kg_${i}" min="0.1" step="0.1" required value="${esc(prev[i] != null ? prev[i] : (base.value || ''))}" class="st-fkgi ${INP} w-full"></label>`).join('');
+        }
+        totalFardos(form);
+      }
+      function totalFardos(form) {
+        const n = Math.max(1, Math.min(200, Math.round(Number(form.querySelector('.st-fn').value) || 1)));
+        const dist = form.querySelector('.st-fdist').checked;
+        const kg = dist ? [...form.querySelectorAll('.st-fkgi')].reduce((a, i) => a + (Number(i.value) || 0), 0) : n * (Number(form.querySelector('.st-fkg').value) || 0);
+        form.querySelector('.st-ftotal').textContent = `Total: ${n} fardo${n === 1 ? '' : 's'} · ${n0(kg)} kg`;
       }
       function montarStock() {
         crearPestana('Stock', '📦 Stock', 'text-teal-300', 'bg-teal-500', verStock, renderStock);
@@ -744,6 +812,12 @@
           if ((b = g('.st-nuevo'))) { stockForm = { tipo: b.dataset.t, clave: b.dataset.k || '' }; renderStock(); setTimeout(() => { const i = v.querySelector('.st-form [name="' + (b.dataset.k ? 'cant' : 'clave') + '"]'); if (i) i.focus(); }, 30); return; }
           if (g('.st-cancel')) { stockForm = null; renderStock(); return; }
           if ((b = g('.st-movs'))) verMovimientos(b.dataset.g, b.dataset.k);
+          if ((b = g('.st-fardos'))) verFardos(b.dataset.k);
+        });
+        v.addEventListener('input', e => { const f = e.target.closest('.st-form-fardos'); if (!f) return; if (e.target.classList.contains('st-fn')) pintarKgsFardos(f); else totalFardos(f); });
+        v.addEventListener('change', e => {
+          const f = e.target.closest('.st-form-fardos'); if (f && e.target.classList.contains('st-fdist')) pintarKgsFardos(f);
+          if (e.target.classList.contains('st-rmat')) { stockForm = { tipo: 'retiro', clave: e.target.value }; renderStock(); }
         });
         v.addEventListener('input', e => { if (e.target.id === 'stBuscar') { stockBuscar = e.target.value; const pos = e.target.selectionStart; renderStock(); const i = $('stBuscar'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (er) { } } } });
         v.addEventListener('change', e => {
@@ -755,7 +829,34 @@
           e.preventDefault();
           if (!editStock()) { toast('Tu usuario no puede modificar el stock'); return; }
           const fd = Object.fromEntries(new FormData(e.target).entries());
-          const tipo = stockForm.tipo; const mat = tipo === 'ingreso' || tipo === 'conteo';
+          const tipo = stockForm.tipo;
+          if (tipo === 'fardos') {
+            const clave = String(fd.clave || '').trim().toUpperCase(); if (!clave) return;
+            const n = Math.max(1, Math.min(200, Math.round(Number(fd.n) || 1)));
+            const kgs = fd.distinto ? Array.from({ length: n }, (_, i) => Number(fd['kg_' + i])) : Array.from({ length: n }, () => Number(fd.kg));
+            if (kgs.some(x => !(x > 0))) { toast('Poné los kilos de cada fardo'); return; }
+            const S = D('stock'); S.materiales = S.materiales || {}; const d = S.materiales[clave] = S.materiales[clave] || { movimientos: [] };
+            d.movimientos = d.movimientos || []; d.fardos = d.fardos || [];
+            d.movimientos.forEach(m => { if (m.kg == null && m.cant != null) m.kg = m.cant; });
+            let num = d.fardos.reduce((a, f) => Math.max(a, Number(f.numero) || 0), 0);
+            const ahora = new Date().toISOString(), base = Date.now(), fecha = fd.fecha || hoyIso(), analisis = String(fd.analisis || '').trim().slice(0, 40), nota = String(fd.nota || '').trim();
+            const nuevos = kgs.map((kg, i) => ({ id: 'fd-' + base + '-' + i, numero: ++num, analisis, kg: Math.round(kg * 10) / 10, fecha, nota, por: quien(), cargadoAt: ahora }));
+            d.fardos.push(...nuevos);
+            const total = nuevos.reduce((a, f) => a + f.kg, 0);
+            d.movimientos.push({ id: 'sm-' + base, fecha, tipo: 'ingreso', kg: Math.round(total * 10) / 10, fardos: nuevos.map(f => f.id), nota: `${n} fardo${n === 1 ? '' : 's'} N° ${nuevos[0].numero}${n > 1 ? '–' + nuevos[n - 1].numero : ''} · análisis ${analisis}${nota ? ' · ' + nota : ''}`, por: quien(), cargadoAt: ahora });
+            stockForm = null; guardarMod('stock'); renderStock(); programarAvisos();
+            toast(`✓ ${n} fardo${n === 1 ? '' : 's'} de ${clave} ingresado${n === 1 ? '' : 's'} (${n0(total)} kg)`);
+            return;
+          }
+          if (tipo === 'retiro') {
+            const clave = String(fd.clave || '').trim(); const ids = new FormData(e.target).getAll('fardo');
+            if (!ids.length) { toast('Elegí qué fardo se retira'); return; }
+            const d = ((D('stock').materiales || {})[clave]) || {}; const ahora = new Date().toISOString(); let kg = 0;
+            (d.fardos || []).forEach(f => { if (ids.includes(f.id) && !f.retiro) { f.retiro = { fecha: fd.fecha || hoyIso(), maquina: String(fd.maquina || ''), nota: String(fd.nota || '').trim(), por: quien(), at: ahora }; kg += Number(f.kg) || 0; } });
+            stockForm = null; guardarMod('stock'); renderStock(); programarAvisos();
+            toast(`✓ ${ids.length} fardo${ids.length === 1 ? '' : 's'} retirado${ids.length === 1 ? '' : 's'} del depósito (${n0(kg)} kg)`);
+            return;
+          } const mat = tipo === 'ingreso' || tipo === 'conteo';
           const g = mat ? 'materiales' : 'terminado';
           let clave = String(fd.clave || '').trim(); if (!clave) return;
           if (mat) clave = clave.toUpperCase(); else { const c = catDe(clave); if (c) clave = c.part; }

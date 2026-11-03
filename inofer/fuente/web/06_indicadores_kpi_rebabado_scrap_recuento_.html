@@ -86,6 +86,7 @@
         meta.data.forEach((pt, i) => {
           const v = ds.data[i]; if (v === null || v === undefined) return;
           const txt = inoferPct(v), w = ctx.measureText(txt).width;
+          if (ds.type === 'bar') { ctx.textAlign = 'center'; ctx.fillText(txt, pt.x, pt.y - 9); return; }
           const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
           ctx.textAlign = derecha ? 'right' : 'left';
           ctx.fillText(txt, derecha ? pt.x - 7 : pt.x + 7, pt.y + 8);
@@ -93,9 +94,14 @@
         ctx.restore();
       }
     };
+    // Tipos de gráfico que se pueden elegir por indicador (se guarda en el módulo kpis: lo ven todos)
+    const INOFER_KPI_GRAFICOS = [['linea', 'Línea (como la planilla)'], ['barras', 'Barras'], ['semaforo', 'Barras verde / rojo según la meta'], ['area', 'Área'], ['escalon', 'Escalones'], ['puntos', 'Puntos'], ['tendencia', 'Línea + tendencia']];
+    window.INOFER_KPI_GRAFICOS = INOFER_KPI_GRAFICOS;
+    function inoferKpiTipo(k) { const t = (inoferKpis[k] || {}).grafico; return INOFER_KPI_GRAFICOS.some(g => g[0] === t) ? t : 'linea'; }
     function inoferKpiDibujar(canvas, k, opts) {
       if (!canvas || typeof Chart === 'undefined') return null;
       const def = inoferKpiDef(k), o = inoferKpiData(k), datos = (opts && opts.datos) || inoferKpiFiltrados(k);
+      const tipo = (opts && opts.tipo) || inoferKpiTipo(k), esBarra = tipo === 'barras' || tipo === 'semaforo';
       const vals = datos.map(x => Number(x.valor));
       const meta = Number(o.meta);
       // la meta entra en la escala solo si está cerca de los datos (si no, aplasta la curva)
@@ -108,14 +114,23 @@
       if (hi - lo < 2) { hi = Math.min(def.max, lo + 2); }
       if (canvas.__chart) { try { canvas.__chart.destroy(); } catch (e) { } }
       const grid = 'rgba(255,255,255,0.45)';
+      const cumple = v => def.mayorEsMejor ? v >= meta : v <= meta;
+      const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
+      if (esBarra) Object.assign(principal, { type: 'bar', borderWidth: 0, borderRadius: 3, maxBarThickness: 46, backgroundColor: tipo === 'semaforo' ? vals.map(v => cumple(v) ? '#15803d' : '#b91c1c') : '#0f172a' });
+      if (tipo === 'area') Object.assign(principal, { fill: 'start', backgroundColor: 'rgba(15,23,42,0.35)' });
+      if (tipo === 'escalon') Object.assign(principal, { stepped: 'middle' });
+      if (tipo === 'puntos') Object.assign(principal, { showLine: false, pointRadius: 5.5, pointHoverRadius: 7, pointBackgroundColor: vals.map(v => cumple(v) ? '#15803d' : '#b91c1c'), pointBorderColor: '#000000', pointBorderWidth: 1.5 });
+      const series = [principal, { type: 'line', label: 'Meta ' + inoferPct(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false, order: 1 }];
+      if (tipo === 'tendencia' && vals.length >= 3) { // recta de mínimos cuadrados
+        const n = vals.length, sx = (n - 1) * n / 2, sy = vals.reduce((a, b) => a + b, 0), sxy = vals.reduce((a, v, i) => a + i * v, 0), sxx = vals.reduce((a, v, i) => a + i * i, 0);
+        const m = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1), b0 = (sy - m * sx) / n;
+        series.push({ type: 'line', label: 'Tendencia', data: vals.map((v, i) => Math.round((b0 + m * i) * 100) / 100), borderColor: '#f8fafc', borderWidth: 2, borderDash: [2, 4], pointRadius: 0, fill: false, order: 0 });
+      }
       const chart = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: {
           labels: datos.map(x => inoferMesTxt(x.mes)),
-          datasets: [
-            { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false },
-            { label: 'Meta ' + inoferPct(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false }
-          ]
+          datasets: series
         },
         options: {
           responsive: true, maintainAspectRatio: false, animation: !(opts && opts.sinAnimacion),
@@ -218,6 +233,7 @@
           <div class="space-y-3">
             <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl">
               <div class="mb-2 flex flex-wrap items-center justify-end gap-2">
+                <label class="mr-auto flex items-center gap-2 text-[11px] font-semibold text-slate-400">Tipo de gráfico<select id="kpiTipoGraf" class="kpi-edit rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">${INOFER_KPI_GRAFICOS.map(([v, t]) => `<option value="${v}" ${inoferKpiTipo(k) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
                 <button type="button" id="kpiPngBtn" class="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400">📥 Descargar gráfico PNG</button>
                 <button type="button" id="kpiPrintBtn" class="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-emerald-400">🖨️ Imprimir informe</button>
               </div>
@@ -277,6 +293,7 @@
         inoferGuardarKpis(); inoferRenderKpi();
         showToast(`${def.corto} ${inoferMesTxt(mes)}: ${inoferPct(valor)} guardado`);
       });
+      body.querySelector('#kpiTipoGraf').addEventListener('change', e => { inoferKpiData(k).grafico = e.target.value; inoferKpiData(k).graficoAt = new Date().toISOString(); inoferGuardarKpis(); inoferRenderKpi(); showToast('✓ Tipo de gráfico guardado para todos'); });
       body.querySelector('#kpiMeta').addEventListener('change', e => { inoferKpiData(k).meta = Number(e.target.value) || 0; inoferGuardarKpis(); inoferRenderKpi(); });
       body.querySelectorAll('[data-kpi-editar]').forEach(b => b.addEventListener('click', () => {
         const x = inoferKpiData(k).datos.find(d => d.mes === b.dataset.kpiEditar); if (!x) return;
