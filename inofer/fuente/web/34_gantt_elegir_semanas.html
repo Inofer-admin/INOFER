@@ -1,0 +1,127 @@
+  <script>
+    // ===== Armado automático del Gantt: elegir las semanas a programar tocando la semana (en vez de "Mes base M1") =====
+    // Reemplaza el select viejo #autoGanttMonthSelect (queda oculto). Las semanas se identifican por fecha: si ya existe una
+    // semana del Gantt para ese lunes se usa su código; si no, SEM-<n° de semana ISO> (como la planilla "PLANTA INOFER, SEM N").
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const pad = n => String(n).padStart(2, '0');
+      const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const desdeIso = s => new Date(String(s).slice(0, 10) + 'T12:00:00');
+      const masDias = (s, n) => { const d = desdeIso(s); d.setDate(d.getDate() + n); return iso(d); };
+      const lunesDe = s => { const d = desdeIso(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+      const domingoDe = s => { const d = desdeIso(s); d.setDate(d.getDate() - d.getDay()); return iso(d); };
+      const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+      function numIso(lun) { const d = desdeIso(lun); d.setDate(d.getDate() + 3); const j = new Date(d.getFullYear(), 0, 4, 12); return 1 + Math.round(((d - j) / 86400000 - 3 + ((j.getDay() + 6) % 7)) / 7); }
+      function rango(lun) { const a = desdeIso(lun), b = desdeIso(masDias(lun, 5)); return a.getMonth() === b.getMonth() ? `${a.getDate()} al ${b.getDate()} ${MES[b.getMonth()]}` : `${a.getDate()} ${MES[a.getMonth()]} al ${b.getDate()} ${MES[b.getMonth()]}`; }
+      const semanas = () => (typeof ganttWeeksData !== 'undefined' && ganttWeeksData) ? ganttWeeksData : {};
+      // código de la semana del Gantt para un lunes (reutiliza la que ya exista para esas fechas)
+      function codigoSemana(lun) {
+        lun = lunesDe(lun); const num = numIso(lun), dom = domingoDe(lun);
+        const W = semanas();
+        const ya = Object.keys(W).find(c => W[c] && W[c].startDate && domingoDe(W[c].startDate) === dom);
+        let code = ya || 'SEM-' + num;
+        if (!ya && W[code] && W[code].startDate && domingoDe(W[code].startDate) !== dom) code = 'SEM-' + num + '-' + String(desdeIso(lun).getFullYear()).slice(2);
+        return { code, num, rango: rango(lun), lunes: lun, existe: !!ya };
+      }
+      window.inoferCodigoSemana = codigoSemana;
+      // qué tiene programado una semana (para mostrarlo en el selector)
+      function cargaSemana(code) {
+        const w = semanas()[code]; if (!w || !w.machines) return { h: 0, piezas: 0, fijas: 0 };
+        let h = 0, piezas = 0, fijas = 0;
+        Object.values(w.machines).forEach(md => {
+          ((md && md.items) || []).forEach(it => { if (it.isSharedCompanion) return; const q = (it.dailyQty || []).reduce((a, b) => a + (Number(b) || 0), 0); if (!q) return; piezas++; if (it.fijo) fijas++; const u = Number(it.stdRate) || 0; if (u) h += q / u; });
+          Object.values((md && md.aux) || {}).forEach(arr => (arr || []).forEach(x => { h += Number(x) || 0; }));
+        });
+        return { h: Math.round(h), piezas, fijas };
+      }
+
+      let desplaz = 0;
+      function inicioPorDefecto() { return masDias(lunesDe(iso(new Date())), 7); }
+      function estado() { return { inicio: ($('autoGanttSemanaInicio') || {}).value || inicioPorDefecto(), n: Number(($('autoGanttCantSemanas') || {}).value) || 4 }; }
+      function cantidadForzada() { const t = ($('autoGanttTargetMCol') || {}).value || ''; return t === 'ALL_M1_M3' ? 12 : (t === 'ALL_M1_M6' ? 24 : 0); }
+      function pintar() {
+        const box = $('gsBox'); if (!box) return;
+        const st = estado(), forz = cantidadForzada(), n = forz || st.n;
+        const hoyLun = lunesDe(iso(new Date())), base = masDias(hoyLun, (desplaz - 1) * 7);
+        const fin = masDias(st.inicio, (n - 1) * 7);
+        const chips = [];
+        for (let i = 0; i < 10; i++) {
+          const lun = masDias(base, i * 7), c = codigoSemana(lun), carga = cargaSemana(c.code);
+          const dentro = lun >= st.inicio && lun <= fin, esInicio = lun === st.inicio;
+          const etiqueta = lun === hoyLun ? 'esta semana' : (lun === masDias(hoyLun, 7) ? 'la próxima' : (lun < hoyLun ? 'ya pasó' : ''));
+          chips.push(`<button type="button" data-gs="${lun}" aria-pressed="${dentro}" title="${esc(c.code)}" class="gs-chip relative flex min-h-[78px] min-w-[104px] flex-col items-start rounded-xl border px-2.5 py-2 text-left transition ${dentro ? 'border-amber-400 bg-amber-500/20' : 'border-slate-700 bg-slate-900 hover:border-slate-500'} ${lun < hoyLun ? 'opacity-60' : ''}">
+            <span class="text-[10px] font-bold uppercase tracking-wide ${etiqueta === 'esta semana' ? 'text-cyan-300' : 'text-slate-500'}">${etiqueta || '&nbsp;'}</span>
+            <span class="text-sm font-black ${dentro ? 'text-amber-100' : 'text-white'}">Sem ${c.num}${esInicio ? ' ▸' : ''}</span>
+            <span class="text-[11px] text-slate-300">${c.rango}</span>
+            <span class="mt-0.5 text-[10px] font-semibold ${carga.piezas ? 'text-amber-300' : 'text-emerald-300'}">${carga.piezas ? `≈${carga.h} h · ${carga.piezas} pza${carga.piezas === 1 ? '' : 's'}${carga.fijas ? ' · 📌' + carga.fijas : ''}` : 'vacía'}</span>
+          </button>`);
+        }
+        const cods = []; for (let i = 0; i < n; i++) cods.push(codigoSemana(masDias(st.inicio, i * 7)));
+        const conCarga = cods.filter(c => cargaSemana(c.code).piezas);
+        const fijasT = cods.reduce((a, c) => a + cargaSemana(c.code).fijas, 0);
+        box.innerHTML = `<div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-sm font-black text-amber-300">📅 ¿Qué semanas armo? <span class="text-[11px] font-normal text-slate-400">tocá la semana en la que arranca</span></span>
+            <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-300"><span>Cuántas semanas:</span>
+              ${forz ? `<span class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 font-bold text-amber-200">${forz} (por el pedido elegido)</span>` : [1, 2, 3, 4, 6, 8].map(k => `<button type="button" data-gsn="${k}" aria-pressed="${k === n}" class="min-h-[36px] min-w-[40px] rounded-lg border px-2.5 font-bold ${k === n ? 'border-amber-400 bg-amber-500 text-slate-950' : 'border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500'}">${k === 4 ? '4 · un mes' : k}</button>`).join('')}</div>
+          </div>
+          <div class="flex items-stretch gap-1.5">
+            <button type="button" data-gsm="-1" aria-label="Semanas anteriores" class="w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-lg font-black text-slate-300 hover:bg-slate-800">‹</button>
+            <div class="flex flex-1 gap-1.5 overflow-x-auto pb-1">${chips.join('')}</div>
+            <button type="button" data-gsm="1" aria-label="Semanas siguientes" class="w-9 shrink-0 rounded-xl border border-slate-700 bg-slate-900 text-lg font-black text-slate-300 hover:bg-slate-800">›</button>
+          </div>
+          <div class="rounded-lg bg-slate-950/80 px-3 py-2 text-[12px] text-slate-200">Se arma ${n === 1 ? `la <b class="text-white">Sem ${cods[0].num}</b> (${cods[0].rango})` : `de la <b class="text-white">Sem ${cods[0].num}</b> a la <b class="text-white">Sem ${cods[n - 1].num}</b> (${rango(cods[0].lunes).split(' al ')[0]} al ${rango(cods[n - 1].lunes).split(' al ')[1]})`} con el <b class="text-white">${esc(($('autoGanttTargetMCol') || {}).selectedOptions ? (($('autoGanttTargetMCol').selectedOptions[0] || {}).textContent || '').split(' — ')[0].replace(/\s*\(.*$/, '') : 'pedido elegido')}</b>.
+            ${conCarga.length ? `<span class="text-amber-300">⚠️ ${conCarga.length === 1 ? 'La Sem ' + conCarga[0].num + ' ya tiene' : conCarga.length + ' semanas ya tienen'} programación: se reemplaza${fijasT ? ', pero las piezas 📌 fijas se conservan' : ''}.</span>` : '<span class="text-emerald-300">Las semanas están vacías.</span>'}</div>`;
+      }
+      function montar() {
+        const panel = $('autoGanttMonthPanel'); if (!panel || $('gsBox')) return !!$('gsBox');
+        const viejo = $('autoGanttMonthSelect'); if (viejo && viejo.parentElement) viejo.parentElement.style.display = 'none';
+        const box = document.createElement('div'); box.id = 'gsBox'; box.className = 'space-y-2 rounded-xl border border-amber-500/40 bg-slate-950/90 p-3.5 text-xs';
+        const ini = document.createElement('input'); ini.type = 'hidden'; ini.id = 'autoGanttSemanaInicio'; ini.value = inicioPorDefecto();
+        const cant = document.createElement('input'); cant.type = 'hidden'; cant.id = 'autoGanttCantSemanas'; cant.value = '4';
+        const grilla = panel.querySelector('.grid.grid-cols-1.gap-5'); (grilla ? grilla.parentElement : panel).insertBefore(box, grilla || null);
+        panel.appendChild(ini); panel.appendChild(cant);
+        box.addEventListener('click', e => {
+          const b = e.target.closest('button'); if (!b) return;
+          if (b.dataset.gs) { ini.value = b.dataset.gs; pintar(); }
+          else if (b.dataset.gsn) { cant.value = b.dataset.gsn; pintar(); }
+          else if (b.dataset.gsm) { desplaz += Number(b.dataset.gsm) * 4; pintar(); }
+        });
+        const tgt = $('autoGanttTargetMCol'); if (tgt) tgt.addEventListener('change', pintar);
+        pintar();
+        return true;
+      }
+
+      // armado con las semanas elegidas (lo llama generateAutomaticMonthlyGanttFromDemand del núcleo)
+      window.inoferArmarPorSemanas = function (selTarget, inicio, n) {
+        inicio = lunesDe(inicio);
+        let meses = [0];
+        if (selTarget === 'ALL_M1_M3') meses = [0, 1, 2];
+        else if (selTarget === 'ALL_M1_M6') meses = [0, 1, 2, 3, 4, 5];
+        else if (/^M\d+$/.test(selTarget)) meses = [Math.max(0, (parseInt(selTarget.slice(1), 10) || 1) - 1)];
+        const porMes = meses.length > 1 ? 4 : Math.max(1, Math.min(26, n || 4));
+        const total = porMes * meses.length;
+        const cods = []; for (let i = 0; i < total; i++) cods.push(codigoSemana(masDias(inicio, i * 7)));
+        const ocupadas = cods.filter(c => cargaSemana(c.code).piezas);
+        if (ocupadas.length && !window.__inoferSinConfirmar && !confirm(`${ocupadas.length === 1 ? 'La Sem ' + ocupadas[0].num + ' ya tiene' : 'Las semanas ' + ocupadas.map(c => c.num).join(', ') + ' ya tienen'} programación.\n\n¿Armarlas de nuevo? Se reemplaza lo automático; las piezas 📌 fijas se conservan.`)) return null;
+        let res = { semanas: [], prog: 0, crit: 0, comp: 0, ops: 0, sinLugar: 0 };
+        meses.forEach((mIdx, k) => {
+          const desde = masDias(inicio, k * porMes * 7);
+          const r = scheduleOneMonthIntoGanttWeeks(mIdx, numIso(desde), desde, 'Pedido M' + (mIdx + 1), porMes);
+          res.semanas.push(...r.monthWeekCodes); res.prog += r.scheduledPartsCount; res.crit += r.criticalPartsCount; res.comp += r.sharedMoldsScheduledCount; res.ops += r.createdOrdersCount; res.sinLugar += r.lotesSinLugar || 0;
+        });
+        if (res.semanas.length) activeGanttWeekCode = res.semanas[0];
+        try { saveGanttWeeks(); } catch (e) { } try { saveProductionOrders(); } catch (e) { }
+        try { refreshAll(); } catch (e) { } try { renderGanttView(); } catch (e) { }
+        const ban = $('autoGanttResultBanner');
+        if (ban) { ban.classList.remove('hidden'); ban.innerHTML = `✅ <strong>Gantt armado: Sem ${cods[0].num}${cods.length > 1 ? ' a Sem ' + cods[cods.length - 1].num : ''}</strong> (${rango(cods[0].lunes).split(' al ')[0]} al ${rango(cods[cods.length - 1].lunes).split(' al ')[1]}). Se programaron <strong>${res.prog} lotes</strong>${res.crit ? ` (con ${res.crit} piezas 🔴 urgentes primero)` : ''}${res.ops ? ` y ${res.ops} órdenes de producción` : ''}.${res.sinLugar ? ` <span class="text-amber-300">⚠️ ${res.sinLugar} lote${res.sinLugar === 1 ? '' : 's'} no entraron (lote mínimo o capacidad): sumá semanas o más horas por día.</span>` : ''}`; }
+        try { showToast(`Gantt armado: ${res.semanas.join(', ')}`); } catch (e) { }
+        pintar();
+        return res;
+      };
+      window.inoferSelectorSemanas = { pintar, codigoSemana, cargaSemana };
+
+      let n = 0; const t = setInterval(() => { try { if (montar() || ++n > 60) clearInterval(t); } catch (e) { } }, 1000);
+      document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#toggleAutoGanttPanelBtn, [data-gt-sec], #gtAuto')) setTimeout(() => { try { montar(); pintar(); } catch (er) { } }, 150); });
+    })();
+  </script>

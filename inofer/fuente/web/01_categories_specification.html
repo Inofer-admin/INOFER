@@ -4959,7 +4959,8 @@ ${lines}${trendNote}`;
       return allAnalyzed;
     }
 
-    function scheduleOneMonthIntoGanttWeeks(mIdx, startWeekNum, baseIsoDate, monthLabel) {
+    function scheduleOneMonthIntoGanttWeeks(mIdx, startWeekNum, baseIsoDate, monthLabel, nSemanas) {
+      const porFecha = !!nSemanas && typeof window.inoferCodigoSemana === 'function'; // selector de semanas nuevo (parte 34)
       const allAnalyzed = analyzeDemandListWithDatabase(undefined, mIdx);
       let demandList = allAnalyzed.filter(x => x.qty > 0);
       // Ahorro de SET-UP: dentro de cada nivel de urgencia, las piezas del mismo pistón van seguidas
@@ -4976,17 +4977,19 @@ ${lines}${trendNote}`;
       const monthWeekCodes = [];
       window.__inoferPrevSemanas = JSON.parse(JSON.stringify(ganttWeeksData || {}));
 
-      for (let wOffset = 0; wOffset < 4; wOffset++) {
-        const wNum = startWeekNum + wOffset;
-        const wCode = `SEM-${wNum}`;
-        monthWeekCodes.push(wCode);
+      const totalSem = porFecha ? Math.max(1, Math.min(26, Number(nSemanas) || 4)) : 4;
+      for (let wOffset = 0; wOffset < totalSem; wOffset++) {
         const wStart = new Date(baseDate);
         wStart.setDate(baseDate.getDate() + wOffset * 7);
-        const isoStart = wStart.toISOString().slice(0, 10);
+        const isoStart = porFecha ? (wStart.getFullYear() + '-' + String(wStart.getMonth() + 1).padStart(2, '0') + '-' + String(wStart.getDate()).padStart(2, '0')) : wStart.toISOString().slice(0, 10);
+        const sel = porFecha ? window.inoferCodigoSemana(isoStart) : null;
+        const wNum = porFecha ? sel.num : startWeekNum + wOffset;
+        const wCode = porFecha ? sel.code : `SEM-${wNum}`;
+        monthWeekCodes.push(wCode);
 
         ganttWeeksData[wCode] = {
           code: wCode,
-          name: `Semana ${wNum} (M${mIdx + 1} · ${monthLabel} - Sem ${wOffset + 1}/4)`,
+          name: porFecha ? `Semana ${wNum} · ${sel.rango} (Pedido M${mIdx + 1})` : `Semana ${wNum} (M${mIdx + 1} · ${monthLabel} - Sem ${wOffset + 1}/4)`,
           startDate: isoStart,
           machines: {
             '200V': { aux: { 'CMA': [0,0,0,0,0,0,0], 'CMO': [0,0,0,0,0,0,0], 'ALIS': [0,0,0,0,0,0,0], 'DESG': [0,0,0,0,0,0,0], 'LING': [0,0,0,0,0,0,0], 'LIMP': [0,0,0,0,0,0,0], 'CPIS': [0,0,0,0,0,0,0] }, items: [] },
@@ -5296,6 +5299,8 @@ ${lines}${trendNote}`;
 
     function generateAutomaticMonthlyGanttFromDemand() {
       const selTarget = document.getElementById('autoGanttTargetMCol')?.value || 'M1';
+      const inicioSel = document.getElementById('autoGanttSemanaInicio')?.value || '';
+      if (inicioSel && typeof window.inoferArmarPorSemanas === 'function') return window.inoferArmarPorSemanas(selTarget, inicioSel, Number(document.getElementById('autoGanttCantSemanas')?.value) || 4);
       const monthVal = document.getElementById('autoGanttMonthSelect')?.value || '2026-11|44|Noviembre 2026';
       const [yearMonth, startWeekStr, monthLabel] = monthVal.split('|');
       const baseStartWeek = parseInt(startWeekStr, 10) || 44;

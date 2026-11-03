@@ -600,6 +600,32 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.rec.anOpc && r.rec.f4 && r.rec.f4.origen === 'recuperado' && r.rec.f4.grado === 2 && r.rec.nuevo === 'nuevo' && /recup\. · 500 kg/.test(r.rec.celda) && r.rec.html, 'material recuperado: ' + JSON.stringify(r.rec));
       ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
+    await prueba('Gantt automático: elegir las semanas tocándolas (1 a 8, por fecha)', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        switchTab('gantt'); await esperar(300);
+        try { window.inoferGanttVista && inoferGanttVista.abrirSeccion('autoGanttMonthPanel'); } catch (e) { }
+        for (let i = 0; i < 6 && !document.getElementById('gsBox'); i++) await esperar(500);
+        const box = document.getElementById('gsBox'); if (!box) return { sinBox: true };
+        const chips = box.querySelectorAll('[data-gs]').length;
+        // elegir la 3ª semana y 2 semanas
+        const ch = box.querySelectorAll('[data-gs]')[3]; const lunes = ch.dataset.gs; ch.click();
+        box.querySelector('[data-gsn="2"]').click();
+        const resumen = box.textContent;
+        const cod = inoferCodigoSemana(lunes), cod2 = inoferCodigoSemana(new Date(new Date(lunes + 'T12:00:00').getTime() + 7 * 86400000).toISOString().slice(0, 10));
+        window.__inoferSinConfirmar = true;
+        const res = inoferArmarPorSemanas('M1', document.getElementById('autoGanttSemanaInicio').value, Number(document.getElementById('autoGanttCantSemanas').value));
+        window.__inoferSinConfirmar = false;
+        const w1 = ganttWeeksData[res.semanas[0]], w2 = ganttWeeksData[res.semanas[1]];
+        // una semana que ya existe para esa fecha se reutiliza (no se duplica)
+        const otra = inoferCodigoSemana(lunes);
+        return { chips, lunes, cods: res.semanas, esperado: [cod.code, cod2.code], start1: w1 && w1.startDate, start2: w2 && w2.startDate, nombre: w1 && w1.name, mismo: otra.code === res.semanas[0] && otra.existe, resumen: /Se arma de la Sem \d+ a la Sem \d+/.test(resumen), dia: new Date(lunes + 'T12:00:00').getDay() };
+      });
+      ok(!r.sinBox, 'no apareció el selector de semanas');
+      ok(r.chips === 10 && r.dia === 1, 'chips: ' + JSON.stringify(r));
+      ok(r.cods.length === 2 && r.cods[0] === r.esperado[0] && r.start1 === r.lunes && r.start2 > r.start1 && /^Semana \d+ · /.test(r.nombre), 'semanas armadas: ' + JSON.stringify(r));
+      ok(r.mismo && r.resumen, 'reutiliza la semana por fecha y muestra el resumen: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
