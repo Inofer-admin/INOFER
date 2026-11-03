@@ -571,7 +571,9 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         f.requestSubmit(); await esperar(200);
         // segundo ingreso: 1 fardo de 500 kg con otro análisis
         v.querySelector('.st-nuevo[data-t="fardos"]').click(); await esperar(100);
-        f = v.querySelector('.st-form-fardos'); f.querySelector('[name="clave"]').value = 'ALSI-PRUEBA'; f.querySelector('[name="analisis"]').value = 'AN-78'; f.querySelector('[name="kg"]').value = '500'; f.requestSubmit(); await esperar(200);
+        f = v.querySelector('.st-form-fardos'); const r2 = f.querySelector('[name="origen"][value="r2"]'); r2.checked = true; r2.dispatchEvent(new Event('change', { bubbles: true }));
+        const anOpc = !f.querySelector('[name="analisis"]').required;
+        f.querySelector('[name="clave"]').value = 'ALSI-PRUEBA'; f.querySelector('[name="analisis"]').value = 'AN-78'; f.querySelector('[name="kg"]').value = '500'; f.requestSubmit(); await esperar(200);
         const d = D => inoferModLocal('stock').materiales['ALSI-PRUEBA'];
         const antes = { n: d().fardos.length, nums: d().fardos.map(x => x.numero).join(','), movs: d().movimientos.map(m => m.kg).join(',') };
         const fila = [...v.querySelectorAll('.st-fardos')].find(b => b.dataset.k === 'ALSI-PRUEBA'); const celda = fila ? fila.textContent.replace(/\s+/g, ' ') : '';
@@ -585,15 +587,17 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const ret = d().fardos.find(x => x.numero === 2).retiro;
         const inf = inoferInformeFardos({ material: 'ALSI-PRUEBA' });
         inoferImprimirFardos(); await esperar(200); const pm = (document.querySelector('.stp-res') || {}).textContent || ''; document.getElementById('inoferPlantaModal')?.remove();
+        const rec = { anOpc, f4: d().fardos.find(x => x.numero === 4), nuevo: d().fardos.find(x => x.numero === 1).origen, celda: celda, html: /Recuperado 2°/.test(inf.html) && /Nuevo y recuperado/.test(inf.html) };
         const informe = { ing: inf.d.ing.length, ret: inf.d.ret.length, dep: inf.d.dep.length, maq: Object.keys(inf.d.porMaq).join(','), html: /Fardos que se retiraron \(1\)/.test(inf.html) && /AN-77/.test(inf.html) && /<b>200V<\/b>/.test(inf.html), pm };
         const S = inoferModLocal('stock'); delete S.materiales['ALSI-PRUEBA']; inoferModGuardar('stock');
-        return { informe, total, antes, celda, celda2, ret, modal: /Análisis AN-77/.test(modalTxt) && /En depósito: 3 fardos/.test(modalTxt) };
+        return { rec, informe, total, antes, celda, celda2, ret, modal: /Análisis AN-77/.test(modalTxt) && /En depósito: 3 fardos/.test(modalTxt) };
       });
       ok(/3 fardos · 3[.,]030 kg/.test(r.total), 'total en vivo: ' + r.total);
       ok(r.antes.n === 4 && r.antes.nums === '1,2,3,4' && r.antes.movs === '3030,500', 'ingresos: ' + JSON.stringify(r.antes));
       ok(/4 fardos/.test(r.celda) && /3[.,]530 kg/.test(r.celda), 'en depósito: ' + r.celda);
       ok(r.ret && r.ret.maquina === '200V' && /3 fardos/.test(r.celda2) && /2[.,]520 kg/.test(r.celda2), 'retiro: ' + JSON.stringify(r));
       ok(r.modal, 'ventana de fardos');
+      ok(r.rec.anOpc && r.rec.f4 && r.rec.f4.origen === 'recuperado' && r.rec.f4.grado === 2 && r.rec.nuevo === 'nuevo' && /recup\. · 500 kg/.test(r.rec.celda) && r.rec.html, 'material recuperado: ' + JSON.stringify(r.rec));
       ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
