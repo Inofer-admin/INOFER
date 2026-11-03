@@ -583,14 +583,18 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const fila2 = [...v.querySelectorAll('.st-fardos')].find(b => b.dataset.k === 'ALSI-PRUEBA'); const celda2 = fila2 ? fila2.textContent.replace(/\s+/g, ' ') : '';
         inoferVerFardos('ALSI-PRUEBA'); await esperar(100); const modalTxt = (document.getElementById('inoferPlantaModal') || {}).textContent || ''; document.getElementById('inoferPlantaModal')?.remove();
         const ret = d().fardos.find(x => x.numero === 2).retiro;
+        const inf = inoferInformeFardos({ material: 'ALSI-PRUEBA' });
+        inoferImprimirFardos(); await esperar(200); const pm = (document.querySelector('.stp-res') || {}).textContent || ''; document.getElementById('inoferPlantaModal')?.remove();
+        const informe = { ing: inf.d.ing.length, ret: inf.d.ret.length, dep: inf.d.dep.length, maq: Object.keys(inf.d.porMaq).join(','), html: /Fardos que se retiraron \(1\)/.test(inf.html) && /AN-77/.test(inf.html) && /<b>200V<\/b>/.test(inf.html), pm };
         const S = inoferModLocal('stock'); delete S.materiales['ALSI-PRUEBA']; inoferModGuardar('stock');
-        return { total, antes, celda, celda2, ret, modal: /Análisis AN-77/.test(modalTxt) && /En depósito: 3 fardos/.test(modalTxt) };
+        return { informe, total, antes, celda, celda2, ret, modal: /Análisis AN-77/.test(modalTxt) && /En depósito: 3 fardos/.test(modalTxt) };
       });
       ok(/3 fardos · 3[.,]030 kg/.test(r.total), 'total en vivo: ' + r.total);
       ok(r.antes.n === 4 && r.antes.nums === '1,2,3,4' && r.antes.movs === '3030,500', 'ingresos: ' + JSON.stringify(r.antes));
       ok(/4 fardos/.test(r.celda) && /3[.,]530 kg/.test(r.celda), 'en depósito: ' + r.celda);
       ok(r.ret && r.ret.maquina === '200V' && /3 fardos/.test(r.celda2) && /2[.,]520 kg/.test(r.celda2), 'retiro: ' + JSON.stringify(r));
       ok(r.modal, 'ventana de fardos');
+      ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {

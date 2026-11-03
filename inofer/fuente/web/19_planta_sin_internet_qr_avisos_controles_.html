@@ -739,7 +739,7 @@
             <p class="text-xs text-slate-400">El consumo de material sale solo de los turnos cargados (piezas buenas + scrap + arranque × peso con colada de la base de datos). Las piezas producidas suman al stock de terminado; los despachos restan.</p></div>
             ${edit ? `<div class="flex flex-wrap gap-2"><button type="button" class="st-nuevo ${BTN} border-teal-400 bg-teal-500 text-slate-950" data-t="fardos">📦 Ingreso de fardos</button><button type="button" class="st-nuevo ${BTN} border-orange-500/50 bg-orange-500/10 text-orange-200" data-t="retiro">📤 Retiro de fardos</button><button type="button" class="st-nuevo ${BTN} border-teal-500/50 bg-teal-500/15 text-teal-200" data-t="ingreso">📥 Ingreso por kg</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteo">🔢 Conteo de material</button><button type="button" class="st-nuevo ${BTN} border-amber-500/50 bg-amber-500/10 text-amber-200" data-t="despacho">🚚 Despacho</button><button type="button" class="st-nuevo ${BTN} border-slate-600 text-slate-200" data-t="conteoP">🔢 Conteo de piezas</button></div>` : ''}</div>
           ${form}
-          <div><div class="mb-2 text-sm font-black text-white">🧱 Materiales</div><div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Material</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">En depósito</th><th class="pr-2 text-right">Mínimo</th><th class="pr-2 text-right">Consumo 7 días</th><th class="pr-2 text-right">Programado 14 días</th><th class="pr-2">Alcanza hasta</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
+          <div><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">🧱 Materiales</span><button type="button" class="st-imprimir ${BTN} border-slate-600 text-slate-200">🖨️ Imprimir ingresos y retiros de fardos</button></div><div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Material</th><th class="pr-2 text-right">Stock</th><th class="pr-2 text-right">En depósito</th><th class="pr-2 text-right">Mínimo</th><th class="pr-2 text-right">Consumo 7 días</th><th class="pr-2 text-right">Programado 14 días</th><th class="pr-2">Alcanza hasta</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
             ${C.materiales.map(s => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(s.nombre)}</td><td class="pr-2 text-right">${est(s)}${s.desde ? `<div class="text-[10px] text-slate-500">desde ${fFecha(s.desde)}</div>` : ''}</td>
               <td class="pr-2 text-right">${s.dep.total ? `<button type="button" class="st-fardos text-right" data-k="${esc(s.nombre)}" title="Ver los fardos"><b class="text-teal-200">${s.dep.n} fardo${s.dep.n === 1 ? '' : 's'}</b><span class="block text-[10px] text-slate-400 underline">${n0(s.dep.kg)} kg · ver</span></button>` : '<span class="text-slate-600">—</span>'}</td>
               <td class="pr-2 text-right">${edit ? `<input type="number" min="0" step="1" class="st-min ${INP} w-20 text-right" data-g="materiales" data-k="${esc(s.nombre)}" value="${s.minimo || ''}" placeholder="—">` : (s.minimo ? n0(s.minimo) : '—')}</td>
@@ -773,19 +773,87 @@
         const porAn = {}; dep.forEach(f => { const a = f.analisis || '—'; porAn[a] = porAn[a] || { n: 0, kg: 0 }; porAn[a].n++; porAn[a].kg += Number(f.kg) || 0; });
         const w = modal(`🧱 Fardos · ${esc(k)}`, `<div class="flex flex-wrap items-center gap-2 text-xs"><span class="rounded-lg bg-teal-500/15 px-2.5 py-1.5 font-black text-teal-200">En depósito: ${dep.length} fardo${dep.length === 1 ? '' : 's'} · ${n0(dep.reduce((a, f) => a + (Number(f.kg) || 0), 0))} kg</span>
             ${Object.keys(porAn).sort().map(a => `<span class="rounded-lg border border-slate-700 px-2 py-1 text-slate-300">Análisis <b class="text-white">${esc(a)}</b>: ${porAn[a].n} · ${n0(porAn[a].kg)} kg</span>`).join('')}
-            <label class="ml-auto flex items-center gap-1.5 text-slate-300"><input type="checkbox" class="stf-ret h-4 w-4" ${fardosVerRet ? 'checked' : ''}> Ver también los retirados</label></div>
+            <label class="ml-auto flex items-center gap-1.5 text-slate-300"><input type="checkbox" class="stf-ret h-4 w-4" ${fardosVerRet ? 'checked' : ''}> Ver también los retirados</label>
+            <button type="button" class="stf-imp ${BTN} border-slate-600 text-slate-200">🖨️ Imprimir</button></div>
           ${vis.length ? `<div class="max-h-[60vh] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fardo</th><th class="pr-2">Análisis</th><th class="pr-2 text-right">Kg</th><th class="pr-2">Ingresó</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
             ${vis.map(f => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-black text-white">N° ${f.numero}</td><td class="pr-2 text-slate-200">${esc(f.analisis || '—')}</td><td class="pr-2 text-right font-bold text-white">${n1(f.kg)}</td><td class="pr-2 text-slate-400">${fDia(f.fecha)}${f.nota ? `<span class="block text-[10px] text-slate-500">${esc(f.nota)}</span>` : ''}</td>
               <td class="pr-2">${f.retiro ? `<span class="text-orange-300">Retirado ${fDia(f.retiro.fecha)}${f.retiro.maquina ? ' → ' + esc(f.retiro.maquina) : ''}</span><span class="block text-[10px] text-slate-500">${esc(f.retiro.por || '')}${f.retiro.nota ? ' · ' + esc(f.retiro.nota) : ''}</span>` : '<span class="font-bold text-teal-300">En depósito</span>'}</td>
               <td class="whitespace-nowrap text-right">${edit ? (f.retiro ? `<button type="button" class="stf-volver text-[11px] text-slate-300 hover:text-white" data-id="${esc(f.id)}">↩ Volver al depósito</button>` : `<button type="button" class="stf-retirar text-[11px] font-bold text-orange-300 hover:text-orange-200" data-id="${esc(f.id)}">📤 Retirar</button>`) : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="text-xs text-slate-400">No hay fardos en el depósito.</div>'}`, 'max-w-3xl');
         w.addEventListener('change', e => { if (e.target.classList.contains('stf-ret')) { fardosVerRet = e.target.checked; verFardos(k); } });
         w.addEventListener('click', e => {
-          const b = e.target.closest('button'); if (!b || !editStock()) return;
+          const b = e.target.closest('button'); if (!b) return;
+          if (b.classList.contains('stf-imp')) { imprimirFardos({ material: k }); return; }
+          if (!editStock()) return;
           if (b.classList.contains('stf-retirar')) { cerrarModal(); stockForm = { tipo: 'retiro', clave: k, fardoId: b.dataset.id }; renderStock(); const vv = $('viewStock'); if (vv) vv.scrollIntoView({ behavior: 'smooth' }); return; }
           if (b.classList.contains('stf-volver')) { const f = (d.fardos || []).find(x => x.id === b.dataset.id); if (!f || !confirm(`¿El fardo N° ${f.numero} vuelve al depósito (se anula el retiro)?`)) return; delete f.retiro; guardarMod('stock'); verFardos(k); renderStock(); toast('✓ El fardo volvió al depósito'); }
         });
       }
       window.inoferVerFardos = verFardos;
+      // ---------- listado imprimible: qué fardos ingresaron, cuáles se retiraron y a qué máquina ----------
+      const fCorta = iso => iso ? String(iso).slice(8, 10) + '/' + String(iso).slice(5, 7) + '/' + String(iso).slice(0, 4) : '—';
+      function datosFardos(o) {
+        const S = D('stock'); const mats = Object.keys(S.materiales || {}).filter(m => (S.materiales[m].fardos || []).length && (!o.material || o.material === m)).sort();
+        const ing = [], ret = [], dep = [], res = {}, porMaq = {};
+        mats.forEach(m => (S.materiales[m].fardos || []).forEach(f => {
+          const r = res[m] = res[m] || { ingN: 0, ingKg: 0, retN: 0, retKg: 0, depN: 0, depKg: 0 }; const kg = Number(f.kg) || 0;
+          if (f.fecha >= o.desde && f.fecha <= o.hasta) { ing.push(Object.assign({ material: m }, f)); r.ingN++; r.ingKg += kg; }
+          if (f.retiro && f.retiro.fecha >= o.desde && f.retiro.fecha <= o.hasta) { ret.push(Object.assign({ material: m }, f)); r.retN++; r.retKg += kg; const q = f.retiro.maquina || 'Sin especificar'; const x = porMaq[q] = porMaq[q] || { n: 0, kg: 0, mats: {} }; x.n++; x.kg += kg; x.mats[m] = (x.mats[m] || 0) + kg; }
+          if (!f.retiro) { dep.push(Object.assign({ material: m }, f)); r.depN++; r.depKg += kg; }
+        }));
+        const orden = (a, b) => String(a.material).localeCompare(String(b.material)) || (a.numero || 0) - (b.numero || 0);
+        ing.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || orden(a, b));
+        ret.sort((a, b) => String(a.retiro.fecha).localeCompare(String(b.retiro.fecha)) || String(a.retiro.maquina).localeCompare(String(b.retiro.maquina)) || orden(a, b));
+        dep.sort(orden);
+        return { mats, ing, ret, dep, res, porMaq };
+      }
+      function htmlFardos(o) {
+        const d = datosFardos(o); const e = esc;
+        const tabla = (cab, filas, pie) => `<table><thead><tr>${cab.map(c => `<th${/Kg|Fardos/.test(c) ? ' class="n"' : ''}>${c}</th>`).join('')}</tr></thead><tbody>${filas.join('') || `<tr><td colspan="${cab.length}" class="vacio">Sin movimientos en el período</td></tr>`}</tbody>${pie ? `<tfoot>${pie}</tfoot>` : ''}</table>`;
+        const kgT = L => L.reduce((a, f) => a + (Number(f.kg) || 0), 0);
+        const sec = [];
+        sec.push(`<h2>Resumen por material</h2>` + tabla(['Material', 'Fardos ingresados', 'Kg ingresados', 'Fardos retirados', 'Kg retirados', 'Fardos en depósito hoy', 'Kg en depósito hoy'], d.mats.map(m => { const r = d.res[m] || {}; return `<tr><td><b>${e(m)}</b></td><td class="n">${r.ingN || 0}</td><td class="n">${n1(r.ingKg)}</td><td class="n">${r.retN || 0}</td><td class="n">${n1(r.retKg)}</td><td class="n">${r.depN || 0}</td><td class="n">${n1(r.depKg)}</td></tr>`; })));
+        if (o.retiros && Object.keys(d.porMaq).length) sec.push(`<h2>Retirado por máquina</h2>` + tabla(['Máquina', 'Fardos', 'Kg', 'Detalle por material'], Object.keys(d.porMaq).sort().map(q => { const x = d.porMaq[q]; return `<tr><td><b>${e(q)}</b></td><td class="n">${x.n}</td><td class="n">${n1(x.kg)}</td><td>${Object.keys(x.mats).sort().map(m => `${e(m)}: ${n1(x.mats[m])} kg`).join(' · ')}</td></tr>`; })));
+        if (o.ingresos) sec.push(`<h2>Fardos que ingresaron (${d.ing.length})</h2>` + tabla(['Fecha', 'Material', 'Fardo N°', 'N° de análisis', 'Kg', 'Proveedor / remito', 'Cargó'], d.ing.map(f => `<tr><td>${fCorta(f.fecha)}</td><td>${e(f.material)}</td><td class="n">${f.numero}</td><td>${e(f.analisis || '—')}</td><td class="n">${n1(f.kg)}</td><td>${e(f.nota || '')}</td><td class="chico">${e(f.por || '')}</td></tr>`), d.ing.length ? `<tr><td colspan="4"><b>Total</b></td><td class="n"><b>${n1(kgT(d.ing))}</b></td><td colspan="2"></td></tr>` : ''));
+        if (o.retiros) sec.push(`<h2>Fardos que se retiraron (${d.ret.length})</h2>` + tabla(['Fecha', 'Material', 'Fardo N°', 'N° de análisis', 'Kg', 'Máquina', 'Retiró', 'Nota'], d.ret.map(f => `<tr><td>${fCorta(f.retiro.fecha)}</td><td>${e(f.material)}</td><td class="n">${f.numero}</td><td>${e(f.analisis || '—')}</td><td class="n">${n1(f.kg)}</td><td><b>${e(f.retiro.maquina || '—')}</b></td><td class="chico">${e(f.retiro.por || '')}</td><td>${e(f.retiro.nota || '')}</td></tr>`), d.ret.length ? `<tr><td colspan="4"><b>Total</b></td><td class="n"><b>${n1(kgT(d.ret))}</b></td><td colspan="3"></td></tr>` : ''));
+        if (o.deposito) sec.push(`<h2>Fardos en depósito hoy (${d.dep.length})</h2>` + tabla(['Material', 'Fardo N°', 'N° de análisis', 'Kg', 'Ingresó'], d.dep.map(f => `<tr><td>${e(f.material)}</td><td class="n">${f.numero}</td><td>${e(f.analisis || '—')}</td><td class="n">${n1(f.kg)}</td><td>${fCorta(f.fecha)}</td></tr>`), d.dep.length ? `<tr><td colspan="3"><b>Total</b></td><td class="n"><b>${n1(kgT(d.dep))}</b></td><td></td></tr>` : ''));
+        const emitido = new Date().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+        return { d, html: `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>INOFER · Fardos ${fCorta(o.desde)} al ${fCorta(o.hasta)}</title><style>
+          @page { size: A4; margin: 12mm; } body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px; margin: 0; }
+          header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #0f766e; padding-bottom: 6px; margin-bottom: 8px; }
+          h1 { font-size: 17px; margin: 0; color: #0f766e; } h2 { font-size: 13px; margin: 14px 0 4px; color: #134e4a; } header div { text-align: right; color: #444; }
+          table { width: 100%; border-collapse: collapse; page-break-inside: auto; } tr { page-break-inside: avoid; } th, td { border: 1px solid #b8c7c5; padding: 3px 5px; text-align: left; vertical-align: top; }
+          th { background: #ccfbf1; font-size: 10px; text-transform: uppercase; } .n { text-align: right; } .chico { font-size: 9px; color: #444; } .vacio { color: #666; font-style: italic; text-align: center; } tfoot td { background: #f0fdfa; }
+          .firmas { display: flex; gap: 40px; margin-top: 36px; } .firmas div { flex: 1; border-top: 1px solid #333; padding-top: 4px; text-align: center; color: #333; }
+        </style></head><body>
+          <header><div style="text-align:left"><h1>INOFER — Materia prima por fardos</h1><b>Período: ${fCorta(o.desde)} al ${fCorta(o.hasta)}</b>${o.material ? ' · Material: <b>' + e(o.material) + '</b>' : ' · Todos los materiales'}</div><div>Emitido: ${emitido}<br>${e(quien())}</div></header>
+          ${sec.join('')}
+          <div class="firmas"><div>Entregó (depósito)</div><div>Recibió (producción)</div><div>Controló</div></div>
+        </body></html>` };
+      }
+      function imprimirHtml(html) {
+        const fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(fr);
+        const doc = fr.contentWindow.document; doc.open(); doc.write(html); doc.close();
+        setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { } setTimeout(() => fr.remove(), 4000); }, 400);
+      }
+      function imprimirFardos(pre) {
+        pre = pre || {};
+        const S = D('stock'); const mats = Object.keys(S.materiales || {}).filter(m => (S.materiales[m].fardos || []).length).sort();
+        const hoy = hoyIso(), ini = hoy.slice(0, 8) + '01';
+        const w = modal('🖨️ Imprimir ingresos y retiros de fardos', `<form class="stp-form grid gap-2 sm:grid-cols-4 text-xs">
+            <label class="text-[11px] text-slate-400">Desde<input type="date" name="desde" value="${ini}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Hasta<input type="date" name="hasta" value="${hoy}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Material<select name="material" class="${INP} w-full"><option value="">Todos</option>${mats.map(m => `<option ${pre.material === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
+            <div class="sm:col-span-4 flex flex-wrap gap-4 py-1 text-slate-200"><label class="flex items-center gap-1.5"><input type="checkbox" name="ingresos" checked class="h-4 w-4"> Fardos que ingresaron</label><label class="flex items-center gap-1.5"><input type="checkbox" name="retiros" checked class="h-4 w-4"> Fardos retirados y a qué máquina</label><label class="flex items-center gap-1.5"><input type="checkbox" name="deposito" class="h-4 w-4"> Lo que queda en depósito hoy</label></div>
+            <div class="stp-res sm:col-span-4 rounded-lg bg-slate-950/70 px-3 py-2 text-slate-300"></div>
+            <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="pm-cerrar ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-teal-400 bg-teal-500 text-slate-950">🖨️ Imprimir / guardar PDF</button></div></form>`, 'max-w-2xl');
+        const f = w.querySelector('.stp-form');
+        const leerO = () => { const x = Object.fromEntries(new FormData(f).entries()); let desde = x.desde || ini, hasta = x.hasta || hoy; if (desde > hasta) [desde, hasta] = [hasta, desde]; return { desde, hasta, material: x.material || '', ingresos: !!x.ingresos, retiros: !!x.retiros, deposito: !!x.deposito }; };
+        const resumen = () => { const o = leerO(), d = datosFardos(o); f.querySelector('.stp-res').innerHTML = `En el período: <b class="text-white">${d.ing.length}</b> fardo${d.ing.length === 1 ? '' : 's'} ingresado${d.ing.length === 1 ? '' : 's'} y <b class="text-white">${d.ret.length}</b> retirado${d.ret.length === 1 ? '' : 's'}${Object.keys(d.porMaq).length ? ' (' + Object.keys(d.porMaq).sort().map(q => esc(q) + ': ' + d.porMaq[q].n).join(' · ') + ')' : ''}.`; };
+        f.addEventListener('change', resumen); f.addEventListener('input', resumen); resumen();
+        f.addEventListener('submit', e => { e.preventDefault(); const o = leerO(); if (!o.ingresos && !o.retiros && !o.deposito) { toast('Elegí qué querés imprimir'); return; } imprimirHtml(htmlFardos(o).html); });
+      }
+      window.inoferImprimirFardos = imprimirFardos;
+      window.inoferInformeFardos = o => htmlFardos(Object.assign({ desde: '0000-01-01', hasta: '9999-12-31', ingresos: true, retiros: true, deposito: true }, o || {}));
       function pintarKgsFardos(form) {
         const n = Math.max(1, Math.min(200, Math.round(Number(form.querySelector('.st-fn').value) || 1)));
         const dist = form.querySelector('.st-fdist').checked, box = form.querySelector('.st-fkgs'), base = form.querySelector('.st-fkg');
@@ -813,6 +881,7 @@
           if (g('.st-cancel')) { stockForm = null; renderStock(); return; }
           if ((b = g('.st-movs'))) verMovimientos(b.dataset.g, b.dataset.k);
           if ((b = g('.st-fardos'))) verFardos(b.dataset.k);
+          if (g('.st-imprimir')) imprimirFardos();
         });
         v.addEventListener('input', e => { const f = e.target.closest('.st-form-fardos'); if (!f) return; if (e.target.classList.contains('st-fn')) pintarKgsFardos(f); else totalFardos(f); });
         v.addEventListener('change', e => {
