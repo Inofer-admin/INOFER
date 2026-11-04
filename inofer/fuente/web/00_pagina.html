@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.11.04.04" />
+  <meta name="inofer-version" content="2026.11.04.05" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1059,8 +1059,10 @@
                   <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
                   <path id="orderEffGaugeArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
                   <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
-                  <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
-                  <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+                  <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">60%</text>
+                  <line x1="160.6" y1="65" x2="177.9" y2="55" stroke="#f8fafc" stroke-width="2" />
+                  <text x="186" y="49" fill="#e2e8f0" font-size="7" font-weight="700" text-anchor="middle">100%</text>
+                  <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">120%</text>
                   <g id="orderEffGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
                     <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
                     <circle cx="100" cy="100" r="8" fill="#f59e0b" stroke="#0f172a" stroke-width="3" />
@@ -1692,7 +1694,7 @@
               <div class="text-center">
                 <span class="text-[11px] font-bold uppercase tracking-wider text-purple-400">Indicador Clave</span>
                 <h4 class="text-base font-bold text-white">Eficiencia General de Cadencia</h4>
-                <p class="text-[11px] text-slate-400 mt-0.5">Cadencia real vs. estándar ponderada en todas las órdenes</p>
+                <p class="text-[11px] text-slate-400 mt-0.5">Velocidad real vs. estándar (u/h) de lo producido, con la máquina andando</p>
               </div>
 
               <div class="my-3 flex flex-col items-center">
@@ -1701,8 +1703,10 @@
                     <path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round" />
                     <path id="globalEffGaugeArc" class="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="url(#mainGaugeGrad)" stroke-width="18" stroke-linecap="round" stroke-dasharray="251.32" stroke-dashoffset="251.32" />
                     <text x="14" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">0%</text>
-                    <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">50%</text>
-                    <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">100%</text>
+                    <text x="100" y="12" fill="#94a3b8" font-size="8" font-weight="700" text-anchor="middle">60%</text>
+                    <line x1="160.6" y1="65" x2="177.9" y2="55" stroke="#f8fafc" stroke-width="2" />
+                    <text x="186" y="49" fill="#e2e8f0" font-size="7" font-weight="700" text-anchor="middle">100%</text>
+                    <text x="186" y="118" fill="#64748b" font-size="8" font-weight="600" text-anchor="middle">120%</text>
                     <g id="globalEffGaugeNeedle" class="gauge-needle" style="transform: rotate(-90deg);">
                       <polygon points="97,100 100,26 103,100" fill="#f8fafc" />
                       <circle cx="100" cy="100" r="8" fill="#a855f7" stroke="#0f172a" stroke-width="3" />

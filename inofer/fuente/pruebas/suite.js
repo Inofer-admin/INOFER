@@ -957,6 +957,22 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(v.ve && v.flag && v.responde === 'error', 'con permiso: ' + JSON.stringify(v));
       ok(!n, 'sin permiso ve solicitudes de otros');
     });
+    await prueba('Eficiencia de cadencia: lo producido vs. horas con la máquina andando', async () => {
+      const r = await A.evaluate(async () => {
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        // OP de 5.000 a 100 u/h; 10 h de turnos, 2 h de paradas, 750 buenas + 50 scrap → 8 h estándar / 8 h andando = 100%
+        const o = { id: 'ord-cad', ordNumber: '9921', part: 'PZA-CAD', machine: nom('180'), status: 'En Proceso', qtyTarget: 5000, unitsPerHour: 100, hoursToUse: 50,
+          logs: [{ id: 'l1', date: '2026-10-22', startTime: '06:00', endTime: '14:00', okPcs: 600, scrapPcs: 40, paradas: [{ codigo: '1-Cambio de molde y P.Punto', min: 120 }], stopMinutes: 120 },
+                 { id: 'l2', date: '2026-10-22', startTime: '14:00', endTime: '16:00', okPcs: 150, scrapPcs: 10, paradas: [], stopMinutes: 0 }] };
+        const m = computeOrderMetrics(o);
+        const antes = productionOrders; productionOrders = [o];
+        const rep = computeGlobalOrdersReport();
+        productionOrders = antes;
+        return { cad: m.cadenceEffPct, run: m.runHours, std: m.stdHoursProduced, glob: rep.globalEffPct, n: rep.totalOrders };
+      });
+      ok(Math.abs(r.cad - 100) < 0.01 && Math.abs(r.run - 8) < 0.01 && Math.abs(r.std - 8) < 0.01, 'cadencia de la OP: ' + JSON.stringify(r));
+      ok(Math.abs(r.glob - 100) < 0.01 && r.n === 1, 'indicador general: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

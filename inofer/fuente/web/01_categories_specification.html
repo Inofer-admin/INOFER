@@ -2474,17 +2474,25 @@ ${lines}${trendNote}`;
       let totalScrap = 0;
       let totalWorkedHours = 0;
 
+      let totalStopHours = 0;
       (ord.logs || []).forEach(lg => {
         totalOk += Number(lg.okPcs) || 0;
         totalLowStart += Number(lg.lowStartPcs) || 0;
         totalScrap += Number(lg.scrapPcs) || 0;
-        totalWorkedHours += calcHoursDiff(lg.startTime, lg.endTime);
+        const h = calcHoursDiff(lg.startTime, lg.endTime);
+        totalWorkedHours += h;
+        const pm = Array.isArray(lg.paradas) && lg.paradas.length ? lg.paradas.reduce((a, p) => a + (Number(p.min) || 0), 0) : (Number(lg.stopMinutes) || 0);
+        totalStopHours += Math.min(h, pm / 60);
       });
 
       const totalInjected = totalOk + totalLowStart + totalScrap;
       const stdRate = Number(ord.unitsPerHour) || 180;
-      const actualRate = totalWorkedHours > 0 ? (totalOk / totalWorkedHours) : 0;
-      const cadenceEffPct = stdRate > 0 ? (actualRate / stdRate) * 100 : 0;
+      // Cadencia (04/11/2026): horas estándar de LO PRODUCIDO (buenas + scrap) ÷ horas con la máquina andando (turno − paradas).
+      // Es el "Rendimiento" del OEE. Antes comparaba las horas de la OP completa contra las trabajadas y salía inflado.
+      const runHours = Math.max(0, totalWorkedHours - totalStopHours);
+      const stdHoursProduced = stdRate > 0 ? (totalOk + totalScrap) / stdRate : 0;
+      const actualRate = runHours > 0 ? ((totalOk + totalScrap) / runHours) : 0;
+      const cadenceEffPct = runHours > 0 ? (stdHoursProduced / runHours) * 100 : 0;
       const qualityPct = totalInjected > 0 ? (totalOk / totalInjected) * 100 : 100;
       const progressPct = (Number(ord.qtyTarget) || 0) > 0 ? (totalOk / Number(ord.qtyTarget)) * 100 : 0;
       const oeePiecePct = (Math.min(100, cadenceEffPct) / 100) * (qualityPct / 100) * 100;
@@ -2495,6 +2503,9 @@ ${lines}${trendNote}`;
         totalScrap,
         totalInjected,
         totalWorkedHours,
+        totalStopHours,
+        runHours,
+        stdHoursProduced,
         stdRate,
         actualRate,
         cadenceEffPct,
@@ -3192,11 +3203,11 @@ ${lines}${trendNote}`;
       document.getElementById('effPieceTitle').textContent = `Pieza ${ord.part} (Molde ${ord.mold})`;
       document.getElementById('effGlobalBadge').textContent = `OEE Pieza: ${m.oeePiecePct.toFixed(1)}%`;
 
-      const clampedEff = Math.max(0, Math.min(100, m.cadenceEffPct));
+      const clampedEff = Math.max(0, Math.min(120, m.cadenceEffPct));
       const maxArc = 251.32;
-      const offset = maxArc - (clampedEff / 100) * maxArc;
+      const offset = maxArc - (clampedEff / 120) * maxArc;
       document.getElementById('orderEffGaugeArc').style.strokeDashoffset = offset.toFixed(2);
-      const angle = -90 + (clampedEff / 100) * 180;
+      const angle = -90 + (clampedEff / 120) * 180;
       document.getElementById('orderEffGaugeNeedle').style.transform = `rotate(${angle.toFixed(1)}deg)`;
       document.getElementById('orderEffPctText').textContent = `${m.cadenceEffPct.toFixed(1)}%`;
 
@@ -3312,17 +3323,22 @@ ${lines}${trendNote}`;
       let totalScrapPcs = 0;
       let totalStdHours = 0;
       let totalWorkedHours = 0;
+      let totalRunHours = 0;
       let completedOrders = 0;
       let inProgressOrders = 0;
+      const esDemoOrd = o => typeof window.inoferEsDemo === 'function' && window.inoferEsDemo({ fromOrder: true, ordId: o.id });
+      const ordenesReales = productionOrders.filter(o => !esDemoOrd(o));
+      totalOrders = ordenesReales.length;
 
-      const orderSummaries = productionOrders.map(ord => {
+      const orderSummaries = ordenesReales.map(ord => {
         const m = computeOrderMetrics(ord);
         totalTargetPcs += Number(ord.qtyTarget) || 0;
         totalOkPcs += m.totalOk;
         totalLowStartPcs += m.totalLowStart;
         totalScrapPcs += m.totalScrap;
-        totalStdHours += Number(ord.hoursToUse) || 0;
+        totalStdHours += m.stdHoursProduced;
         totalWorkedHours += m.totalWorkedHours;
+        totalRunHours += m.runHours;
         if (m.progressPct >= 100 || ord.status === 'Completada') completedOrders++;
         else inProgressOrders++;
         const scrapPct = (m.totalOk + m.totalScrap + m.totalLowStart) > 0
@@ -3349,23 +3365,22 @@ ${lines}${trendNote}`;
 
       // Efficiency by Machine across all orders
       const machineEfficiency = MACHINES_LIST.map(mach => {
-        const mOrders = productionOrders.filter(o => o.machine === mach);
-        let mTarget = 0, mOk = 0, mScrap = 0, mStdHours = 0, mWorkedHours = 0;
+        const mOrders = ordenesReales.filter(o => o.machine === mach);
+        let mTarget = 0, mOk = 0, mScrap = 0, mStdHours = 0, mWorkedHours = 0, mRunHours = 0;
         mOrders.forEach(o => {
           const m = computeOrderMetrics(o);
           mTarget += Number(o.qtyTarget) || 0;
           mOk += m.totalOk;
           mScrap += (m.totalScrap + m.totalLowStart);
-          mStdHours += Number(o.hoursToUse) || 0;
+          mStdHours += m.stdHoursProduced;
           mWorkedHours += m.totalWorkedHours;
+          mRunHours += m.runHours;
         });
 
         const totalInjected = mOk + mScrap;
         const qualityPct = totalInjected > 0 ? (mOk / totalInjected) * 100 : 100;
         const actualRate = mWorkedHours > 0 ? (mOk / mWorkedHours) : 0;
-        const effPct = mWorkedHours > 0 && mStdHours > 0
-          ? Math.min(150, (mStdHours / mWorkedHours) * 100)
-          : (mOk > 0 && mWorkedHours === 0 ? 100 : 0);
+        const effPct = mRunHours > 0 && mStdHours > 0 ? (mStdHours / mRunHours) * 100 : 0;
 
         return {
           machine: mach,
@@ -3384,9 +3399,7 @@ ${lines}${trendNote}`;
       const totalInjectedAll = totalOkPcs + totalScrapPcs + totalLowStartPcs;
       const globalQualityPct = totalInjectedAll > 0 ? (totalOkPcs / totalInjectedAll) * 100 : 100;
       const globalProgressPct = totalTargetPcs > 0 ? (totalOkPcs / totalTargetPcs) * 100 : 0;
-      const globalEffPct = totalWorkedHours > 0 && totalStdHours > 0
-        ? (totalStdHours / totalWorkedHours) * 100
-        : (totalOkPcs > 0 ? 100 : 0);
+      const globalEffPct = totalRunHours > 0 && totalStdHours > 0 ? (totalStdHours / totalRunHours) * 100 : 0;
 
       return {
         totalOrders,
@@ -3397,6 +3410,7 @@ ${lines}${trendNote}`;
         totalScrapPcs: totalScrapPcs + totalLowStartPcs,
         totalStdHours,
         totalWorkedHours,
+        totalRunHours,
         globalProgressPct,
         globalQualityPct,
         globalEffPct,
@@ -3430,17 +3444,17 @@ ${lines}${trendNote}`;
       document.getElementById('repGlobalProgressBar').style.width = `${Math.min(100, rep.globalProgressPct).toFixed(1)}%`;
 
       // Speedometer
-      const clampedEff = Math.max(0, Math.min(100, rep.globalEffPct));
+      const clampedEff = Math.max(0, Math.min(120, rep.globalEffPct));
       const maxArc = 251.32;
-      const offset = maxArc - (clampedEff / 100) * maxArc;
+      const offset = maxArc - (clampedEff / 120) * maxArc;
       const gaugeArc = document.getElementById('globalEffGaugeArc');
       if (gaugeArc) gaugeArc.style.strokeDashoffset = offset.toFixed(2);
-      const angle = -90 + (clampedEff / 100) * 180;
+      const angle = -90 + (clampedEff / 120) * 180;
       const needle = document.getElementById('globalEffGaugeNeedle');
       if (needle) needle.style.transform = `rotate(${angle.toFixed(1)}deg)`;
 
       document.getElementById('globalEffPctText').textContent = `${rep.globalEffPct.toFixed(1)}%`;
-      document.getElementById('globalEffSubText').textContent = `${rep.totalWorkedHours.toFixed(1)} hs reales vs. ${rep.totalStdHours.toFixed(1)} hs estándar`;
+      document.getElementById('globalEffSubText').textContent = rep.totalRunHours > 0 ? `${rep.totalStdHours.toFixed(1)} h estándar de lo producido vs. ${rep.totalRunHours.toFixed(1)} h con la máquina andando` : 'Todavía no hay turnos cargados';
 
       const badge = document.getElementById('globalEffStatusBadge');
       if (rep.globalEffPct >= 90) {

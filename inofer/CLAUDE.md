@@ -283,3 +283,8 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 
 ## Ver todas las solicitudes (04/11/2026)
 - Permiso detallado `sol_ver_todas` (Otros permisos, `opt: true` = apagado hasta habilitarlo a mano). Servidor `veTodasSol_(u)` (admin o detalle.sol_ver_todas === true): `solListar` devuelve todas, `msgEstado` manda `solPendientes` y `solVerTodas`. Cliente (parte 13): pestaña "Solicitudes" con el nombre de quien la pidió; responder/cambiar estado sigue siendo SOLO del admin (servidor solActualizar); borrar solo el autor o el admin.
+
+## Eficiencia de cadencia corregida (núcleo 01 + 00_pagina, 04/11/2026)
+- `computeOrderMetrics`: `runHours` = Σ horas de turno − paradas (paradas[].min o stopMinutes, tope las horas del turno), `stdHoursProduced` = (buenas + scrap) ÷ u/h de la OP; `cadenceEffPct` = stdHoursProduced ÷ runHours × 100 (= Rendimiento del OEE). Antes era buenas ÷ horas de turno vs u/h, y el general comparaba `hoursToUse` (OP completa) contra horas trabajadas → daba >100% con OP sin terminar.
+- `computeGlobalOrdersReport`: excluye OP de ejemplo (`inoferEsDemo`), `totalStdHours` = estándar de lo producido, nuevo `totalRunHours`; `globalEffPct` y la eficiencia por máquina usan runHours (sin tope 150). "repStdHoursDiff" = horas trabajadas − estándar de lo producido.
+- Velocímetros de cadencia (general `#globalEffGauge*` y de la OP `#orderEffGauge*`): escala 0–120% con marca en 100%; el número muestra el valor real. Los del Tablero no cambiaron.
