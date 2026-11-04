@@ -870,6 +870,41 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.sinAvisoOtraOp && r.guardada2 && r.completo, 'guardar la segunda pieza: ' + JSON.stringify(r));
       ok(r.modal && r.noGuardo && !r.correr && r.guardoIgual, 'aviso de horarios pisados: ' + JSON.stringify(r));
     });
+    await prueba('Carga rápida: cambio de molde en el turno y horarios automáticos por pieza', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const $ = id => document.getElementById(id);
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const F = '2026-10-21', T = inoferCargaRapida.turnos()[0];
+        productionOrders.push({ id: 'ord-cm1', ordNumber: '9911', part: 'PZA-CM1', machine: nom('H50'), status: 'En Proceso', qtyTarget: 9000, unitsPerHour: 100, logs: [] });
+        productionOrders.push({ id: 'ord-cm2', ordNumber: '9912', part: 'PZA-CM2', machine: nom('H50'), status: 'En Proceso', qtyTarget: 9000, unitsPerHour: 100, logs: [] });
+        inoferCargaRapida.abrir({ maq: 'H50', ordId: 'ord-cm1', fecha: F, turnoNombre: T.nombre }); await esperar(300);
+        const sinHoras = !document.querySelector('#crTurnoForm input[type="time"]');
+        $('crOk').value = '300'; $('crOk').dispatchEvent(new Event('input', { bubbles: true }));
+        $('crOperario').value = 'Prueba';
+        $('crAddCambio').click(); await esperar(100);
+        const su = inoferSetupDe('H50'); const c0 = inoferCargaRapida.estado.cambios[0];
+        const sel = document.querySelector('.cr-cop[data-i="0"]'); sel.value = 'ord-cm2'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+        const ok2 = document.querySelector('.cr-cok[data-i="0"]'); ok2.value = '200'; ok2.dispatchEvent(new Event('input', { bubbles: true })); await esperar(50);
+        const operSigue = $('crOk').value === '300' && $('crOperario').value === 'Prueba';
+        const barra = ($('crReparto') || {}).textContent || '';
+        $('crTurnoForm').requestSubmit(); await esperar(300);
+        const pis = document.querySelector('#crPisada [data-p="igual"]'); if (pis) { pis.click(); await esperar(300); }
+        const l1 = productionOrders.find(o => o.id === 'ord-cm1').logs[0], l2 = productionOrders.find(o => o.id === 'ord-cm2').logs[0];
+        const pantalla = ($('inoferCR') || {}).textContent || '';
+        productionOrders = productionOrders.filter(o => !/^ord-cm/.test(o.id)); saveProductionOrders();
+        return { sinHoras, cmo: su.cmo, alis: su.alis, baj: c0.bajada, sub: c0.subida, operSigue, barra: /Así queda el turno/.test(barra), l1: l1 && [l1.startTime, l1.endTime, l1.okPcs], l2: l2 && [l2.startTime, l2.endTime, l2.okPcs, (l2.paradas || [])[0] && l2.paradas[0].codigo, l2.stopMinutes], Tini: T.ini, Tfin: T.fin, pantalla: /Cambio de molde/.test(pantalla) && /Turno guardado/i.test(pantalla) };
+      });
+      const aM = h => { const [a, b] = h.split(':').map(Number); return a * 60 + b; };
+      ok(r.sinHoras && r.operSigue && r.barra, 'pantalla del turno: ' + JSON.stringify(r));
+      ok(r.baj + r.sub === Math.round((r.cmo + r.alis) * 60 / 15) * 15 || r.baj + r.sub >= 30, 'tiempos sugeridos del set-up: ' + JSON.stringify(r));
+      ok(r.l1 && r.l2 && r.l1[0] === r.Tini && r.l2[1] === r.Tfin && r.l1[1] === r.l2[0] && r.l1[2] === 300 && r.l2[2] === 200, 'horarios por pieza: ' + JSON.stringify(r));
+      ok(/^1\s*-/.test(r.l2[3]) && r.l2[4] === r.baj + r.sub, 'cambio de molde como parada en la segunda OP: ' + JSON.stringify(r));
+      // el tiempo de cada pieza es proporcional a lo que produjo (300 y 200 a 100 u/h) dentro de lo que dejó el cambio
+      const libre = ((aM(r.Tfin) - aM(r.Tini) + 1440) % 1440 || 1440) - r.l2[4];
+      const t1 = (aM(r.l1[1]) - aM(r.l1[0]) + 1440) % 1440;
+      ok(Math.abs(t1 - libre * 0.6) <= 5 && r.pantalla, 'reparto proporcional: ' + JSON.stringify({ t1, libre }));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

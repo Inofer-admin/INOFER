@@ -100,6 +100,72 @@
         return `<div class="relative h-4 overflow-hidden rounded-full bg-slate-800">${D.L.map((c, i) => `<span class="absolute top-0 h-full" style="left:${Math.max(0, (c.a - D.ta) / tot * 100)}%;width:${Math.max(1, (Math.min(c.b, D.tb) - Math.max(c.a, D.ta)) / tot * 100)}%;background:${cols[i % 4]}" title="${esc(c.o.part)}"></span>`).join('')}</div>
           <div class="mt-1 flex justify-between text-[11px] text-slate-400"><span>${hhmm(D.ta)}</span><span>${D.L.map((c, i) => `<b style="color:${cols[i % 4]}">${esc(c.o.part)}</b> ${hhmm(c.a)}–${hhmm(c.b)}`).join(' · ')}</span><span>${hhmm(D.tb)}</span></div>`;
       }
+      // ---- cambio de molde dentro del turno: los horarios se calculan solos ----
+      const CODIGO_CMO = () => ((typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).find(c => /^1\s*-/.test(c))) || '1-Cambio de molde y P.Punto';
+      function setupMin(maq) {
+        const su = window.inoferSetupDe ? inoferSetupDe(maq) : { cmo: 1, alis: 0.5 };
+        const cmo = Math.round((Number(su.cmo) || 0) * 60), alis = Math.round((Number(su.alis) || 0) * 60);
+        const baj = Math.round(cmo / 2 / 15) * 15 || 15;
+        return { bajada: baj, subida: Math.max(15, Math.round((cmo - baj + alis) / 15) * 15) };
+      }
+      function opsParaCambio(o) {
+        const plan = piezasDelGantt(st.maq).map(p => norm(p.part));
+        return productionOrders.filter(x => x.id !== (o && o.id) && maqDeOrden(x) === st.maq && abierta(x))
+          .sort((a, b) => (plan.includes(norm(b.part)) - plan.includes(norm(a.part))));
+      }
+      function nuevoCambio(o) { const sm = setupMin(st.maq); const L = opsParaCambio(o); const usadas = (st.cambios || []).map(c => c.ordId); const sig = L.find(x => !usadas.includes(x.id)) || L[0]; return { bajada: sm.bajada, subida: sm.subida, ordId: sig ? sig.id : '', ok: '', scrap: '' }; }
+      function htmlCambio(c, i, o) {
+        const L = opsParaCambio(o), plan = piezasDelGantt(st.maq).map(p => norm(p.part));
+        const ctr = (k, v) => `<div class="flex items-center gap-1.5"><button type="button" class="cr-cm h-11 w-11 rounded-lg border border-slate-600 bg-slate-950 text-xl font-black text-white" data-i="${i}" data-k="${k}" data-d="-15" aria-label="Menos 15 minutos">−</button><span class="min-w-[64px] text-center text-base font-black text-amber-300">${fmtMin(v)}</span><button type="button" class="cr-cm h-11 w-11 rounded-lg border border-slate-600 bg-slate-950 text-xl font-black text-white" data-i="${i}" data-k="${k}" data-d="15" aria-label="Más 15 minutos">+</button></div>`;
+        return `<div class="space-y-3">
+          <div class="rounded-2xl border-2 border-dashed border-amber-500 bg-amber-500/10 p-3 space-y-2">
+            <div class="flex items-baseline justify-between"><span class="text-sm font-black text-amber-300">🔧 Cambio de molde</span><button type="button" class="cr-cdel text-[11px] text-slate-400 underline" data-i="${i}">quitar</button></div>
+            <div class="flex items-center justify-between gap-2"><span class="text-sm font-bold text-white">Bajada del molde</span>${ctr('bajada', c.bajada)}</div>
+            <div class="flex items-center justify-between gap-2"><span class="text-sm font-bold text-white">Subida y puesta a punto</span>${ctr('subida', c.subida)}</div>
+            <div class="text-[11px] text-amber-200/80">Sugerido del Set-up de la ${esc(st.maq)} · se carga como parada "${esc(corto(CODIGO_CMO()))}"</div>
+          </div>
+          <div class="rounded-2xl border border-sky-700 bg-slate-950/60 p-3 space-y-2">
+            <span class="text-xs font-black text-sky-300">PIEZA ${i + 2}</span>
+            ${L.length ? `<select class="cr-cop w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-base font-bold text-white" data-i="${i}">${L.map(x => `<option value="${esc(x.id)}" ${x.id === c.ordId ? 'selected' : ''}>${esc(x.part)} · OP ${esc(x.ordNumber)}${plan.includes(norm(x.part)) ? ' · programada' : ''}</option>`).join('')}</select>` : `<div class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">No hay otra OP abierta en la ${esc(st.maq)}. Creala primero desde "Otra orden".</div>`}
+            <div class="grid grid-cols-3 gap-2">
+              <label class="col-span-2 block"><span class="mb-1 block text-xs font-black text-emerald-300">Buenas</span><input type="number" inputmode="numeric" min="0" class="cr-cok w-full rounded-xl border-2 border-sky-500/50 bg-slate-950 px-3 py-3 text-center text-2xl font-black text-sky-200" data-i="${i}" value="${esc(c.ok)}" placeholder="0"></label>
+              <label class="block"><span class="mb-1 block text-xs font-black text-rose-300">Scrap</span><input type="number" inputmode="numeric" min="0" class="cr-csc w-full rounded-xl border-2 border-rose-500/40 bg-slate-950 px-2 py-3 text-center text-xl font-black text-rose-300" data-i="${i}" value="${esc(c.scrap)}" placeholder="0"></label>
+            </div>
+          </div></div>`;
+      }
+      const uhDe = o => { const c = cat().find(x => norm(x.part) === norm(o && o.part)); return Number(o && o.unitsPerHour) || Number(c && c.unitsPerHour) || 0; };
+      // segmentos del turno: pieza 1, (cambio, pieza)… — el tiempo de cada pieza sale de lo que produjo y se ajusta al turno
+      function repartoTurno(o) {
+        const ini = $('crIni') ? $('crIni').value : '', fin = $('crFin') ? $('crFin').value : '';
+        const [a0, b0] = tramo(ini, fin), T = b0 - a0;
+        const par = st.parada ? leerParadas().reduce((s2, p) => s2 + p.min, 0) : 0;
+        const piezas = [{ o, ok: Number(($('crOk') || {}).value) || 0, scrap: Number(($('crScrap') || {}).value) || 0, extra: par }];
+        (st.cambios || []).forEach(c => piezas.push({ o: productionOrders.find(x => x.id === c.ordId), ok: Number(c.ok) || 0, scrap: Number(c.scrap) || 0, extra: (Number(c.bajada) || 0) + (Number(c.subida) || 0), cambio: c }));
+        const fijo = piezas.reduce((s2, p) => s2 + p.extra, 0), libre = Math.max(0, T - fijo);
+        const nec = piezas.map(p => { const u = uhDe(p.o); return u ? (p.ok + p.scrap) / u * 60 : 0; });
+        const sum = nec.reduce((x, y) => x + y, 0);
+        const run = nec.map(n => sum > 0 ? n / sum * libre : libre / piezas.length);
+        let t0 = a0; const segs = [];
+        piezas.forEach((p, i) => {
+          if (p.cambio) { segs.push({ tipo: 'cambio', a: t0, b: t0 + p.extra, min: p.extra, c: p.cambio }); }
+          let b = i === piezas.length - 1 ? b0 : Math.round((t0 + p.extra + run[i]) / 5) * 5;
+          b = Math.min(b0, Math.max(t0 + p.extra, b));
+          segs.push({ tipo: 'pieza', a: p.cambio ? t0 + p.extra : t0, b, desde: t0, o: p.o, ok: p.ok, scrap: p.scrap, cambio: p.cambio, paradasMin: p.cambio ? p.extra : par });
+          t0 = b;
+        });
+        return { segs, a0, b0, T, fijo, excedido: fijo > T };
+      }
+      function pintarReparto() {
+        const box = $('crReparto'); if (!box) return;
+        if (!(st.cambios && st.cambios.length)) { box.innerHTML = ''; return; }
+        const o = productionOrders.find(x => x.id === st.ordId); const R = repartoTurno(o);
+        const cols = ['#10b981', '#3b82f6', '#a78bfa', '#22d3ee']; let k = 0;
+        const segs = R.segs.map(sg => sg.tipo === 'cambio' ? Object.assign({ col: 'repeating-linear-gradient(45deg,#f59e0b 0 6px,#b45309 6px 12px)', txt: '🔧 Cambio de molde' }, sg) : Object.assign({ col: cols[(k++) % 4], txt: sg.o ? sg.o.part : '—' }, sg));
+        box.innerHTML = `<div class="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 space-y-2"><div class="text-xs font-black text-slate-200">Así queda el turno (se calcula solo)</div>
+          <div class="flex h-5 overflow-hidden rounded-lg bg-slate-800">${segs.map(sg => `<span class="block h-full" style="width:${Math.max(0, (sg.b - sg.a) / (R.T || 1) * 100)}%;background:${sg.col}"></span>`).join('')}</div>
+          <div class="grid gap-1 text-[11px] sm:grid-cols-${Math.min(4, segs.length)}">${segs.map(sg => `<div><b class="text-white">${esc(sg.txt)}</b> <span class="text-slate-300">${hhmm(sg.a)} – ${hhmm(sg.b)}</span></div>`).join('')}</div>
+          ${R.excedido ? '<div class="text-xs font-bold text-rose-300">⚠ Los cambios de molde y paradas suman más que el turno.</div>' : '<div class="text-[11px] text-slate-400">El tiempo de cada pieza sale de las buenas + scrap ÷ piezas por hora, ajustado para completar el turno.</div>'}</div>`;
+      }
       function sugerido(o, t) {
         const c = cat().find(x => norm(x.part) === norm(o.part));
         const uh = Number(o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
@@ -201,12 +267,9 @@
             <form id="crTurnoForm" class="space-y-4">
               <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Turno</span>
                 <div class="grid ${['grid-cols-1', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-2 sm:grid-cols-4'][Math.min(4, turnos().length)]} gap-2">${turnos().map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
-                <details class="mt-1.5 text-xs text-slate-400" ${cont ? 'open' : ''}><summary class="cursor-pointer">${cont ? 'Horario de esta pieza (sigue de la anterior)' : 'Cambiar horario o fecha'}</summary>
-                  <div class="mt-2 grid grid-cols-3 gap-2">
-                    <input id="crFecha" type="date" value="${(cont && cont.fecha) || st.fecha || hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
-                    <input id="crIni" type="time" value="${iniVis}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
-                    <input id="crFin" type="time" value="${t.fin}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
-                  </div></details>
+                <div class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-400"><span id="crHorarioTxt">${cont ? `Sigue desde las ${esc(iniVis)} hasta las ${esc(t.fin)}` : `Horario del turno: ${esc(t.ini)} a ${esc(t.fin)} · se completa solo`}</span>
+                  <label class="ml-auto flex items-center gap-1.5">Fecha <input id="crFecha" type="date" value="${(cont && cont.fecha) || st.fecha || hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-white"></label>
+                  <input id="crIni" type="hidden" value="${esc(iniVis)}"><input id="crFin" type="hidden" value="${esc(t.fin)}"></div>
               </div>
               <div>
                 <div class="mb-1 flex flex-wrap items-baseline justify-between gap-2"><span class="text-sm font-black text-emerald-300">✅ Piezas buenas</span>${sug && !st.editLogId ? `<span class="text-[11px] text-slate-400">sugerido según el turno: ${sug.toLocaleString('es-AR')} · corregilo si hiciste otra cantidad</span>` : ''}</div>
@@ -228,6 +291,9 @@
                   <label class="block"><span class="mb-1 block text-xs font-bold text-amber-300">Arranque en baja</span>
                     <input id="crBaja" type="number" inputmode="numeric" min="0" placeholder="0" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-3 py-3 text-2xl font-black text-amber-300 focus:border-amber-400 focus:outline-none"></label>
                 </div></details>
+              ${st.editLogId ? '' : `<div id="crCambios" class="space-y-3">${(st.cambios || []).map((c, i) => htmlCambio(c, i, o)).join('')}</div>
+              <button type="button" id="crAddCambio" class="w-full rounded-2xl border-2 border-dashed border-amber-500/50 bg-amber-500/5 px-4 py-3 text-sm font-black text-amber-200">🔧 ${st.cambios && st.cambios.length ? 'Otro cambio de pieza en el turno' : 'Cambió de pieza en el turno (bajada y subida de molde)'}</button>
+              <div id="crReparto"></div>`}
               <div><span class="mb-1.5 block text-xs font-bold text-slate-300">¿Hubo paradas?</span>
                 <div class="flex flex-wrap gap-2">
                   <button type="button" class="cr-parada rounded-xl border-2 px-4 py-3 text-sm font-bold ${!st.parada ? 'border-emerald-400 bg-emerald-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-p="0">No</button>
@@ -265,6 +331,7 @@
             </div>`).join('')}</div>`;
         }
         box.innerHTML = migas + html;
+        if (st.paso === 'turno') setTimeout(pintarReparto, 0);
         if (st.paso === 'turno' && st.editLogId) { try { precargarTurno(); } catch (e) { console.error(e); } }
         // paradas tomadas con el cronómetro de la máquina (parte 29)
         if (st.paso === 'turno' && !st.editLogId && window.inoferCronoDelTurno) {
@@ -286,6 +353,7 @@
         if (!l) return;
         $('crFecha').value = l.date || hoy();
         $('crIni').value = l.startTime || ''; $('crFin').value = l.endTime || '';
+        if ($('crHorarioTxt')) $('crHorarioTxt').textContent = `Horario cargado: ${l.startTime || '—'} a ${l.endTime || '—'}`;
         $('crOk').value = Number(l.okPcs) || 0; $('crScrap').value = Number(l.scrapPcs) || ''; $('crBaja').value = Number(l.lowStartPcs) || '';
         $('crOperario').value = l.operator || '';
         if ((Number(l.scrapPcs) || Number(l.lowStartPcs)) && $('crMas')) $('crMas').open = true;
@@ -461,6 +529,7 @@
         return [...document.querySelectorAll('#crParadasList .cr-prow')].map(r => ({ codigo: r.querySelector('.cr-pcod').value, min: minFila(r) })).filter(p => p.codigo || p.min);
       }
       function totalParadas() {
+        setTimeout(pintarReparto, 0);
         const el = $('crParadasTotal'); if (!el) return;
         const ps = leerParadas(); const tot = ps.reduce((a, p) => a + p.min, 0);
         const t = turnos().find(x => x.id === st.turno) || turnos()[0];
@@ -480,6 +549,7 @@
         if (st.parada && !paradas.length) { showToast('Cargá al menos una parada o marcá "No"'); return; }
         if (paradas.some(p => !p.codigo)) { showToast('Elegí el motivo de cada parada'); return; }
         if (paradas.some(p => !p.min)) { showToast('Poné cuánto duró cada parada'); return; }
+        if (!st.editLogId && st.cambios && st.cambios.length) return guardarConCambios(o, t, operario, paradas);
         const durTurno = (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440) || 1440;
         const min = paradas.reduce((a, p) => a + p.min, 0);
         if (min > durTurno && !confirm(`Las paradas suman ${fmtMin(min)} y el turno dura ${fmtMin(durTurno)}. ¿Guardar igual?`)) return;
@@ -539,6 +609,60 @@
           </div></div>`;
       }
 
+      function guardarConCambios(o, t, operario, paradas) {
+        for (let i = 0; i < st.cambios.length; i++) {
+          const c = st.cambios[i];
+          if (!c.ordId || !productionOrders.some(x => x.id === c.ordId)) { showToast(`Elegí la OP de la pieza ${i + 2}`); return; }
+          if (c.ok === '' || c.ok == null) { showToast(`Poné las piezas buenas de la pieza ${i + 2}`); const e = document.querySelector(`.cr-cok[data-i="${i}"]`); e && e.focus(); return; }
+        }
+        const R = repartoTurno(o);
+        if (R.excedido) { showToast('Los cambios de molde y paradas suman más que el turno. Corregí los tiempos.'); return; }
+        const fecha = $('crFecha').value || hoy();
+        if (!st.pisadaOk) {
+          const pis = cargasMaq(st.maq, fecha, '').map(c => Object.assign(c, { m: Math.min(c.b, R.b0) - Math.max(c.a, R.a0) })).filter(c => c.m > 0);
+          if (pis.length) { avisoPisada(pis, R.a0, R.b0); return; }
+        }
+        st.pisadaOk = false;
+        const piezasSeg = R.segs.filter(sg => sg.tipo === 'pieza');
+        try {
+          const av = [];
+          piezasSeg.forEach((sg, i) => { if (!sg.o) return; const x = (window.inoferControlTurno || (() => []))(sg.o, { pisadaRevisada: true, ok: sg.ok, scrap: sg.scrap, baja: i ? 0 : (Number($('crBaja').value) || 0), fecha, ini: hhmm(sg.desde), fin: hhmm(sg.b), paradasMin: sg.paradasMin, turno: t.nombre }); if (x.bloqueo) av.bloqueo = x.bloqueo; (x || []).forEach(m => av.push(sg.o.part + ': ' + m)); });
+          if (av.bloqueo) { showToast(av.bloqueo); return; }
+          if (av.length && !confirm('Revisá antes de guardar:\n\n• ' + av.join('\n• ') + '\n\n¿Está bien así? (Aceptar = guardar igual)')) return;
+        } catch (e) { }
+        const quien = typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', ahora = new Date().toISOString();
+        const obsU = ($('crObs') || {}).value || '';
+        const tocadas = [];
+        piezasSeg.forEach((sg, i) => {
+          const oo = sg.o; if (!oo) return;
+          const ps = i === 0 ? paradas : [{ codigo: CODIGO_CMO(), min: sg.paradasMin }];
+          const lid = 'lg-' + Date.now() + '-' + i;
+          if (!oo.logs) oo.logs = [];
+          oo.logs.push({ id: lid, date: fecha, operator: operario, startTime: hhmm(sg.desde), endTime: hhmm(sg.b), okPcs: sg.ok, lowStartPcs: i ? 0 : (Number($('crBaja').value) || 0), scrapPcs: sg.scrap,
+            stopCode: ps.length ? ps[0].codigo : '', stopMinutes: ps.reduce((a, p) => a + p.min, 0), paradas: ps,
+            obs: [ps.map(p => `Cód ${String(p.codigo).split('-')[0]} · ${fmtMin(p.min)}`).join('; '), i ? `Bajada ${fmtMin(sg.cambio.bajada)} + subida ${fmtMin(sg.cambio.subida)}` : obsU].filter(Boolean).join(' — '),
+            obsUsuario: i ? '' : obsU, turno: t.nombre, origen: 'cambio', cambioMolde: i ? { bajada: sg.cambio.bajada, subida: sg.cambio.subida } : undefined, cargadoPor: quien, cargadoAt: ahora });
+          if (i === 0) { try { if (window.inoferCronoUsar) inoferCronoUsar(st.maq, fecha, { ini: hhmm(R.a0), fin: hhmm(R.b0) }, lid); } catch (e) { } }
+          const a = avance(oo);
+          if (a.pct >= 100 && oo.status !== 'Completada') { oo.status = 'Completada'; oo.autoCompletada = true; }
+          tocadas.push({ oo, sg, a });
+        });
+        st.cambios = []; st.fecha = ''; st.continuar = null; st.parada = false;
+        pref.operario = operario; guardarPref();
+        saveProductionOrders();
+        try { renderProductionOrdersView(); } catch (e) { }
+        showToast(`Turno guardado ✓ ${tocadas.length} piezas en la ${st.maq}`);
+        const cols = ['#10b981', '#3b82f6', '#a78bfa', '#22d3ee']; let k = 0;
+        const filas = R.segs.map(sg => sg.tipo === 'cambio'
+          ? `<div class="flex justify-between gap-2 border-b border-slate-800 bg-amber-500/10 px-3 py-2.5"><div class="text-left"><b class="text-amber-300">🔧 Cambio de molde</b><div class="text-[11px] text-amber-200/80">bajada ${fmtMin(sg.c.bajada)} + subida y puesta a punto ${fmtMin(sg.c.subida)}</div></div><b class="whitespace-nowrap text-white">${hhmm(sg.a)} – ${hhmm(sg.b)}</b></div>`
+          : `<div class="flex justify-between gap-2 border-b border-slate-800 px-3 py-2.5"><div class="text-left"><b style="color:${cols[(k++) % 4]}">${esc(sg.o ? sg.o.part : '—')}</b><div class="text-[11px] text-slate-400">OP ${esc(sg.o ? sg.o.ordNumber : '')} · ${Number(sg.ok).toLocaleString('es-AR')} buenas${sg.scrap ? ' · ' + sg.scrap + ' scrap' : ''}</div></div><b class="whitespace-nowrap text-white">${hhmm(sg.a)} – ${hhmm(sg.b)}</b></div>`).join('');
+        $('inoferCR').innerHTML = `<div class="space-y-4 py-4 text-center">
+          <div class="text-5xl">✅</div><div class="text-xl font-black text-white">¡Turno guardado!</div>
+          <div class="text-sm text-slate-300">${tocadas.length} piezas y ${R.segs.filter(x => x.tipo === 'cambio').length} cambio${R.segs.filter(x => x.tipo === 'cambio').length === 1 ? '' : 's'} de molde · turno ${esc(t.nombre)} completo</div>
+          <div class="mx-auto max-w-md overflow-hidden rounded-xl border border-slate-800 bg-slate-950/60">${filas}</div>
+          <div class="flex flex-wrap justify-center gap-2 pt-2"><button type="button" id="crOtroTurno" class="rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950">Cargar otro turno</button><button type="button" id="crOtraOrden" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200">Otra orden</button></div></div>`;
+      }
+
       function avisoPisada(pis, ya, yb) {
         const fin = pis.reduce((m, c) => Math.max(m, c.b), 0), total = pis.reduce((m, c) => m + c.m, 0);
         const puedeCorrer = fin < yb - 5;
@@ -551,7 +675,7 @@
             ${pis.map(c => fila(c.o.part + ' (ya cargada)', c.a, c.b)).join('')}${fila('Esta pieza', ya, yb)}
             <p class="text-xs text-slate-300">Si se guarda así, el OEE y la utilización de la ${esc(st.maq)} salen mal.</p>
             ${puedeCorrer ? `<button type="button" data-p="correr" data-i="${hhmm(fin)}" class="w-full rounded-xl bg-emerald-500 px-4 py-3.5 text-base font-black text-emerald-950">Que esta pieza arranque a las ${hhmm(fin)}</button>` : ''}
-            <button type="button" data-p="mano" class="w-full rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold text-slate-200">Corregir el horario a mano</button>
+            <button type="button" data-p="mano" class="w-full rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold text-slate-200">Cancelar y revisar</button>
             <button type="button" data-p="igual" class="w-full px-4 py-2 text-xs text-slate-400 underline">Guardar igual</button>
           </div></div>`;
         document.body.appendChild(w);
@@ -559,9 +683,27 @@
           const b = e.target.closest('button[data-p]'); if (!b && e.target !== w) return;
           w.remove(); if (!b) return;
           if (b.dataset.p === 'correr') { $('crIni').value = b.dataset.i; totalParadas(); const ok = $('crOk'); if (ok && ok.dataset.auto === '1') { const o = productionOrders.find(x => x.id === st.ordId); const tt = turnos().find(x => x.id === st.turno) || turnos()[0]; if (o) { const a2 = avance(o); const f2 = Math.max(0, (Number(o.qtyTarget) || 0) - a2.ok); ok.value = Math.min(sugerido(o, { ini: b.dataset.i, fin: $('crFin').value || tt.fin }), f2 || Infinity) || ''; } } guardarTurno(); }
-          else if (b.dataset.p === 'mano') { const d = $('crIni') && $('crIni').closest('details'); if (d) d.open = true; $('crIni') && $('crIni').focus(); }
+          else if (b.dataset.p === 'mano') { }
           else if (b.dataset.p === 'igual') { st.pisadaOk = true; guardarTurno(); }
         });
+      }
+
+      function leerCambios() {
+        (st.cambios || []).forEach((c, i) => {
+          const q = s2 => document.querySelector(`${s2}[data-i="${i}"]`);
+          if (q('.cr-cop')) c.ordId = q('.cr-cop').value; if (q('.cr-cok')) c.ok = q('.cr-cok').value; if (q('.cr-csc')) c.scrap = q('.cr-csc').value;
+        });
+      }
+      // redibuja la pantalla del turno sin perder lo que ya se escribió (buenas, scrap, paradas, operario)
+      function conservar(fn) {
+        const val = id => ($(id) || {}).value;
+        const keep = { ok: val('crOk'), auto: ($('crOk') || { dataset: {} }).dataset.auto, sc: val('crScrap'), ba: val('crBaja'), op: val('crOperario'), obs: val('crObs'), fe: val('crFecha'), ini: val('crIni'), fin: val('crFin'), par: st.parada ? leerParadas() : null, mas: $('crMas') && $('crMas').open };
+        fn();
+        const set = (id, v) => { if ($(id) && v != null) $(id).value = v; };
+        set('crOk', keep.ok); if ($('crOk')) $('crOk').dataset.auto = keep.auto || ''; set('crScrap', keep.sc); set('crBaja', keep.ba); set('crOperario', keep.op); set('crObs', keep.obs); set('crFecha', keep.fe); set('crIni', keep.ini); set('crFin', keep.fin);
+        if ($('crMas') && keep.mas) $('crMas').open = true;
+        if (keep.par && keep.par.length && $('crParadasList')) { $('crParadasList').innerHTML = keep.par.map(p => filaParada(p)).join(''); $('crParadaBox').classList.remove('hidden'); totalParadas(); try { estiloParadas(); } catch (e) { } }
+        pintarReparto();
       }
 
       function infoPieza() {
@@ -600,7 +742,7 @@
           let el;
           if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; if (st.paso === 'maquina') st.continuar = null; render(); }
           else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
-          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
+          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.cambios = []; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
           else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
           else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
@@ -657,7 +799,10 @@
           else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
           else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
           else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
-          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; st.continuar = null; render(); }
+          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; st.continuar = null; st.cambios = []; render(); }
+          else if (g('#crAddCambio')) { leerCambios(); const o = productionOrders.find(x => x.id === st.ordId); st.cambios = (st.cambios || []).concat([nuevoCambio(o)]); conservar(() => render()); setTimeout(() => { const e = document.querySelector(`.cr-cok[data-i="${st.cambios.length - 1}"]`); e && e.scrollIntoView({ block: 'center' }); }, 30); }
+          else if ((el = g('.cr-cdel'))) { leerCambios(); st.cambios.splice(Number(el.dataset.i), 1); conservar(() => render()); }
+          else if ((el = g('.cr-cm'))) { leerCambios(); const c = st.cambios[Number(el.dataset.i)]; c[el.dataset.k] = Math.max(0, (Number(c[el.dataset.k]) || 0) + Number(el.dataset.d)); conservar(() => render()); }
           else if ((el = g('.cr-log-edit'))) { window.inoferEditarTurno(st.ordId, el.dataset.id); }
           else if (g('#crCancelEdit')) { st.editLogId = ''; st.parada = false; render(); }
           else if ((el = g('.cr-log-del'))) {
@@ -674,8 +819,8 @@
           else if ((el = g('#crOtraPieza'))) { st.continuar = { fecha: el.dataset.f, turno: el.dataset.t, ini: el.dataset.i }; st.fecha = el.dataset.f; st.paso = 'orden'; st.nueva = false; st.editLogId = ''; render(); }
           else if (g('#crTermine')) { st.continuar = null; st.paso = 'orden'; render(); }
         });
-        v.addEventListener('input', e => { if (e.target.id === 'crOk') e.target.dataset.auto = ''; if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
-        v.addEventListener('change', e => { if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
+        v.addEventListener('input', e => { if (e.target.closest && e.target.closest('#crTurnoForm')) { leerCambios(); pintarReparto(); } if (e.target.id === 'crOk') e.target.dataset.auto = ''; if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
+        v.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('cr-cop')) { leerCambios(); pintarReparto(); } if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
         v.addEventListener('submit', e => {
           e.preventDefault();
           if (!puedeEditar()) { showToast('Tu usuario no puede cargar órdenes'); return; }
@@ -717,7 +862,7 @@
       function abrir(o) {
         o = o || {};
         if (o.maq) { st.maq = o.maq; pref.maq = o.maq; guardarPref(); }
-        st.editLogId = ''; st.continuar = null; st.nueva = false; st.parada = false; st.fecha = o.fecha || '';
+        st.editLogId = ''; st.continuar = null; st.cambios = []; st.nueva = false; st.parada = false; st.fecha = o.fecha || '';
         if (o.turnoNombre) { const t = turnos().find(x => norm(x.nombre) === norm(o.turnoNombre)); if (t) st.turno = t.id; } else st.turno = turnoActual();
         if (o.ordId && productionOrders.some(x => x.id === o.ordId)) { st.ordId = o.ordId; selectedOrderId = o.ordId; st.paso = 'turno'; }
         else st.paso = st.maq ? 'orden' : 'maquina';
