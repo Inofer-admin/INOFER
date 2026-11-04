@@ -325,6 +325,8 @@
             if (!maq) { showToast('Elegí la máquina'); return; }
             if (!motivo) { showToast('Elegí qué pasó'); return; }
             if (!que) { showToast('Elegí qué se rompió: el molde o la máquina'); return; }
+            // solo va a Mantenimiento si se bajó el molde o se paró la máquina (pedido de la planta)
+            if (que === 'maquina' && !w.querySelector('#arParo').checked) { showToast('Si la máquina no se paró, no va a Mantenimiento: cargalo como parada en el turno.'); return; }
             const molde = que === 'molde', ordId = molde ? w.querySelector('#arOrd').value : '';
             const ord = ordId ? ordenes().find(o => o.id === ordId) : null;
             const bt = w.querySelector('#arEnviar'); bt.disabled = true; bt.textContent = 'Enviando…';

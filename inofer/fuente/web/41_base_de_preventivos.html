@@ -1,0 +1,152 @@
+  <script>
+    // ===== Mantenimiento: cargar una base de datos (Excel/CSV) y que arme sola el plan preventivo =====
+    // Columnas que reconoce (en cualquier orden, la primera fila con títulos): Máquina/Equipo, Tarea/Actividad/Descripción,
+    // Frecuencia/Cada/Periodicidad (+ Unidad opcional), Última vez/Fecha, Aviso/Anticipación, Responsable.
+    // Frecuencia acepta "30", "30 días", "2 semanas", "3 meses", "mensual", "trimestral", "anual", "500 horas" (se pasa a días de 24 h).
+    // Sin "última vez", reparte las primeras fechas en el primer ciclo para que no venzan todas el mismo día (sin domingos).
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const pad = n => String(n).padStart(2, '0');
+      const iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoy = () => iso(new Date());
+      const masDias = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return iso(d); };
+      const fF = s => s ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : '—';
+      const norm = s => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : [{ id: '200V' }, { id: '200N' }, { id: '180' }, { id: 'H50' }, { id: 'Z30' }]);
+      const solo = s => norm(s).replace(/[^a-z0-9]/g, '');
+      function maquinaDe(txt) {
+        const t = solo(txt); if (!t || /^(todas|todaslasmaquinas|general|planta|all)$/.test(t)) return 'TODAS';
+        const L = MAQS();
+        let m = L.find(x => solo(x.id) === t) || L.find(x => x.name && solo(x.name) === t);
+        if (!m) m = L.find(x => t.includes(solo(x.id))) || L.find(x => x.name && t.includes(solo(x.name)));
+        if (!m && /200/.test(t)) m = L.find(x => solo(x.id) === (/n\b|n$|negra|200n/.test(t) ? '200n' : (/v/.test(t) ? '200v' : '')));
+        return m ? m.id : '';
+      }
+      const PALABRAS = [[/^diari|todos los dias|cada dia/, 1], [/^seman/, 7], [/^quincen/, 15], [/^mensual|^mes$/, 30], [/^bimestr/, 60], [/^trimestr/, 90], [/^cuatrimestr/, 120], [/^semestr/, 180], [/^anual|^ano$/, 365]];
+      function frecuencia(txt, unidad) {
+        const t = norm(txt) + (unidad ? ' ' + norm(unidad) : '');
+        for (const [re, d] of PALABRAS) if (re.test(t)) return { dias: d };
+        const n = parseFloat(String(t).replace(',', '.').replace(/[^0-9.]/g, ' ').trim().split(/\s+/)[0]);
+        if (!(n > 0)) return null;
+        if (/hora|\bhs\b|\bh\b/.test(t)) return { dias: Math.max(1, Math.round(n / 24)), horas: n };
+        if (/seman/.test(t)) return { dias: Math.round(n * 7) };
+        if (/mes/.test(t)) return { dias: Math.round(n * 30) };
+        if (/ano|anio/.test(t)) return { dias: Math.round(n * 365) };
+        return { dias: Math.round(n) };
+      }
+      function fecha(v) {
+        if (v == null || v === '') return '';
+        if (v instanceof Date && !isNaN(v)) return iso(v);
+        if (typeof v === 'number' && v > 20000 && v < 80000) return iso(new Date(Math.round((v - 25569) * 864e5) + 12 * 36e5));
+        const s = String(v).trim(); let m;
+        if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return m[1] + '-' + pad(m[2]) + '-' + pad(m[3]);
+        if ((m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/.exec(s))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + pad(m[2]) + '-' + pad(m[1]); }
+        return '';
+      }
+      function leerFilas(filas) {
+        let h = -1, C = {};
+        for (let i = 0; i < Math.min(filas.length, 30) && h < 0; i++) {
+          const f = (filas[i] || []).map(norm);
+          const idx = re => f.findIndex(x => re.test(x));
+          const c = { maq: idx(/^(maquina|equipo|inyectora|maq)/), tarea: idx(/^(tarea|actividad|descripcion|trabajo|item|mantenimiento|operacion)/), frec: idx(/^(frecuencia|cada|periodicidad|periodo|intervalo)/), unidad: idx(/^(unidad|u\.)/), ult: idx(/^(ultim|fecha|realizado|hecho)/), aviso: idx(/^(aviso|anticipa|avisar)/), resp: idx(/^(responsable|quien|encargado)/) };
+          if (c.tarea >= 0 && c.frec >= 0) { h = i; C = c; }
+        }
+        if (h < 0) throw new Error('No encontré las columnas. Tiene que tener al menos "Tarea" y "Frecuencia" (y conviene "Máquina").');
+        const filasOk = [], errores = [];
+        for (let i = h + 1; i < filas.length; i++) {
+          const f = filas[i] || []; const tarea = String(f[C.tarea] == null ? '' : f[C.tarea]).trim(); if (!tarea) continue;
+          const maqTxt = C.maq >= 0 ? f[C.maq] : '';
+          const maq = C.maq >= 0 ? maquinaDe(maqTxt) : 'TODAS';
+          const fr = frecuencia(f[C.frec], C.unidad >= 0 ? f[C.unidad] : '');
+          if (!maq) { errores.push(`Fila ${i + 1}: no reconozco la máquina "${maqTxt}"`); continue; }
+          if (!fr) { errores.push(`Fila ${i + 1}: falta la frecuencia de "${tarea}"`); continue; }
+          filasOk.push({ fila: i + 1, maquina: maq, tarea: tarea.slice(0, 120), cadaDias: Math.max(1, fr.dias), horas: fr.horas || 0, ultimo: C.ult >= 0 ? fecha(f[C.ult]) : '', avisoDias: C.aviso >= 0 && f[C.aviso] !== '' && f[C.aviso] != null ? Math.max(0, Math.round(Number(String(f[C.aviso]).replace(',', '.')) || 0)) : null, responsable: C.resp >= 0 ? String(f[C.resp] || '').trim().slice(0, 60) : '' });
+        }
+        return { filas: filasOk, errores };
+      }
+      // arma el plan: una línea por máquina (las "Todas" se abren en las 5) y reparte las primeras fechas
+      function armar(lista) {
+        const out = [];
+        lista.forEach(x => (x.maquina === 'TODAS' ? MAQS().map(m => m.id) : [x.maquina]).forEach(m => out.push(Object.assign({}, x, { maquina: m }))));
+        const porMaq = {};
+        out.forEach(x => { if (!x.ultimo) (porMaq[x.maquina] = porMaq[x.maquina] || []).push(x); });
+        Object.keys(porMaq).forEach(m => {
+          const L = porMaq[m].sort((a, b) => a.cadaDias - b.cadaDias);
+          L.forEach((x, i) => {
+            const ventana = Math.max(1, Math.min(x.cadaDias, 28));
+            let off = 1 + Math.floor(i * ventana / L.length) % ventana;
+            let primera = masDias(hoy(), off);
+            if (new Date(primera + 'T12:00:00').getDay() === 0) primera = masDias(primera, 1);
+            x.primera = primera; x.ultimo = masDias(primera, -x.cadaDias); x.repartida = true;
+          });
+        });
+        out.forEach(x => { if (!x.primera) x.primera = masDias(x.ultimo, x.cadaDias); });
+        return out.sort((a, b) => a.primera.localeCompare(b.primera) || a.maquina.localeCompare(b.maquina));
+      }
+      function aplicar(plan, modo) {
+        const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || null;
+        if (!M) { toast('No se pudo abrir Mantenimiento'); return 0; }
+        M.planes = M.planes || [];
+        if (modo === 'reemplazar') M.planes = [];
+        let nuevos = 0, act = 0;
+        plan.forEach((x, i) => {
+          const ya = M.planes.find(p => p.maquina === x.maquina && norm(p.tarea) === norm(x.tarea));
+          const datos = { cadaDias: x.cadaDias, avisoDias: x.avisoDias == null ? Math.min(7, Math.max(1, Math.round(x.cadaDias / 10))) : x.avisoDias, responsable: x.responsable || '', origen: 'base' };
+          if (ya) { Object.assign(ya, datos); if (!x.repartida || !ya.ultimo) ya.ultimo = x.ultimo; act++; }
+          else { M.planes.push(Object.assign({ id: 'pv-' + Date.now() + '-' + i, maquina: x.maquina, tarea: x.tarea, ultimo: x.ultimo }, datos)); nuevos++; }
+        });
+        try { inoferModGuardar('mantenimiento'); } catch (e) { }
+        try { inoferRenderMant(); } catch (e) { }
+        return { nuevos, act };
+      }
+      let previa = null;
+      function mostrar(res, nombre) {
+        const plan = armar(res.filas);
+        previa = plan;
+        let w = $('inoferBasePrev'); if (w) w.remove();
+        w = document.createElement('div'); w.id = 'inoferBasePrev'; w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        const hayPlan = ((window.inoferModLocal && inoferModLocal('mantenimiento')) || {}).planes;
+        w.innerHTML = `<div class="w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 text-slate-100 shadow-2xl">
+          <div class="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-5 py-4"><div><div class="text-[11px] font-bold tracking-wider text-slate-400">MANTENIMIENTO · ${esc(nombre)}</div><div class="text-lg font-black text-white">📅 Plan preventivo armado desde la base</div></div><button type="button" data-a="cerrar" class="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div>
+          <div class="space-y-3 p-5">
+            <div class="text-sm text-slate-200">${res.filas.length} tareas en el archivo → <b>${plan.length}</b> preventivos (las de "todas" se abren por máquina). ${plan.some(x => x.repartida) ? 'Las que no tenían "última vez" se repartieron en el primer ciclo para que no venzan todas juntas.' : ''}</div>
+            ${res.errores.length ? `<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100"><b>No se cargaron ${res.errores.length} fila(s):</b><br>${res.errores.slice(0, 12).map(esc).join('<br>')}${res.errores.length > 12 ? '<br>…' : ''}</div>` : ''}
+            <div class="max-h-[50vh] overflow-y-auto rounded-xl border border-slate-800"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900 text-left text-[10px] uppercase text-slate-400"><tr><th class="py-2 pl-2 pr-2">Máquina</th><th class="pr-2">Tarea</th><th class="pr-2">Cada</th><th class="pr-2">Última</th><th class="pr-2">Primera fecha</th><th class="pr-2">Responsable</th></tr></thead><tbody>
+              ${plan.slice(0, 500).map(x => `<tr class="border-t border-slate-800"><td class="py-1.5 pl-2 pr-2 font-bold text-white">${esc(x.maquina)}</td><td class="pr-2">${esc(x.tarea)}</td><td class="pr-2 text-slate-300">${x.cadaDias} días${x.horas ? ` <span class="text-slate-500">(${x.horas} h)</span>` : ''}</td><td class="pr-2 text-slate-400">${x.repartida ? '—' : fF(x.ultimo)}</td><td class="pr-2 ${x.primera < hoy() ? 'text-rose-300 font-bold' : 'text-emerald-300'}">${fF(x.primera)}${x.primera < hoy() ? ' (vencido)' : ''}</td><td class="pr-2 text-slate-400">${esc(x.responsable || '')}</td></tr>`).join('')}
+            </tbody></table></div>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              ${hayPlan && hayPlan.length ? `<button type="button" data-a="sumar" class="rounded-xl border border-sky-500/60 bg-sky-500/15 px-4 py-2.5 text-sm font-bold text-sky-100">Sumar al plan actual (${hayPlan.length})</button><button type="button" data-a="reemplazar" class="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-emerald-950">Reemplazar el plan actual</button>` : `<button type="button" data-a="sumar" class="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-black text-emerald-950">✓ Armar el plan</button>`}
+            </div></div></div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => {
+          const b = e.target.closest('[data-a]'); if (!b && e.target !== w) return;
+          if (!b || b.dataset.a === 'cerrar') { w.remove(); return; }
+          if (b.dataset.a === 'reemplazar' && !confirm('¿Reemplazar todo el plan preventivo actual por el de este archivo? (el historial no se toca)')) return;
+          const r = aplicar(previa, b.dataset.a); w.remove();
+          if (r) toast(`✓ Plan preventivo: ${r.nuevos} nuevos${r.act ? ` · ${r.act} actualizados` : ''}`);
+        });
+      }
+      async function desdeArchivo(file) {
+        try {
+          let filas;
+          if (/\.(csv|txt)$/i.test(file.name || '')) {
+            const txt = await file.text(); const l0 = txt.split('\n')[0];
+            const sep = (l0.match(/;/g) || []).length > (l0.match(/,/g) || []).length ? ';' : (l0.indexOf('\t') >= 0 ? '\t' : ',');
+            filas = txt.split(/\r?\n/).map(l => l.split(sep));
+          } else {
+            if (typeof XLSX === 'undefined' || !XLSX.read) throw new Error('No se pudo abrir Excel en este equipo (hace falta internet la primera vez).');
+            const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', cellDates: true });
+            let mejor = null, err = null;
+            wb.SheetNames.forEach(n => { if (mejor) return; try { const r = leerFilas(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null })); if (r.filas.length) mejor = r; } catch (e) { err = e; } });
+            if (!mejor) throw err || new Error('El archivo no tiene tareas.');
+            return mostrar(mejor, file.name);
+          }
+          const r = leerFilas(filas); if (!r.filas.length) throw new Error('El archivo no tiene tareas.' + (r.errores.length ? ' ' + r.errores[0] : ''));
+          mostrar(r, file.name);
+        } catch (e) { toast('⚠️ ' + (e.message || e)); }
+      }
+      window.inoferBasePreventivos = { desdeArchivo, leerFilas, armar, aplicar, frecuencia, maquinaDe, mostrar: (r, n) => mostrar(r, n || 'archivo'), previa: () => previa };
+    })();
+  </script>

@@ -291,13 +291,14 @@
       function parada(m, alElegir) {
         const frec = (CR() && CR().paradasFrecuentes) ? CR().paradasFrecuentes(m) : [];
         const w = document.createElement('div'); w.className = 'fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-3';
-        let cod = '', min = 0;
+        let cod = '', min = 0, mant = false;
         const draw = () => {
           w.innerHTML = `<div class="w-full max-w-md space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 text-sm">
             <div class="font-black text-white">Parada en la ${esc(m)}</div>
             <div class="flex flex-wrap gap-1.5">${frec.map(c => `<button type="button" class="ct-chip pp-cod ${c === cod ? 'on' : ''}" data-c="${esc(c)}">${esc(corto(c).slice(0, 22))}</button>`).join('')}</div>
             <select class="ct-sel pp-otro"><option value="">Otro motivo…</option>${codigos().map(c => `<option value="${esc(c)}" ${c === cod && !frec.includes(c) ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
             <div class="flex flex-wrap items-center gap-1.5"><span class="text-xs text-slate-400">Tiempo:</span>${[10, 15, 30, 60].map(x => `<button type="button" class="ct-chip pp-add" data-m="${x}">+${x >= 60 ? '1 h' : x + '′'}</button>`).join('')}<span class="ml-auto text-lg font-black text-white">${fmtMin(min)}</span><button type="button" class="ct-chip pp-cero">0</button></div>
+            ${window.inoferEsRotura && inoferEsRotura(cod) ? `<div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2"><div class="mb-1.5 text-xs font-bold text-amber-100">🔧 ¿Se bajó el molde o se paró la máquina para repararlo?</div><div class="flex gap-2"><button type="button" class="ct-chip pp-mant ${mant ? '' : 'on'}" data-v="">No, siguió trabajando</button><button type="button" class="ct-chip pp-mant ${mant ? 'on' : ''}" data-v="1">Sí → va a Mantenimiento</button></div></div>` : ''}
             <div class="flex justify-end gap-2"><button type="button" class="ct-b pp-x">Cancelar</button><button type="button" class="ct-b p pp-ok" ${cod && min ? '' : 'disabled'}>Agregar</button></div></div>`;
         };
         draw(); document.body.appendChild(w);
@@ -307,7 +308,8 @@
           else if ((b = e.target.closest('.pp-add'))) { min += Number(b.dataset.m); draw(); }
           else if (e.target.closest('.pp-cero')) { min = 0; draw(); }
           else if (e.target.closest('.pp-x') || e.target === w) w.remove();
-          else if (e.target.closest('.pp-ok')) { w.remove(); alElegir({ codigo: cod, min }); }
+          else if ((b = e.target.closest('.pp-mant'))) { mant = b.dataset.v === '1'; draw(); }
+          else if (e.target.closest('.pp-ok')) { w.remove(); const p = { codigo: cod, min }; if (mant && window.inoferEsRotura && inoferEsRotura(cod)) p.mant = true; alElegir(p); }
         });
         w.addEventListener('change', e => { if (e.target.classList.contains('pp-otro')) { cod = e.target.value; draw(); } });
       }
@@ -366,7 +368,7 @@
             const o = ordenes().find(x => x.id === l.ordId); if (!o) return;
             const dur = i === f.lineas.length - 1 ? (aMin(t.ini) + durMin(t) - desde) : Math.round(durMin(t) * pesos[i] / tot);
             const ini = deMin(desde), fin = deMin(desde + dur); desde += dur;
-            const ps = i === 0 ? f.paradas.map(p => ({ codigo: p.codigo, min: Math.round(p.min) })) : [];
+            const ps = i === 0 ? f.paradas.map(p => Object.assign({ codigo: p.codigo, min: Math.round(p.min) }, p.mant ? { mant: true } : {})) : [];
             const min = ps.reduce((a, p) => a + p.min, 0);
             const lid = 'lg-' + Date.now() + '-' + (n++);
             o.logs = o.logs || [];

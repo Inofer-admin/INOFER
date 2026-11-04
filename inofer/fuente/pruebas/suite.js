@@ -973,6 +973,44 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(Math.abs(r.cad - 100) < 0.01 && Math.abs(r.run - 8) < 0.01 && Math.abs(r.std - 8) < 0.01, 'cadencia de la OP: ' + JSON.stringify(r));
       ok(Math.abs(r.glob - 100) < 0.01 && r.n === 1, 'indicador general: ' + JSON.stringify(r));
     });
+    await prueba('Mantenimiento: base de preventivos, editar historial y roturas solo si se bajó el molde o paró la máquina', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const $ = id => document.getElementById(id);
+        // 1) base de preventivos
+        const B = inoferBasePreventivos;
+        const res = B.leerFilas([['PLAN DE MANTENIMIENTO'], ['Máquina', 'Tarea', 'Frecuencia', 'Última vez', 'Responsable'], ['200V', 'Cambio de aceite PRUEBA', 'Mensual', '01/10/2026', 'Juan'], ['Todas', 'Limpieza de filtros PRUEBA', '2 semanas', '', ''], ['H-50', 'Revisión termocuplas PRUEBA', '500 horas', '', ''], ['XYZ', 'Algo', '30', '', '']]);
+        const plan = B.armar(res.filas);
+        const M = inoferModLocal('mantenimiento'); const antesPlanes = JSON.stringify(M.planes || []);
+        const ap = B.aplicar(plan, 'sumar');
+        const p200 = M.planes.find(p => p.maquina === '200V' && /aceite PRUEBA/.test(p.tarea));
+        const limp = M.planes.filter(p => /filtros PRUEBA/.test(p.tarea));
+        const h50 = M.planes.find(p => p.maquina === 'H50' && /termocuplas/.test(p.tarea));
+        M.planes = JSON.parse(antesPlanes);
+        // 2) roturas: solo la marcada "se bajó el molde / se paró la máquina"
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const hoy = new Date(); const f = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+        productionOrders.push({ id: 'ord-rot', ordNumber: '9931', part: 'PZA-ROT', machine: nom('Z30'), status: 'En Proceso', qtyTarget: 1000, unitsPerHour: 100, logs: [
+          { id: 'lr1', date: f, startTime: '06:00', endTime: '14:00', okPcs: 300, scrapPcs: 0, paradas: [{ codigo: '4-Noyo roto/noyo doblado', min: 30 }], stopMinutes: 30 },
+          { id: 'lr2', date: f, startTime: '14:00', endTime: '22:00', okPcs: 300, scrapPcs: 0, paradas: [{ codigo: '10-Rotura de figura /corredera', min: 90, mant: true }], stopMinutes: 90 }] });
+        // 3) editar el historial
+        M.trabajos = M.trabajos || []; M.trabajos.push({ id: 'mt-prueba-ed', maquina: 'Z30', fecha: f, tipo: 'correctivo', tarea: 'TAREA ORIGINAL', horas: 1 });
+        switchTab('mant'); await esperar(400);
+        const txt = $('viewMant').textContent;
+        const ed = document.querySelector('.mt-tr-edit[data-id="mt-prueba-ed"]'); ed.click(); await esperar(150);
+        const form = document.querySelector('#viewMant .mt-form'); form.querySelector('[name="tarea"]').value = 'TAREA CORREGIDA'; form.requestSubmit(); await esperar(200);
+        const t = M.trabajos.find(x => x.id === 'mt-prueba-ed');
+        // la carga rápida pregunta si se bajó el molde cuando el motivo es una rotura
+        const esRot = inoferEsRotura('10-Rotura de figura /corredera') && !inoferEsRotura('1-Cambio de molde y P.Punto');
+        M.trabajos = M.trabajos.filter(x => x.id !== 'mt-prueba-ed'); productionOrders = productionOrders.filter(o => o.id !== 'ord-rot'); inoferModGuardar('mantenimiento'); saveProductionOrders();
+        return { n: res.filas.length, err: res.errores.length, plan: plan.length, ap, p200: p200 && [p200.cadaDias, p200.ultimo, p200.responsable], limp: limp.length, limpFechas: [...new Set(limp.map(p => p.ultimo))].length, h50: h50 && h50.cadaDias,
+          sinMarca: /Noyo roto/.test(txt), conMarca: /Rotura de figura/.test(txt), editado: t && t.tarea === 'TAREA CORREGIDA' && !!t.modificadoAt, esRot };
+      });
+      ok(r.n === 3 && r.err === 1 && r.plan === 7 && r.ap.nuevos === 7, 'base de preventivos: ' + JSON.stringify(r));
+      ok(r.p200 && r.p200[0] === 30 && r.p200[1] === '2026-10-01' && r.p200[2] === 'Juan' && r.limp === 5 && r.h50 === 21, 'plan armado: ' + JSON.stringify(r));
+      ok(!r.sinMarca && r.conMarca, 'roturas en mantenimiento: ' + JSON.stringify(r));
+      ok(r.editado && r.esRot, 'editar historial: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

@@ -38,6 +38,8 @@
       const catDe = part => window.inoferCatBuscar ? (inoferCatBuscar(part) || undefined) : (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
       const COD_CAT = () => window.INOFER_CODIGO_CATEGORIA || {};
       const catDeCodigo = cod => COD_CAT()[parseInt(String(cod || ''), 10)] || 'otros';
+      // código de parada que es una rotura (mantenimiento correctivo): al cargarlo se pregunta si se bajó el molde o se paró la máquina
+      window.inoferEsRotura = cod => !!cod && catDeCodigo(cod) === 'mant_correctivo';
       const BTN = 'rounded-lg border px-2.5 py-1.5 text-xs font-bold transition';
       const INP = 'rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none';
 
@@ -342,7 +344,7 @@
           const m = window.inoferCargaRapida ? inoferCargaRapida.maqDeOrden(o) || maqId(o.machine) : maqId(o.machine);
           (o.logs || []).forEach(l => {
             if (!enRango(String(l.date || ''))) return;
-            const ps = (Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : [])).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo) }));
+            const ps = (Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : [])).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo), mant: p.mant === true }));
             const cat = {}; ps.forEach(p => { cat[p.cat] = (cat[p.cat] || 0) + p.min / 60; });
             out.push({ fuente: 'OP', maq: m, fecha: l.date, turno: l.turno, disp: horasEntre(l.startTime, l.endTime), cat, paradas: ps, ok: Number(l.okPcs) || 0, scrap: Number(l.scrapPcs) || 0, baja: Number(l.lowStartPcs) || 0, part: o.part, op: o.ordNumber, ordId: o.id, logId: l.id, material: o.material, kgP: Number(o.weightWithSprueKg) || 0 });
           });
@@ -351,7 +353,7 @@
           const f = String(r.date || '').slice(0, 10);
           if (!enRango(f)) return;
           const cat = {}; (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { if (Number(r[c.key])) cat[c.key] = Number(r[c.key]); });
-          const ps = (r.paradas || []).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo) }));
+          const ps = (r.paradas || []).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo), mant: p.mant === true }));
           out.push({ fuente: 'Parte', maq: maqId(r.machine), fecha: f, turno: r.shift, disp: Number(r.available) || 0, cat, paradas: ps, ok: 0, scrap: 0, baja: 0, id: r.id });
         });
         return out;
@@ -484,17 +486,16 @@
       // ---------------------------------------------------------------------------------
       // 5) Mantenimiento
       // ---------------------------------------------------------------------------------
-      let mantDias = 90, mantFiltro = '', mantForm = '';
+      let mantDias = 90, mantFiltro = '', mantForm = '', mantEditId = '';
       function indicadoresMaq(m, desde) {
         const ev = eventosProduccion(desde, hoyIso()).filter(x => x.maq === m);
         let disp = 0, paradas = 0, corr = 0, fallas = 0; const causas = {};
         ev.forEach(x => {
           disp += x.disp;
           Object.keys(x.cat).forEach(k => { paradas += x.cat[k]; });
-          corr += x.cat.mant_correctivo || 0;
-          const pc = x.paradas.filter(p => p.cat === 'mant_correctivo');
-          if (pc.length) { fallas += pc.length; pc.forEach(p => { causas[p.codigo] = (causas[p.codigo] || 0) + p.min / 60; }); }
-          else if (x.cat.mant_correctivo) { fallas += 1; causas['Mant. correctivo (parte)'] = (causas['Mant. correctivo (parte)'] || 0) + x.cat.mant_correctivo; }
+          // solo cuentan las roturas en las que se bajó el molde o se paró la máquina (marcadas al cargar el turno)
+          const pc = x.paradas.filter(p => p.cat === 'mant_correctivo' && p.mant);
+          if (pc.length) { fallas += pc.length; pc.forEach(p => { corr += p.min / 60; causas[p.codigo] = (causas[p.codigo] || 0) + p.min / 60; }); }
         });
         const andando = Math.max(0, disp - paradas);
         return { disp, paradas, corr, fallas, mtbf: fallas ? andando / fallas : null, mttr: fallas ? corr / fallas : null, causas: Object.entries(causas).sort((a, b) => b[1] - a[1]).slice(0, 3), turnos: ev.length };
@@ -505,8 +506,8 @@
         const desde = masDias(hoyIso(), -mantDias);
         const planes = (M.planes || []).slice().map(p => { const prox = p.ultimo ? masDias(p.ultimo, Number(p.cadaDias) || 0) : ''; return Object.assign({}, p, { prox, falta: prox ? difDias(prox, hoyIso()) : null }); }).sort((a, b) => (a.falta == null ? -9999 : a.falta) - (b.falta == null ? -9999 : b.falta));
         const estadoPlan = p => p.falta == null ? ['amber', 'Sin registrar'] : (p.falta < 0 ? ['rose', `Vencido (${-p.falta} d)`] : (p.falta <= (Number(p.avisoDias) || 3) ? ['amber', p.falta === 0 ? 'Vence hoy' : `En ${p.falta} d`] : ['emerald', `En ${p.falta} d`]));
-        const roturas = eventosProduccion(desde, hoyIso()).filter(x => x.cat.mant_correctivo).map(x => ({ fecha: x.fecha, maq: x.maq, tipo: 'Rotura en producción', det: (x.paradas.filter(p => p.cat === 'mant_correctivo').map(p => p.codigo + ' · ' + n1(p.min / 60) + ' h').join('; ') || n1(x.cat.mant_correctivo) + ' h de correctivo') + (x.op ? ` · OP ${x.op}` : ' · parte manual'), horas: x.cat.mant_correctivo, fuente: x.fuente }));
-        const trabajos = (M.trabajos || []).filter(t => t.fecha >= desde).map(t => ({ fecha: t.fecha, maq: t.maquina, tipo: t.tipo === 'preventivo' ? 'Preventivo' : (t.tipo === 'mejora' ? 'Mejora' : 'Reparación'), det: [t.tarea, t.descripcion, t.repuestos ? 'Repuestos: ' + t.repuestos : '', t.hecho_por ? 'Por ' + t.hecho_por : ''].filter(Boolean).join(' · '), horas: Number(t.horas) || 0, id: t.id }));
+        const roturas = eventosProduccion(desde, hoyIso()).map(x => Object.assign(x, { pm: x.paradas.filter(p => p.cat === 'mant_correctivo' && p.mant) })).filter(x => x.pm.length).map(x => ({ fecha: x.fecha, maq: x.maq, tipo: 'Rotura en producción', det: x.pm.map(p => p.codigo + ' · ' + n1(p.min / 60) + ' h').join('; ') + (x.op ? ` · OP ${x.op} · ${x.part || ''}` : ' · parte manual'), horas: x.pm.reduce((a, p) => a + p.min / 60, 0), fuente: x.fuente, ordId: x.ordId, logId: x.logId }));
+        const trabajos = (M.trabajos || []).filter(t => t.fecha >= desde).map(t => ({ editado: !!t.modificadoAt, fecha: t.fecha, maq: t.maquina, tipo: t.tipo === 'preventivo' ? 'Preventivo' : (t.tipo === 'mejora' ? 'Mejora' : 'Reparación'), det: [t.tarea, t.descripcion, t.repuestos ? 'Repuestos: ' + t.repuestos : '', t.hecho_por ? 'Por ' + t.hecho_por : ''].filter(Boolean).join(' · '), horas: Number(t.horas) || 0, id: t.id }));
         const hist = trabajos.concat(roturas).filter(x => !mantFiltro || x.maq === mantFiltro).sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
         const tarjetas = MAQS().map(m => {
           const k = indicadoresMaq(m, desde);
@@ -527,17 +528,19 @@
             ${edit ? `<button type="button" class="mt-2 w-full mt-estado ${BTN} ${e.activa ? 'border-rose-500/40 text-rose-200' : 'border-emerald-500/50 text-emerald-200'}" data-m="${esc(m)}">${e.activa ? '⛔ Poner fuera de servicio' : '✅ Volver a habilitar'}</button>` : ''}
           </div>`;
         }).join('');
+        const tE = mantEditId ? (M.trabajos || []).find(x => x.id === mantEditId) : null;
+        const vE = (k, d) => esc(tE ? (tE[k] == null ? '' : tE[k]) : (d == null ? '' : d));
         const form = mantForm === 'trabajo' ? `<form class="inofer-planta-form mt-form rounded-2xl border border-cyan-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-3" data-f="trabajo">
-            <div class="sm:col-span-3 text-sm font-black text-cyan-300">Registrar trabajo de mantenimiento</div>
-            <label class="text-[11px] text-slate-400">Máquina<select name="maquina" class="${INP} w-full">${MAQS().map(m => `<option>${m}</option>`).join('')}</select></label>
-            <label class="text-[11px] text-slate-400">Tipo<select name="tipo" class="${INP} w-full"><option value="correctivo">Reparación / rotura</option><option value="preventivo">Preventivo</option><option value="mejora">Mejora</option></select></label>
-            <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
-            <label class="sm:col-span-2 text-[11px] text-slate-400">Qué se hizo<input name="tarea" required placeholder="Ej: cambio de bomba hidráulica" class="${INP} w-full"></label>
-            <label class="text-[11px] text-slate-400">Horas de máquina parada<input type="number" step="0.25" min="0" name="horas" class="${INP} w-full"></label>
-            <label class="sm:col-span-2 text-[11px] text-slate-400">Detalle / causa<input name="descripcion" class="${INP} w-full"></label>
-            <label class="text-[11px] text-slate-400">Hecho por<input name="hecho_por" value="${esc((sesion() || {}).nombre || '')}" class="${INP} w-full"></label>
-            <label class="sm:col-span-2 text-[11px] text-slate-400">Repuestos usados<input name="repuestos" class="${INP} w-full"></label>
-            <label class="flex items-center gap-2 text-[11px] text-rose-200"><input type="checkbox" name="fuera"> La máquina queda fuera de servicio</label>
+            <div class="sm:col-span-3 text-sm font-black text-cyan-300">${tE ? '✏️ Corregir registro del historial' : 'Registrar trabajo de mantenimiento'}</div>
+            <label class="text-[11px] text-slate-400">Máquina<select name="maquina" class="${INP} w-full">${MAQS().map(m => `<option ${tE && tE.maquina === m ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+            <label class="text-[11px] text-slate-400">Tipo<select name="tipo" class="${INP} w-full">${[['correctivo', 'Reparación / rotura'], ['preventivo', 'Preventivo'], ['mejora', 'Mejora']].map(([v2, t2]) => `<option value="${v2}" ${tE && tE.tipo === v2 ? 'selected' : ''}>${t2}</option>`).join('')}</select></label>
+            <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${vE('fecha', hoyIso())}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Qué se hizo<input name="tarea" required value="${vE('tarea')}" placeholder="Ej: cambio de bomba hidráulica" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Horas de máquina parada<input type="number" step="0.25" min="0" name="horas" value="${vE('horas')}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Detalle / causa<input name="descripcion" value="${vE('descripcion')}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Hecho por<input name="hecho_por" value="${vE('hecho_por', (sesion() || {}).nombre || '')}" class="${INP} w-full"></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Repuestos usados<input name="repuestos" value="${vE('repuestos')}" class="${INP} w-full"></label>
+            ${tE ? '<span></span>' : '<label class="flex items-center gap-2 text-[11px] text-rose-200"><input type="checkbox" name="fuera"> La máquina queda fuera de servicio</label>'}
             <div class="sm:col-span-3 flex justify-end gap-2"><button type="button" class="mt-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-cyan-400 bg-cyan-500 text-slate-950">Guardar</button></div></form>`
           : mantForm === 'plan' ? `<form class="inofer-planta-form mt-form rounded-2xl border border-sky-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4" data-f="plan">
             <div class="sm:col-span-4 text-sm font-black text-sky-300">Nuevo mantenimiento preventivo</div>
@@ -549,9 +552,9 @@
             <div class="sm:col-span-2 flex items-end justify-end gap-2"><button type="button" class="mt-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-sky-400 bg-sky-500 text-slate-950">Guardar</button></div></form>` : '';
         v.innerHTML = `<div class="rounded-2xl border border-orange-500/30 bg-slate-900/80 p-4 shadow-xl space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-base font-extrabold text-white">🔧 Mantenimiento de máquinas</h2>
-            <p class="text-xs text-slate-400">Las roturas salen solas de las paradas cargadas en las órdenes y partes (mantenimiento correctivo). Acá registrás las reparaciones y armás el plan preventivo con avisos.</p></div>
+            <p class="text-xs text-slate-400">De las órdenes solo llegan las roturas en las que <b>se bajó el molde o se paró la máquina</b> (se marca al cargar la parada). Acá registrás las reparaciones y armás el plan preventivo con avisos.</p></div>
             <div class="flex flex-wrap items-center gap-2"><select id="mtDias" class="${INP}">${[[30, 'Último mes'], [90, 'Últimos 3 meses'], [180, 'Últimos 6 meses'], [365, 'Último año']].map(([d, t]) => `<option value="${d}" ${d === mantDias ? 'selected' : ''}>${t}</option>`).join('')}</select>
-              ${edit ? `<button type="button" class="mt-nuevo ${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200" data-f="trabajo">+ Registrar trabajo</button><button type="button" class="mt-nuevo ${BTN} border-sky-500/50 bg-sky-500/15 text-sky-200" data-f="plan">+ Preventivo</button>` : ''}</div></div>
+              ${edit ? `<button type="button" class="mt-nuevo ${BTN} border-cyan-500/50 bg-cyan-500/15 text-cyan-200" data-f="trabajo">+ Registrar trabajo</button><button type="button" class="mt-nuevo ${BTN} border-sky-500/50 bg-sky-500/15 text-sky-200" data-f="plan">+ Preventivo</button><label class="cursor-pointer ${BTN} border-emerald-500/50 bg-emerald-500/15 text-emerald-200">📥 Cargar base de preventivos<input type="file" id="mtBaseArchivo" accept=".xlsx,.xls,.csv,.txt" class="hidden"></label>` : ''}</div></div>
           ${form}
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">${tarjetas}</div>
           <div><div class="mb-2 text-sm font-black text-white">📅 Plan preventivo</div>
@@ -561,20 +564,22 @@
             </tbody></table></div>` : `<div class="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-400">Todavía no hay preventivos cargados. ${edit ? 'Tocá <b>+ Preventivo</b> y poné cada cuántos días se hace (cambio de aceite, limpieza de filtros, revisión de termocuplas…). INOFER te avisa cuando se acerca la fecha.' : ''}</div>`}</div>
           <div><div class="mb-2 flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-black text-white">🧾 Historial</span><select id="mtFiltro" class="${INP}"><option value="">Todas las máquinas</option>${MAQS().map(m => `<option ${m === mantFiltro ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
             ${hist.length ? `<div class="max-h-[420px] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fecha</th><th class="pr-2">Máquina</th><th class="pr-2">Tipo</th><th class="pr-2">Detalle</th><th class="pr-2 text-right">Horas</th><th></th></tr></thead><tbody>
-              ${hist.map(x => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 whitespace-nowrap text-slate-300">${fDia(x.fecha)}</td><td class="pr-2 font-bold text-white">${esc(x.maq)}</td><td class="pr-2"><span class="rounded bg-${x.tipo === 'Preventivo' ? 'sky' : (x.tipo === 'Mejora' ? 'violet' : (x.tipo === 'Reparación' ? 'cyan' : 'rose'))}-500/15 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">${esc(x.tipo)}</span></td><td class="pr-2 text-slate-300">${esc(x.det)}</td><td class="pr-2 text-right text-slate-300">${x.horas ? n1(x.horas) : ''}</td><td class="text-right">${x.id && edit ? `<button type="button" class="mt-tr-del text-slate-500 hover:text-rose-300" data-id="${esc(x.id)}">🗑️</button>` : ''}</td></tr>`).join('')}
+              ${hist.map(x => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 whitespace-nowrap text-slate-300">${fDia(x.fecha)}</td><td class="pr-2 font-bold text-white">${esc(x.maq)}</td><td class="pr-2"><span class="rounded bg-${x.tipo === 'Preventivo' ? 'sky' : (x.tipo === 'Mejora' ? 'violet' : (x.tipo === 'Reparación' ? 'cyan' : 'rose'))}-500/15 px-1.5 py-0.5 text-[10px] font-bold text-slate-200">${esc(x.tipo)}</span></td><td class="pr-2 text-slate-300">${esc(x.det)}${x.editado ? ' <span class="text-[10px] text-slate-500">(corregido)</span>' : ''}</td><td class="pr-2 text-right text-slate-300">${x.horas ? n1(x.horas) : ''}</td><td class="whitespace-nowrap text-right">${x.id && edit ? `<button type="button" class="mt-tr-edit mr-1 text-cyan-300 hover:text-cyan-100" data-id="${esc(x.id)}" title="Corregir">✏️</button><button type="button" class="mt-tr-del text-slate-500 hover:text-rose-300" data-id="${esc(x.id)}">🗑️</button>` : ''}${!x.id && x.ordId && edit && window.inoferEditarTurno ? `<button type="button" class="mt-op-edit text-cyan-300 hover:text-cyan-100" data-o="${esc(x.ordId)}" data-l="${esc(x.logId)}" title="Corregir el turno de la OP">✏️ turno</button>` : ''}</td></tr>`).join('')}
             </tbody></table></div>` : '<div class="text-xs text-slate-400">No hay registros en el período.</div>'}</div>
-          <p class="text-[11px] text-slate-500">MTBF = horas de máquina andando ÷ cantidad de roturas (más alto es mejor). MTTR = horas de reparación ÷ cantidad de roturas (más bajo es mejor). Cada parada de mantenimiento correctivo cargada en un turno cuenta como una rotura.</p>
+          <p class="text-[11px] text-slate-500">MTBF = horas de máquina andando ÷ cantidad de roturas (más alto es mejor). MTTR = horas de reparación ÷ cantidad de roturas (más bajo es mejor). Cuenta como rotura cada parada de mantenimiento correctivo marcada "se bajó el molde / se paró la máquina".</p>
         </div>`;
       }
       function montarMant() {
         crearPestana('Mant', '🔧 Mantenimiento', 'text-orange-300', 'bg-orange-500', verMant, renderMant);
         const v = $('viewMant'); if (!v || v.__ok) return; v.__ok = 1;
         RENDER.mantenimiento = [renderMant];
-        v.addEventListener('change', e => { if (e.target.id === 'mtDias') { mantDias = Number(e.target.value) || 90; renderMant(); } if (e.target.id === 'mtFiltro') { mantFiltro = e.target.value; renderMant(); } });
+        v.addEventListener('change', e => { if (e.target.id === 'mtBaseArchivo' && e.target.files && e.target.files[0]) { const f0 = e.target.files[0]; e.target.value = ''; if (window.inoferBasePreventivos) inoferBasePreventivos.desdeArchivo(f0); return; } if (e.target.id === 'mtDias') { mantDias = Number(e.target.value) || 90; renderMant(); } if (e.target.id === 'mtFiltro') { mantFiltro = e.target.value; renderMant(); } });
         v.addEventListener('click', e => {
           const g = s => e.target.closest(s); let b;
-          if ((b = g('.mt-nuevo'))) { mantForm = mantForm === b.dataset.f ? '' : b.dataset.f; renderMant(); return; }
-          if (g('.mt-cancel')) { mantForm = ''; renderMant(); return; }
+          if ((b = g('.mt-nuevo'))) { mantEditId = ''; mantForm = mantForm === b.dataset.f ? '' : b.dataset.f; renderMant(); return; }
+          if (g('.mt-cancel')) { mantForm = ''; mantEditId = ''; renderMant(); return; }
+          if ((b = g('.mt-op-edit'))) { window.inoferEditarTurno(b.dataset.o, b.dataset.l); return; }
+          if ((b = g('.mt-tr-edit'))) { if (!editMant()) return; mantEditId = b.dataset.id; mantForm = 'trabajo'; renderMant(); setTimeout(() => { const f = v.querySelector('.mt-form'); f && f.scrollIntoView({ block: 'center' }); }, 30); return; }
           if (!editMant()) return;
           const M = D('mantenimiento');
           if ((b = g('.mt-hecho'))) {
@@ -596,7 +601,15 @@
           e.preventDefault();
           if (!editMant()) { toast('Tu usuario no puede modificar mantenimiento'); return; }
           const f = e.target, fd = Object.fromEntries(new FormData(f).entries()), M = D('mantenimiento');
-          if (f.dataset.f === 'trabajo') {
+          if (f.dataset.f === 'trabajo' && mantEditId) {
+            const t = (M.trabajos || []).find(x => x.id === mantEditId);
+            if (t) {
+              Object.assign(t, { maquina: fd.maquina, fecha: fd.fecha || t.fecha, tipo: fd.tipo, tarea: String(fd.tarea || '').trim(), descripcion: String(fd.descripcion || '').trim(), horas: Number(fd.horas) || 0, repuestos: String(fd.repuestos || '').trim(), hecho_por: String(fd.hecho_por || '').trim(), modificadoPor: quien(), modificadoAt: new Date().toISOString() });
+              if (t.tipo === 'preventivo' && t.planId) { const p = M.planes.find(x => x.id === t.planId); if (p) { const ult = (M.trabajos || []).filter(x => x.planId === p.id).map(x => x.fecha).sort().pop(); if (ult) p.ultimo = ult; } }
+              toast('✓ Registro corregido');
+            }
+            mantEditId = '';
+          } else if (f.dataset.f === 'trabajo') {
             M.trabajos.push({ id: 'mt-' + Date.now(), maquina: fd.maquina, fecha: fd.fecha || hoyIso(), tipo: fd.tipo, tarea: String(fd.tarea || '').trim(), descripcion: String(fd.descripcion || '').trim(), horas: Number(fd.horas) || 0, repuestos: String(fd.repuestos || '').trim(), hecho_por: String(fd.hecho_por || '').trim(), cargadoPor: quien(), cargadoAt: new Date().toISOString() });
             if (fd.tipo === 'preventivo') { const p = M.planes.find(x => x.maquina === fd.maquina && norm(x.tarea) === norm(fd.tarea)); if (p && (!p.ultimo || fd.fecha > p.ultimo)) p.ultimo = fd.fecha; }
             if (fd.fuera && window.inoferSetMaquinaEstado) inoferSetMaquinaEstado(fd.maquina, { activa: false, motivo: String(fd.tarea || fd.descripcion || 'Mantenimiento').trim() });
@@ -1253,6 +1266,7 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
       }, 25000);
       window.inoferPlantaPerm = { verInforme: () => verInforme() && enNube(), esAdmin };
       window.inoferModGuardar = k => guardarMod(k);
+      window.inoferRenderMant = () => { try { renderMant(); programarAvisos(); } catch (e) { } };
       window.inoferMarcarNoTrabajo = (m, fecha, turnoNombre) => { const av = D('avisos'); av.ignorados = av.ignorados || {}; av.ignorados[m + '|' + fecha + '|' + turnoNombre] = { por: quien(), at: new Date().toISOString() }; guardarMod('avisos'); try { programarAvisos(); } catch (e) { } };
       window.inoferPlanificadoEnGantt = (m, fecha) => { try { return planificadoEnGantt(m, fecha); } catch (e) { return false; } };
       // turnos de órdenes archivadas: se piden una vez por sesión y suman en el tablero

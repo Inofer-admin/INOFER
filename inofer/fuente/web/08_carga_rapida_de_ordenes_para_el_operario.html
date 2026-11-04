@@ -509,7 +509,8 @@
         p = p || {};
         const pmin = Number(p.min) || 0;
         const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-center text-base font-bold text-white';
-        return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2">
+        const rot = window.inoferEsRotura && inoferEsRotura(p.codigo);
+        return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2" data-mant="${p.mant ? '1' : ''}">
           <div class="flex gap-2">
             <select class="cr-pcod flex-1 rounded-lg border-2 border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-white">
               <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
@@ -521,12 +522,16 @@
             <label class="flex items-center gap-1 text-xs text-slate-400"><input type="number" inputmode="numeric" min="0" class="cr-pm ${inp}" style="width:4.5rem" placeholder="0" value="${pmin % 60 || ''}"> min</label>
             <span class="flex gap-1">${[15, 30, 60].map(m => `<button type="button" class="cr-padd rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-slate-200" data-m="${m}">+${m < 60 ? m + ' min' : '1 h'}</button>`).join('')}</span>
           </div>
+          <div class="cr-pmant-box ${rot ? '' : 'hidden'} rounded-lg border border-amber-500/40 bg-amber-500/10 p-2">
+            <div class="mb-1.5 text-xs font-bold text-amber-100">🔧 ¿Se bajó el molde o se paró la máquina para repararlo?</div>
+            <div class="flex gap-2">${[['', 'No, siguió trabajando'], ['1', 'Sí → va a Mantenimiento']].map(([v, t]) => `<button type="button" class="cr-pmant flex-1 rounded-lg border-2 px-2 py-2 text-xs font-black ${(p.mant ? '1' : '') === v ? 'border-amber-400 bg-amber-500 text-slate-950' : 'border-slate-700 bg-slate-950 text-slate-200'}" data-v="${v}">${t}</button>`).join('')}</div>
+          </div>
         </div>`;
       }
       const minFila = r => (Number(r.querySelector('.cr-ph').value) || 0) * 60 + (Number(r.querySelector('.cr-pm').value) || 0);
       const fmtMin = m => { const h = Math.floor(m / 60), r = m % 60; return h ? (h + ' h' + (r ? ' ' + r + ' min' : '')) : (r + ' min'); };
       function leerParadas() {
-        return [...document.querySelectorAll('#crParadasList .cr-prow')].map(r => ({ codigo: r.querySelector('.cr-pcod').value, min: minFila(r) })).filter(p => p.codigo || p.min);
+        return [...document.querySelectorAll('#crParadasList .cr-prow')].map(r => { const c = r.querySelector('.cr-pcod').value, o = { codigo: c, min: minFila(r) }; if (r.dataset.mant === '1' && window.inoferEsRotura && inoferEsRotura(c)) o.mant = true; return o; }).filter(p => p.codigo || p.min);
       }
       function totalParadas() {
         setTimeout(pintarReparto, 0);
@@ -796,6 +801,7 @@
             totalParadas();
             estiloParadas();
           }
+          else if ((el = g('.cr-pmant'))) { const r = el.closest('.cr-prow'); r.dataset.mant = el.dataset.v; r.querySelectorAll('.cr-pmant').forEach(x => { const on = x === el; x.className = `cr-pmant flex-1 rounded-lg border-2 px-2 py-2 text-xs font-black ${on ? 'border-amber-400 bg-amber-500 text-slate-950' : 'border-slate-700 bg-slate-950 text-slate-200'}`; }); }
           else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
           else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
           else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
@@ -820,7 +826,8 @@
           else if (g('#crTermine')) { st.continuar = null; st.paso = 'orden'; render(); }
         });
         v.addEventListener('input', e => { if (e.target.closest && e.target.closest('#crTurnoForm')) { leerCambios(); pintarReparto(); } if (e.target.id === 'crOk') e.target.dataset.auto = ''; if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
-        v.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('cr-cop')) { leerCambios(); pintarReparto(); } if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
+        v.addEventListener('change', e => { if (e.target.classList && e.target.classList.contains('cr-pcod')) { const r = e.target.closest('.cr-prow'), bx = r && r.querySelector('.cr-pmant-box'); if (bx) bx.classList.toggle('hidden', !(window.inoferEsRotura && inoferEsRotura(e.target.value))); }
+          if (e.target.classList && e.target.classList.contains('cr-cop')) { leerCambios(); pintarReparto(); } if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
         v.addEventListener('submit', e => {
           e.preventDefault();
           if (!puedeEditar()) { showToast('Tu usuario no puede cargar órdenes'); return; }
