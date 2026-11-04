@@ -411,7 +411,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin' };
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin' };
 // área 'a|b' = alcanza con tener permiso en cualquiera de las dos
 function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
@@ -2264,6 +2264,23 @@ function ganttDeHoja_(ss) {
   }
   return null;
 }
+// Stock de piezas ya inyectadas (módulo stockPiezas, SOLO lo recibe el admin). Para el armado del Gantt de otros usuarios
+// la nube devuelve cuánto descontar por pieza, topeado a lo que pide la planilla (no manda el stock completo).
+function accionStockGantt_(u, body) {
+  if (body.action !== 'stockGantt') return null;
+  if (u.rol !== 'admin' && !puede(u, 'gantt', 'edit')) return { status: 'error', error: 'Sin permiso.' };
+  const sp = obtenerEstadoModulos().stockPiezas || {}, P = sp.piezas || {};
+  const norm = function (x) { return String(x == null ? '' : x).trim().toUpperCase(); };
+  const idx = {}; Object.keys(P).forEach(function (k) { idx[norm(k)] = P[k]; });
+  const pedidas = body.partes && typeof body.partes === 'object' ? body.partes : {};
+  const cap = {};
+  Object.keys(pedidas).slice(0, 3000).forEach(function (k) {
+    const kk = norm(k); const e = idx[kk] || idx[/\/1$/.test(kk) ? kk.replace(/\/1$/, '') : kk + '/1']; if (!e) return;
+    const st = Math.max(0, (Number(e.iny) || 0) + (Number(e.reb) || 0)), tot = Math.max(0, Number(pedidas[k]) || 0);
+    const c = Math.min(st, tot); if (c > 0) cap[k] = c;
+  });
+  return { status: 'ok', cap: cap, hay: !!Object.keys(P).length, fecha: sp.fecha || '' };
+}
 function accionGanttCopias(u, body) {
   if (['ganttCopias', 'ganttDeCopia'].indexOf(body.action) === -1) return null;
   if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede recuperar copias.' };
@@ -2301,6 +2318,8 @@ function doPost(e) {
   if (psh) return respuesta(psh);
   const gcp = accionGanttCopias(u, body);
   if (gcp) return respuesta(gcp);
+  const stg = accionStockGantt_(u, body);
+  if (stg) return respuesta(stg);
 
   if (['listPapelera', 'restaurarPapelera', 'vaciarPapelera'].indexOf(body.action) !== -1) {
     const resP = accionPapelera(u, body) || { status: 'error', error: 'Acción desconocida' };

@@ -905,6 +905,40 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const t1 = (aM(r.l1[1]) - aM(r.l1[0]) + 1440) % 1440;
       ok(Math.abs(t1 - libre * 0.6) <= 5 && r.pantalla, 'reparto proporcional: ' + JSON.stringify({ t1, libre }));
     });
+    await prueba('Stock de piezas: solo el admin lo ve y el Gantt no reprograma lo ya inyectado', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        // archivo con el formato de la planta (código, descripción, precios, stock inyectado, stock rebabado…)
+        const csv = 'CODIGO PB;;DESCRIPCION;LP REB;LP SIN;VERIF;STOCK INYECTADO;TOTAL INY $;VERIF;STOCK REBABADO;TOTAL REB $\nPZA-STK1;1;PIEZA UNO;100;90;OK;300;30000;OK;200;20000\nPZA-STK2;2;PIEZA DOS;100;90;OK;0;0;OK;5000;500000\nPZA-STK3;3;PIEZA TRES;100;90;OK;0;0;OK;0;0\n';
+        inoferStockPiezas.abrir(); await esperar(100);
+        const inp = document.getElementById('spzArchivo'); const dt = new DataTransfer(); dt.items.add(new File([csv], 'stock_para_app.csv', { type: 'text/csv' })); inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));
+        await esperar(600);
+        const txt = document.getElementById('inoferStockPz').textContent;
+        document.querySelector('#inoferStockPz [data-a="cerrar"]').click();
+        // descuento: pedido M1 1000 y M2 1000; stock 500 → M1 programa 500, M2 1000. Otra con 5000 de stock no se programa.
+        const lista = [{ part: 'PZA-STK1', qty: 1000, mOrders: [1000, 1000] }, { part: 'PZA-STK2', qty: 1000, mOrders: [1000] }, { part: 'PZA-STK3', qty: 400, mOrders: [400] }];
+        inoferStockPiezas.reiniciar();
+        const m1 = inoferStockPiezas.aplicar(JSON.parse(JSON.stringify(lista)), 0);
+        const m2 = inoferStockPiezas.aplicar([{ part: 'PZA-STK1', qty: 1000, mOrders: [1000, 1000] }], 1);
+        const linea = inoferStockPiezas.lineaPrevia();
+        let enNube = false; for (let i = 0; i < 16 && !enNube; i++) { await esperar(500); const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json(); const sp = (n.modules || {}).stockPiezas; enNube = !!(sp && sp.piezas && sp.piezas['PZA-STK1'] && sp.piezas['PZA-STK1'].iny === 300 && !JSON.stringify(sp).includes('30000')); }
+        await inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'planif', nombre: 'Planificador', clave: '2222', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'edit', ia: 'none', indicadores: 'none' } } });
+        return { txt: /3 piezas|2 piezas con stock/.test(txt) && /5\.500/.test(txt), m1: m1.map(x => x.part + ':' + x.qty).join(','), m2: m2.map(x => x.part + ':' + x.qty).join(','), linea: /no se programa/.test(linea) && /solo lo ves vos/.test(linea), enNube };
+      });
+      ok(r.txt, 'pantalla del stock: ' + JSON.stringify(r));
+      ok(r.m1 === 'PZA-STK1:500,PZA-STK3:400' && r.m2 === 'PZA-STK1:1000' && r.linea, 'descuento en el armado: ' + JSON.stringify(r));
+      ok(r.enNube, 'no quedó en la nube (o quedaron precios)');
+      // otro usuario con permiso de Gantt: no recibe el stock, pero la nube le descuenta
+      const P = await equipo(b); await ingresar(P, 'planif', '2222'); await P.waitForTimeout(1500);
+      const q = await P.evaluate(async () => {
+        const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json();
+        const d = await inoferCloudPost({ token: inoferAuthToken(), action: 'stockGantt', partes: { 'PZA-STK1': 2000, 'PZA-STK2': 1000, 'PZA-NADA': 50 } });
+        return { ve: !!(n.modules || {}).stockPiezas, cap: d.cap, menu: !!document.querySelector('[data-t="Stock de piezas (solo admin)"]') || /Stock de piezas \(solo admin\)/.test(document.body.innerText), ls: !!localStorage.getItem('tablero_inyectoras_stockpiezas_v1') };
+      });
+      await P.context().close();
+      ok(!q.ve && !q.ls && !q.menu, 'el otro usuario ve el stock: ' + JSON.stringify(q));
+      ok(q.cap && q.cap['PZA-STK1'] === 500 && q.cap['PZA-STK2'] === 1000 && !q.cap['PZA-NADA'], 'descuento de la nube: ' + JSON.stringify(q));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

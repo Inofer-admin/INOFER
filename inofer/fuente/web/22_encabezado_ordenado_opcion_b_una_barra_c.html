@@ -36,6 +36,7 @@
           { accion: () => window.inoferAvisosAdmin && inoferAvisosAdmin(), vis: () => esAdmin() && !!window.inoferAvisosAdmin, ico: '📣', t: 'Quién recibe avisos', d: 'Avisos al celular por usuario' },
           { tab: 'tabPapeleraBtn', ico: '🗑️', t: 'Papelera', d: 'Recuperar lo borrado' },
           { accion: () => window.inoferRecuperarGantt && inoferRecuperarGantt(), vis: () => esAdmin() && !!window.inoferRecuperarGantt, ico: '♻️', t: 'Recuperar el Gantt', d: 'Volver semanas a como estaban' },
+          { accion: () => window.inoferStockPiezas && inoferStockPiezas.abrir(), vis: () => esAdmin() && !!window.inoferStockPiezas, ico: '📦', t: 'Stock de piezas (solo admin)', d: 'Lo ya inyectado no se vuelve a programar' },
           { accion: () => $('inoferMenuUsers') && $('inoferMenuUsers').click(), vis: () => esAdmin() && !!$('inoferMenuUsers'), ico: '🛡️', t: 'Usuarios y permisos', d: 'Altas, claves y permisos' },
           { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }
         ] }

@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.11.04.02" />
+  <meta name="inofer-version" content="2026.11.04.03" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -7731,6 +7731,8 @@ ${lines}${trendNote}`;
       const porFecha = !!nSemanas && typeof window.inoferCodigoSemana === 'function'; // selector de semanas nuevo (parte 34)
       const allAnalyzed = analyzeDemandListWithDatabase(undefined, mIdx);
       let demandList = allAnalyzed.filter(x => x.qty > 0);
+      // Stock de piezas ya inyectadas (parte 40): lo que ya está hecho no se vuelve a programar
+      if (window.inoferStockPiezas && typeof inoferStockPiezas.aplicar === 'function') { try { demandList = inoferStockPiezas.aplicar(demandList, mIdx); } catch (e) { } }
       // Ahorro de SET-UP: dentro de cada nivel de urgencia, las piezas del mismo pistón van seguidas
       if (typeof inoferOrdenarPorPiston === 'function') demandList = inoferOrdenarPorPiston(demandList);
       // prioridad elegida en el armado en 3 pasos (parte 37): 'urgentes' (como siempre), 'cambios' o 'facturacion'
@@ -18887,6 +18889,7 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           { accion: () => window.inoferAvisosAdmin && inoferAvisosAdmin(), vis: () => esAdmin() && !!window.inoferAvisosAdmin, ico: '📣', t: 'Quién recibe avisos', d: 'Avisos al celular por usuario' },
           { tab: 'tabPapeleraBtn', ico: '🗑️', t: 'Papelera', d: 'Recuperar lo borrado' },
           { accion: () => window.inoferRecuperarGantt && inoferRecuperarGantt(), vis: () => esAdmin() && !!window.inoferRecuperarGantt, ico: '♻️', t: 'Recuperar el Gantt', d: 'Volver semanas a como estaban' },
+          { accion: () => window.inoferStockPiezas && inoferStockPiezas.abrir(), vis: () => esAdmin() && !!window.inoferStockPiezas, ico: '📦', t: 'Stock de piezas (solo admin)', d: 'Lo ya inyectado no se vuelve a programar' },
           { accion: () => $('inoferMenuUsers') && $('inoferMenuUsers').click(), vis: () => esAdmin() && !!$('inoferMenuUsers'), ico: '🛡️', t: 'Usuarios y permisos', d: 'Altas, claves y permisos' },
           { accion: () => $('openCloudModalBtn') && $('openCloudModalBtn').click(), vis: () => esAdmin() && !!$('openCloudModalBtn'), ico: '☁️', t: 'Conexión a la nube', d: 'Google Sheets / Apps Script' }
         ] }
@@ -21806,9 +21809,10 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
         if (sel === 'ALL_M1_M3') meses = [0, 1, 2]; else if (sel === 'ALL_M1_M6') meses = [0, 1, 2, 3, 4, 5]; else if (/^M\d+$/.test(sel)) meses = [Math.max(0, (parseInt(sel.slice(1), 10) || 1) - 1)];
         const porMes = meses.length > 1 ? 4 : Math.max(1, Math.min(26, st.n));
         const r = { semanas: [], prog: 0, crit: 0, ops: 0, sinLugar: 0, demanda: {} };
+        if (window.inoferStockPiezas) inoferStockPiezas.reiniciar();
         meses.forEach((mIdx, k) => {
           const desde = masDias(lunesDe(st.inicio), k * porMes * 7);
-          try { (analyzeDemandListWithDatabase(undefined, mIdx) || []).filter(x => x.qty > 0).forEach(x => { const p = String(x.part || '').trim(); r.demanda[p] = (r.demanda[p] || 0) + x.qty; }); } catch (e) { }
+          try { let dl = (analyzeDemandListWithDatabase(undefined, mIdx) || []).filter(x => x.qty > 0); if (window.inoferStockPiezas) dl = inoferStockPiezas.aplicar(dl, mIdx, true); dl.forEach(x => { const p = String(x.part || '').trim(); r.demanda[p] = (r.demanda[p] || 0) + x.qty; }); } catch (e) { }
           const x = scheduleOneMonthIntoGanttWeeks(mIdx, cod(desde).num, desde, 'Pedido M' + (mIdx + 1), porMes);
           r.semanas.push(...x.monthWeekCodes); r.prog += x.scheduledPartsCount; r.crit += x.criticalPartsCount; r.ops += x.createdOrdersCount; r.sinLugar += x.lotesSinLugar || 0;
         });
@@ -21844,7 +21848,7 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           <div class="space-y-3">
             <div class="grid grid-cols-3 gap-2"><div class="rounded-xl border border-emerald-800 bg-emerald-950 p-3"><div class="text-2xl font-black text-emerald-300">${P.entran}</div><div class="text-[11px] text-emerald-200">piezas entran</div></div><div class="rounded-xl border border-orange-800 bg-orange-950 p-3"><div class="text-2xl font-black text-orange-300">${P.noEntran.length}</div><div class="text-[11px] text-orange-200">no entran</div></div><div class="rounded-xl border border-slate-700 bg-slate-900 p-3"><div class="text-2xl font-black text-white">${P.r.ops}</div><div class="text-[11px] text-slate-300">órdenes nuevas</div></div></div>
             ${P.noEntran.length || P.parcial.length ? `<div class="max-h-56 space-y-1.5 overflow-y-auto rounded-2xl border border-orange-800 bg-slate-900 p-3"><div class="text-sm font-extrabold text-orange-300">No entran o entran en parte</div>${P.noEntran.slice(0, 20).map(x => `<div class="border-b border-slate-800 pb-1 text-xs"><b class="text-white">${esc(x.p)}</b> · ${x.q.toLocaleString('es-AR')} u <span class="block text-slate-400">No hubo lugar en sus máquinas (capacidad, lote mínimo, portamolde o pistón).</span></div>`).join('')}${P.parcial.slice(0, 10).map(x => `<div class="border-b border-slate-800 pb-1 text-xs"><b class="text-white">${esc(x.p)}</b> · entraron ${x.hecho.toLocaleString('es-AR')} de ${x.q.toLocaleString('es-AR')} u</div>`).join('')}<div class="text-[11px] text-slate-400">Podés sumar semanas o más horas por día, o pedirle al asistente que la ponga en otra máquina.</div></div>` : '<div class="rounded-2xl border border-emerald-800 bg-emerald-950/50 p-3 text-sm text-emerald-200">✓ Entra todo el pedido.</div>'}
-            <div class="space-y-1 rounded-2xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">${P.fijas ? `<div>📌 ${P.fijas} pieza${P.fijas === 1 ? '' : 's'} fija${P.fijas === 1 ? '' : 's'} se respeta${P.fijas === 1 ? '' : 'n'}.</div>` : ''}${P.reemplaza.length ? `<div>↺ ${P.reemplaza.map(c => esc(etq(c))).join(', ')} ya tenía${P.reemplaza.length === 1 ? '' : 'n'} programación: se reemplaza por lo nuevo.</div>` : ''}<div>🛟 Antes de aplicar se guarda una copia: se puede deshacer.</div></div></div>
+            <div class="space-y-1 rounded-2xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">${P.fijas ? `<div>📌 ${P.fijas} pieza${P.fijas === 1 ? '' : 's'} fija${P.fijas === 1 ? '' : 's'} se respeta${P.fijas === 1 ? '' : 'n'}.</div>` : ''}${P.reemplaza.length ? `<div>↺ ${P.reemplaza.map(c => esc(etq(c))).join(', ')} ya tenía${P.reemplaza.length === 1 ? '' : 'n'} programación: se reemplaza por lo nuevo.</div>` : ''}${window.inoferStockPiezas ? inoferStockPiezas.lineaPrevia() : ''}<div>🛟 Antes de aplicar se guarda una copia: se puede deshacer.</div></div></div>
           <div class="flex items-center justify-between gap-2 lg:col-span-2"><button type="button" data-a="ir2" class="min-h-[44px] rounded-xl border border-slate-600 px-4 text-sm font-bold text-slate-200">← Cambiar algo</button><button type="button" data-a="aplicar" class="min-h-[44px] rounded-xl bg-emerald-500 px-6 text-sm font-black text-emerald-950">✓ Aplicar al Gantt</button></div></div>`;
       }
       // ---------- aplicar, franja y deshacer ----------
@@ -22309,6 +22313,181 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
       }
       window.inoferEtiquetasLote = abrir;
       window.inoferLotes = { codigoLote, cajones, etiquetas: s => etiquetas(s), linkFicha, htmlHoja, cfg: () => cfg, estado: () => st };
+    })();
+  </script>
+  <script>
+    // ===== Stock de piezas ya inyectadas (SOLO admin) → el Gantt automático no vuelve a programar lo que ya está hecho =====
+    // Módulo de nube "stockPiezas" {fecha, por, archivo, piezas:{CODIGO:{iny, reb}}}: el servidor se lo manda solo al admin.
+    // Otros usuarios con permiso de Gantt: la nube devuelve cuánto descontar por pieza (acción stockGantt, topeado a la planilla),
+    // en memoria, nunca se muestra ni se guarda en el equipo. No se guardan precios del archivo.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const n0 = v => (Number(v) || 0).toLocaleString('es-AR');
+      const K = s => String(s == null ? '' : s).trim().toUpperCase();
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const enNube = () => typeof cloudApiUrl !== 'undefined' && !!cloudApiUrl && !!sesion() && sesion().modo === 'nube';
+      const LKEY = 'tablero_inyectoras_stockpiezas_v1';
+      let datos = null;   // solo admin
+      try { if (esAdmin()) datos = JSON.parse(localStorage.getItem(LKEY) || 'null'); } catch (e) { }
+      let capNube = null, capAt = 0, capFirma = '';   // otros usuarios: {codigo: cantidad a descontar}, solo en memoria
+      function guardarLocal() { try { if (esAdmin() && datos) localStorage.setItem(LKEY, JSON.stringify(datos)); else localStorage.removeItem(LKEY); } catch (e) { } }
+      if (typeof window.applyCloudModules === 'function') {
+        const _am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const r = _am.apply(this, arguments);
+          try { if (mods && mods.stockPiezas && typeof mods.stockPiezas === 'object' && esAdmin()) { datos = mods.stockPiezas; guardarLocal(); } } catch (e) { }
+          return r;
+        };
+      }
+      // si cambia el usuario del equipo y no es admin, se borra la copia local
+      setInterval(() => { if (!esAdmin()) { if (datos) { datos = null; } try { localStorage.removeItem(LKEY); } catch (e) { } } }, 5000);
+
+      // ---------- leer el archivo (Excel o CSV) ----------
+      function leerFilas(filas) {
+        let h = -1, cCod = -1, cIny = -1, cReb = -1, cDesc = -1;
+        for (let i = 0; i < Math.min(filas.length, 30) && h < 0; i++) {
+          const f = (filas[i] || []).map(x => String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+          const cod = f.findIndex(x => /^c(o|ó)digo/.test(x) || /^cod\b/.test(x) || x === 'pieza');
+          const iny = f.findIndex(x => /stock\s*inyect/.test(x)), reb = f.findIndex(x => /stock\s*rebab/.test(x));
+          const st = f.findIndex(x => /^stock\b/.test(x) || /^cantidad\b/.test(x));
+          if (cod >= 0 && (iny >= 0 || reb >= 0 || st >= 0)) { h = i; cCod = cod; cIny = iny >= 0 ? iny : (reb >= 0 ? -1 : st); cReb = reb; cDesc = f.findIndex(x => /^descrip/.test(x)); }
+        }
+        if (h < 0) throw new Error('No encontré las columnas. Tiene que tener "CÓDIGO" y "STOCK INYECTADO" / "STOCK REBABADO" (o "STOCK").');
+        const num = v => { if (typeof v === 'number') return v; const t = String(v == null ? '' : v).trim().replace(/\./g, '').replace(',', '.'); const x = Number(t); return isFinite(x) ? x : 0; };
+        const piezas = {}; let conStock = 0, filasOk = 0;
+        for (let i = h + 1; i < filas.length; i++) {
+          const f = filas[i] || []; const c = K(f[cCod]); if (!c) continue;
+          const iny = cIny >= 0 ? Math.max(0, Math.round(num(f[cIny]))) : 0, reb = cReb >= 0 ? Math.max(0, Math.round(num(f[cReb]))) : 0;
+          filasOk++;
+          const prev = piezas[c] || { iny: 0, reb: 0 };
+          piezas[c] = { iny: prev.iny + iny, reb: prev.reb + reb, desc: cDesc >= 0 ? String(f[cDesc] || '').slice(0, 60) : (prev.desc || '') };
+          if (iny + reb > 0) conStock++;
+        }
+        if (!filasOk) throw new Error('El archivo no tiene filas de piezas.');
+        return { piezas, filas: filasOk, conStock };
+      }
+      async function leerArchivo(file) {
+        const nombre = String(file.name || '');
+        if (/\.csv$|\.txt$/i.test(nombre)) {
+          const txt = await file.text(); const sep = (txt.split('\n')[0].match(/;/g) || []).length > (txt.split('\n')[0].match(/,/g) || []).length ? ';' : (txt.indexOf('\t') >= 0 ? '\t' : ',');
+          return leerFilas(txt.split(/\r?\n/).map(l => l.split(sep)));
+        }
+        if (typeof XLSX === 'undefined' || !XLSX.read) throw new Error('No se pudo abrir Excel en este equipo (hace falta internet la primera vez).');
+        const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+        let mejor = null, err = null;
+        wb.SheetNames.forEach(n => { if (mejor) return; try { mejor = leerFilas(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null })); } catch (e) { err = e; } });
+        if (!mejor) throw err || new Error('No se pudo leer el archivo.');
+        return mejor;
+      }
+
+      // ---------- descontar del armado ----------
+      // mismo código con o sin "/1" (07197/1 = 07197)
+      const variantes = c => [c, /\/1$/.test(c) ? c.replace(/\/1$/, '') : c + '/1'];
+      const stockDe = part => {
+        const c = K(part); if (!c) return 0;
+        if (esAdmin()) { const P = (datos && datos.piezas) || {}; const k = variantes(c).find(v => P[v]); const e = k && P[k]; return e ? (Number(e.iny) || 0) + (Number(e.reb) || 0) : 0; }
+        return capNube ? (Number(capNube[c]) || 0) : 0;
+      };
+      let registro = [];
+      function aplicar(lista, mIdx, soloCalc) {
+        const out = [];
+        (lista || []).forEach(req => {
+          const S = stockDe(req.part);
+          if (!(S > 0)) { out.push(req); return; }
+          const m = Array.isArray(req.mOrders) ? req.mOrders : [];
+          const prev = m.slice(0, Math.max(0, mIdx || 0)).reduce((a, b) => a + (Number(b) || 0), 0);
+          const q = Number(req.qty) || 0;
+          const nuevo = Math.max(0, prev + q - S) - Math.max(0, prev - S);
+          if (!soloCalc && nuevo !== q) registro.push({ part: req.part, antes: q, despues: nuevo });
+          if (nuevo > 0) out.push(Object.assign(req, { qty: nuevo, qtyAntesStock: q }));
+        });
+        return out;
+      }
+      function lineaPrevia() {
+        if (!registro.length) return '';
+        const cero = registro.filter(x => !x.despues).length, menos = registro.length - cero;
+        if (!esAdmin()) return '<div>📦 Se descontó lo que ya está inyectado.</div>';
+        const u = registro.reduce((s2, x) => s2 + (x.antes - x.despues), 0);
+        return `<div>📦 Stock de piezas (solo lo ves vos): ${cero ? `${cero} pieza${cero === 1 ? '' : 's'} no se programa${cero === 1 ? '' : 'n'}` : ''}${cero && menos ? ' y ' : ''}${menos ? `${menos} se programa${menos === 1 ? '' : 'n'} menos` : ''} · ${n0(u)} u que ya están hechas${datos && datos.fecha ? ` (stock del ${esc(String(datos.fecha).slice(8, 10) + '/' + String(datos.fecha).slice(5, 7))})` : ''}.</div>`;
+      }
+      // otros usuarios con permiso de Gantt: pedir a la nube lo que hay que descontar (sin ver el stock)
+      async function prefetch(forzar) {
+        if (esAdmin() || !enNube()) return;
+        if (typeof inoferCan === 'function' && !inoferCan('gantt', 'edit')) return;
+        let lista = []; try { lista = analyzeDemandListWithDatabase(undefined, 0) || []; } catch (e) { return; }
+        const partes = {}; lista.forEach(x => { const t = (x.mOrders || []).reduce((a, b) => a + (Number(b) || 0), 0); if (t > 0) partes[K(x.part)] = (partes[K(x.part)] || 0) + t; });
+        const firma = Object.keys(partes).length + '|' + Object.values(partes).reduce((a, b) => a + b, 0);
+        if (!forzar && capNube && firma === capFirma && Date.now() - capAt < 10 * 60000) return;
+        try {
+          const d = await inoferCloudPost({ token: inoferAuthToken(), action: 'stockGantt', partes });
+          if (d && d.status === 'ok') { capNube = {}; Object.keys(d.cap || {}).forEach(k => { capNube[K(k)] = d.cap[k]; }); capAt = Date.now(); capFirma = firma; }
+        } catch (e) { }
+      }
+      document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#gtAuto, #runAutoGanttMonthBtn, #tabGanttBtn')) prefetch(); }, true);
+      setInterval(() => { const vg = $('viewGantt'); if (vg && !vg.classList.contains('hidden') && !document.hidden) prefetch(); }, 60000);
+
+      // ---------- pantalla del admin ----------
+      let filtro = '';
+      function abrir() {
+        if (!esAdmin()) { toast('Solo el administrador puede ver el stock de piezas'); return; }
+        let w = $('inoferStockPz');
+        if (!w) {
+          w = document.createElement('div'); w.id = 'inoferStockPz'; w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+          document.body.appendChild(w);
+          w.addEventListener('click', e => { if (e.target === w || (e.target.closest && e.target.closest('[data-a="cerrar"]'))) w.remove(); });
+          w.addEventListener('input', e => { if (e.target.id === 'spzBuscar') { filtro = e.target.value; pintarTabla(); } });
+          w.addEventListener('change', async e => {
+            if (e.target.id !== 'spzArchivo' || !e.target.files || !e.target.files[0]) return;
+            const f = e.target.files[0];
+            try {
+              const r = await leerArchivo(f);
+              const hoy = new Date(); const pad = x => String(x).padStart(2, '0');
+              datos = { fecha: hoy.getFullYear() + '-' + pad(hoy.getMonth() + 1) + '-' + pad(hoy.getDate()), at: hoy.toISOString(), por: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', archivo: String(f.name || '').slice(0, 80), piezas: r.piezas };
+              guardarLocal(); try { pushCloudModuleState('stockPiezas', datos); } catch (er) { }
+              toast(`📦 Stock cargado: ${r.filas} piezas (${r.conStock} con stock)`); pintar();
+            } catch (er) { toast('⚠️ ' + (er.message || er)); }
+          });
+          w.addEventListener('click', e => {
+            const b = e.target.closest && e.target.closest('[data-a="borrar"]'); if (!b) return;
+            if (!confirm('¿Borrar el stock de piezas? El Gantt automático va a programar todo el pedido.')) return;
+            datos = { fecha: '', piezas: {} }; guardarLocal(); try { pushCloudModuleState('stockPiezas', datos); } catch (er) { } pintar();
+          });
+        }
+        pintar();
+      }
+      function pintarTabla() {
+        const t = $('spzTabla'); if (!t) return;
+        const P = (datos && datos.piezas) || {}; const q = K(filtro);
+        const L = Object.keys(P).filter(c => (P[c].iny || 0) + (P[c].reb || 0) > 0 && (!q || c.includes(q) || K(P[c].desc).includes(q))).sort();
+        t.innerHTML = L.length ? L.slice(0, 400).map(c => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-bold text-white">${esc(c)}</td><td class="pr-2 text-slate-400">${esc(P[c].desc || '')}</td><td class="pr-2 text-right">${n0(P[c].iny)}</td><td class="pr-2 text-right">${n0(P[c].reb)}</td><td class="text-right font-black text-emerald-300">${n0((P[c].iny || 0) + (P[c].reb || 0))}</td></tr>`).join('')
+          : '<tr><td colspan="5" class="py-4 text-center text-slate-400">Sin piezas con stock.</td></tr>';
+      }
+      function pintar() {
+        const w = $('inoferStockPz'); if (!w) return;
+        const P = (datos && datos.piezas) || {}, cods = Object.keys(P);
+        const con = cods.filter(c => (P[c].iny || 0) + (P[c].reb || 0) > 0);
+        const tot = con.reduce((s2, c) => s2 + (P[c].iny || 0) + (P[c].reb || 0), 0);
+        const dias = datos && datos.fecha ? Math.round((Date.now() - new Date(datos.fecha + 'T12:00:00').getTime()) / 86400000) : null;
+        w.innerHTML = `<div class="w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 text-slate-100 shadow-2xl">
+          <div class="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-5 py-4"><div><div class="text-[11px] font-bold tracking-wider text-slate-400">SOLO ADMINISTRADOR</div><div class="text-lg font-black text-white">📦 Stock de piezas ya inyectadas</div></div><button type="button" data-a="cerrar" class="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div>
+          <div class="space-y-4 p-5">
+            <div class="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm">
+              ${datos && datos.fecha ? `<div class="font-bold text-white">Stock del ${esc(datos.fecha.slice(8, 10) + '/' + datos.fecha.slice(5, 7) + '/' + datos.fecha.slice(0, 4))} · ${con.length} piezas con stock · ${n0(tot)} u</div><div class="text-xs text-slate-400">Cargado por ${esc(datos.por || '—')}${datos.archivo ? ' · ' + esc(datos.archivo) : ''}</div>${dias > 7 ? `<div class="mt-1 text-xs font-bold text-amber-300">⚠ Tiene ${dias} días: conviene subirlo de nuevo antes de armar el Gantt.</div>` : ''}` : '<div class="text-slate-300">Todavía no hay stock cargado.</div>'}
+            </div>
+            <p class="text-xs text-slate-400">El armado automático del Gantt descuenta este stock (inyectado + rebabado) de lo que pide la planilla: lo que ya está hecho no se vuelve a programar. Nadie más ve estas cantidades; si otro usuario arma el Gantt, la nube descuenta sin mostrarle el stock. Del archivo se guardan solo código y cantidades (no precios).</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="cursor-pointer rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-emerald-950">📥 Subir el Excel de stock<input id="spzArchivo" type="file" accept=".xlsx,.xls,.csv,.txt" class="hidden"></label>
+              ${cods.length ? '<button type="button" data-a="borrar" class="rounded-xl border border-rose-500/50 px-3 py-2.5 text-xs font-bold text-rose-200">Borrar stock</button>' : ''}
+              <input id="spzBuscar" value="${esc(filtro)}" placeholder="Buscar pieza" class="ml-auto rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">
+            </div>
+            <div class="max-h-[50vh] overflow-y-auto rounded-xl border border-slate-800"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900 text-left text-[10px] uppercase text-slate-400"><tr><th class="py-2 pl-2 pr-2">Código</th><th class="pr-2">Descripción</th><th class="pr-2 text-right">Inyectado</th><th class="pr-2 text-right">Rebabado</th><th class="pr-2 text-right">Total</th></tr></thead><tbody id="spzTabla" class="[&_td:first-child]:pl-2"></tbody></table></div>
+          </div></div>`;
+        pintarTabla();
+      }
+      window.inoferStockPiezas = { abrir, aplicar, reiniciar: () => { registro = []; }, lineaPrevia, prefetch, leerFilas, registro: () => registro.slice(), stockDe };
     })();
   </script>
 </body>

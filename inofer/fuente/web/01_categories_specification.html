@@ -4967,6 +4967,8 @@ ${lines}${trendNote}`;
       const porFecha = !!nSemanas && typeof window.inoferCodigoSemana === 'function'; // selector de semanas nuevo (parte 34)
       const allAnalyzed = analyzeDemandListWithDatabase(undefined, mIdx);
       let demandList = allAnalyzed.filter(x => x.qty > 0);
+      // Stock de piezas ya inyectadas (parte 40): lo que ya está hecho no se vuelve a programar
+      if (window.inoferStockPiezas && typeof inoferStockPiezas.aplicar === 'function') { try { demandList = inoferStockPiezas.aplicar(demandList, mIdx); } catch (e) { } }
       // Ahorro de SET-UP: dentro de cada nivel de urgencia, las piezas del mismo pistón van seguidas
       if (typeof inoferOrdenarPorPiston === 'function') demandList = inoferOrdenarPorPiston(demandList);
       // prioridad elegida en el armado en 3 pasos (parte 37): 'urgentes' (como siempre), 'cambios' o 'facturacion'
