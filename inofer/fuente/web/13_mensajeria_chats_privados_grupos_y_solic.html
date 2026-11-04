@@ -42,7 +42,7 @@
         const s = $('inoferSolBadge'); if (s) { const k = st.solAviso; s.textContent = k; s.classList.toggle('hidden', !k); }
         const t = $('inoferSolBtnTxt'); if (t) t.textContent = esAdmin() ? `Solicitudes${st.solPend ? ' (' + st.solPend + ')' : ''}` : 'Pedir al administrador';
         const tc = $('msgTabChats'); if (tc) tc.innerHTML = `💬 Chats${n ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">${n}</span>` : ''}`;
-        const ts = $('msgTabSol'); if (ts) ts.innerHTML = `📨 ${esAdmin() ? 'Solicitudes' : 'Mis solicitudes'}${st.solAviso ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">${st.solAviso}</span>` : ''}`;
+        const ts = $('msgTabSol'); if (ts) ts.innerHTML = `📨 ${esAdmin() || st.verTodas ? 'Solicitudes' : 'Mis solicitudes'}${st.solAviso ? ` <span class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] text-white">${st.solAviso}</span>` : ''}`;
       }
 
       // ---------- panel ----------
@@ -188,15 +188,17 @@
           return;
         }
         const lista = st.solicitudes;
+        // con permiso "ver todas las solicitudes" se ven las de todos (con el nombre), pero responder sigue siendo del admin
+        const todas = adm || st.verTodas, yo = (typeof inoferSession !== 'undefined' && inoferSession && inoferSession.usuario) || '';
         c.innerHTML = `<div class="flex items-center justify-between gap-2 border-b border-slate-800 p-3">
-            <span class="text-xs text-slate-400">${adm ? 'Todo lo que te piden los usuarios' : 'Lo que le pediste al administrador'}</span>
+            <span class="text-xs text-slate-400">${adm ? 'Todo lo que te piden los usuarios' : (st.verTodas ? 'Todas las solicitudes (las responde el administrador)' : 'Lo que le pediste al administrador')}</span>
             <button type="button" data-acc="nuevaSol" class="rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 hover:bg-amber-400">+ Nueva solicitud</button>
           </div>
           <div class="flex-1 space-y-2 overflow-y-auto p-3">${st.cargando && !lista.length ? '<p class="text-center text-xs text-slate-500">Cargando…</p>' : (lista.length ? lista.map(s => {
             const e = ESTADOS[s.estado] || ESTADOS.pendiente;
             return `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-1.5">
               <div class="flex items-start justify-between gap-2"><div class="min-w-0"><div class="text-sm font-bold text-white">${esc(s.titulo)}</div>
-                <div class="text-[11px] text-slate-400">${esc(s.tipo)} · ${adm ? esc(s.nombre) + ' · ' : ''}${esc(fecha(s.fecha))}</div></div>
+                <div class="text-[11px] text-slate-400">${esc(s.tipo)} · ${todas ? esc(s.nombre) + ' · ' : ''}${esc(fecha(s.fecha))}</div></div>
                 <span class="shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${e[1]}">${e[0]}</span></div>
               ${s.detalle ? `<div class="whitespace-pre-wrap text-xs text-slate-300">${esc(s.detalle)}</div>` : ''}
               ${s.respuesta ? `<div class="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 text-xs text-emerald-100"><b>Respuesta${s.respondidoPor ? ' de ' + esc(s.respondidoPor) : ''}:</b> ${esc(s.respuesta)}</div>` : ''}
@@ -205,7 +207,7 @@
                 <input data-sol-resp="${esc(s.id)}" placeholder="Responder…" class="min-w-[120px] flex-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white">
                 <button type="button" data-sol-guardar="${esc(s.id)}" class="rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-bold text-slate-950">Guardar</button>
               </div>` : ''}
-              <div class="flex justify-end"><button type="button" data-sol-borrar="${esc(s.id)}" class="text-[11px] font-bold text-rose-300 hover:text-rose-200">🗑️ Borrar</button></div>
+              ${adm || s.autor === yo ? `<div class="flex justify-end"><button type="button" data-sol-borrar="${esc(s.id)}" class="text-[11px] font-bold text-rose-300 hover:text-rose-200">🗑️ Borrar</button></div>` : ''}
             </div>`; }).join('') : '<p class="py-6 text-center text-sm text-slate-400">No hay solicitudes.</p>')}</div>`;
       }
 
@@ -304,7 +306,7 @@
         try {
           const d = await api({ action: 'msgEstado' });
           const antes = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);
-          st.chats = d.chats || []; st.dir = d.directorio || []; st.solAviso = d.solicitudesAviso || 0; st.solPend = d.solPendientes || 0; st.bloqueado = !!d.chatBloqueado;
+          st.chats = d.chats || []; st.dir = d.directorio || []; st.solAviso = d.solicitudesAviso || 0; st.solPend = d.solPendientes || 0; st.verTodas = !!d.solVerTodas; st.bloqueado = !!d.chatBloqueado;
           const mb = $('inoferMsgBtn'); if (mb) mb.classList.toggle('hidden', st.bloqueado);
           if (st.abierto && st.chatId) { const ch = st.chats.find(x => x.id === st.chatId); if (ch) ch.noLeidos = 0; }
           const ahora = st.chats.reduce((a, c) => a + (c.noLeidos || 0), 0);

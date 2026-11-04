@@ -808,9 +808,11 @@ function escribirSolicitud_(s) {
   if (s.fila) sh.getRange(s.fila, 1, 1, 13).setValues([fila]); else sh.appendRow(fila);
 }
 function solPublica_(s) { const c = Object.assign({}, s); delete c.fila; return c; }
+// ver todas las solicitudes: admin, o permiso detalle sol_ver_todas === true (se habilita a mano)
+function veTodasSol_(u) { return !!u && (u.rol === 'admin' || !!(u.permisos && u.permisos.detalle && u.permisos.detalle.sol_ver_todas === true)); }
 function solicitudesDe_(u) {
   const todas = leerSolicitudes_();
-  return (u.rol === 'admin' ? todas : todas.filter(function (s) { return s.autor === u.usuario; })).map(solPublica_).reverse();
+  return (veTodasSol_(u) ? todas : todas.filter(function (s) { return s.autor === u.usuario; })).map(solPublica_).reverse();
 }
 
 function accionMensajeria(u, body) {
@@ -857,7 +859,7 @@ function accionMensajeria(u, body) {
         ? sols.filter(function (s) { return !s.vistoAdmin; }).length
         : sols.filter(function (s) { return s.autor === yo && !s.vistoAutor; }).length;
       return { status: 'ok', chats: chats.map(function (c) { return chatPublico_(c, u, msgs); }).sort(function (a, b) { return String(b.ultimoAt).localeCompare(String(a.ultimoAt)); }),
-        directorio: directorio_(), solicitudesAviso: solAviso, solPendientes: u.rol === 'admin' ? sols.filter(function (s) { return s.estado === 'pendiente'; }).length : 0 };
+        directorio: directorio_(), solicitudesAviso: solAviso, solPendientes: veTodasSol_(u) ? sols.filter(function (s) { return s.estado === 'pendiente'; }).length : 0, solVerTodas: veTodasSol_(u) };
     }
 
     if (body.action === 'msgCrearChat') {
@@ -1315,7 +1317,7 @@ function accionAuditoria(u, body) {
 // =====================================================================
 const COD_CAT_SRV = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
   2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 16: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
-  4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+  4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 32: 'puesta_punto', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
 const CATS_SRV = [['parada_maquina', 'Parada de máquina'], ['setup_molde', 'Cambio de molde'], ['puesta_punto', 'Puesta a punto'], ['mant_preventivo', 'Mant. preventivo'], ['mant_correctivo', 'Mant. correctivo'], ['falta_material', 'Falta de material'], ['falta_operario', 'Falta de operario'], ['otros', 'Otros']];
 const MAQ_SRV = [['200V', 'Italpresse 200 Tn (V)'], ['200N', 'Italpresse 200 Tn (N)'], ['180', 'Italpresse 180 Tn'], ['H50', 'H-50'], ['Z30', 'Italpresse 30 Tn (Z-30)']];
 function maqId_(txt) {

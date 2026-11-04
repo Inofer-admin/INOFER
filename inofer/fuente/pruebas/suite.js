@@ -939,6 +939,24 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(!q.ve && !q.ls && !q.menu, 'el otro usuario ve el stock: ' + JSON.stringify(q));
       ok(q.cap && q.cap['PZA-STK1'] === 500 && q.cap['PZA-STK2'] === 1000 && !q.cap['PZA-NADA'], 'descuento de la nube: ' + JSON.stringify(q));
     });
+    await prueba('Solicitudes: permiso para ver todas + código 32 Actualizar fechador', async () => {
+      const r = await A.evaluate(async () => {
+        const t = inoferAuthToken();
+        await inoferCloudPost({ action: 'solCrear', token: t, tipo: 'Otro', titulo: 'SOL-PRUEBA-ADMIN', detalle: 'x' });
+        await inoferCloudPost({ action: 'saveUser', token: t, user: { usuario: 'vesol', nombre: 'Ve Solicitudes', clave: '3333', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'none', detalle: { sol_ver_todas: true } } } });
+        const cod = (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).find(c => /^32-/.test(c));
+        return { cod, cat: (window.INOFER_CODIGO_CATEGORIA || {})[32], opc: !!document.querySelector('.cr-pcod') || true };
+      });
+      ok(r.cod === '32-Actualizar fechador' && r.cat === 'puesta_punto', 'código 32: ' + JSON.stringify(r));
+      const V = await equipo(b); await ingresar(V, 'vesol', '3333'); await V.waitForTimeout(1200);
+      const v = await V.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); const e = await inoferCloudPost({ action: 'msgEstado', token: inoferAuthToken() }); const u = await inoferCloudPost({ action: 'solActualizar', token: inoferAuthToken(), id: (d.solicitudes[0] || {}).id, estado: 'resuelta' }); return { ve: (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'), flag: e.solVerTodas, responde: u.status }; });
+      await V.context().close();
+      const N = await equipo(b); await ingresar(N, 'planif', '2222'); await N.waitForTimeout(1200);
+      const n = await N.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); return (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'); });
+      await N.context().close();
+      ok(v.ve && v.flag && v.responde === 'error', 'con permiso: ' + JSON.stringify(v));
+      ok(!n, 'sin permiso ve solicitudes de otros');
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
