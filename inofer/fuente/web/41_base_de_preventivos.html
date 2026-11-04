@@ -38,11 +38,11 @@
       }
       function fecha(v) {
         if (v == null || v === '') return '';
-        if (v instanceof Date && !isNaN(v)) return iso(v);
+        if (v instanceof Date && !isNaN(v)) return iso(new Date(v.getTime() + 12 * 36e5)); // Excel a veces da 23:59 del día anterior
         if (typeof v === 'number' && v > 20000 && v < 80000) return iso(new Date(Math.round((v - 25569) * 864e5) + 12 * 36e5));
         const s = String(v).trim(); let m;
         if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return m[1] + '-' + pad(m[2]) + '-' + pad(m[3]);
-        if ((m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/.exec(s))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + pad(m[2]) + '-' + pad(m[1]); }
+        if ((m = /^(\d{1,2})[\/.\- ]+(\d{1,2})[\/.\- ]+(\d{2,4})\b/.exec(s))) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + pad(m[2]) + '-' + pad(m[1]); }
         return '';
       }
       function leerFilas(filas) {
@@ -128,6 +128,153 @@
           if (r) toast(`✓ Plan preventivo: ${r.nuevos} nuevos${r.act ? ` · ${r.act} actualizados` : ''}`);
         });
       }
+      // ===== Planilla de HISTORIAL (reparaciones hechas): pasa al historial y sugiere preventivos con lo que se repite =====
+      // Títulos: Reparaciones/Problemas/Trabajo/Falla, Maq/Máquina/Equipo/Servicio, Fecha, Descripción/Observaciones, Realizó, HH/Horas, Monto/Costo, Proveedor.
+      function hashTxt(t) { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) >>> 0; return h.toString(36); }
+      function equipoDe(txt) {
+        const m = maquinaDe(txt); if (m && m !== 'TODAS') return m;
+        return String(txt == null ? '' : txt).trim().replace(/\s+/g, ' ').toUpperCase().slice(0, 40);
+      }
+      function leerHistorial(filas) {
+        let h = -1, C = {};
+        for (let i = 0; i < Math.min(filas.length, 30) && h < 0; i++) {
+          const f = (filas[i] || []).map(norm);
+          const idx = re => f.findIndex(x => re.test(x));
+          const c = { tarea: idx(/^(reparacion|problema|trabajo|falla|tarea|actividad)/), maq: idx(/^(maq|maquina|equipo|servicio|inyectora)/), fecha: idx(/^fecha/), desc: idx(/^(descrip|observ|detalle)/), por: idx(/^(realiz|hecho por|quien|responsable)/), hh: idx(/^(hh|horas|hs\b)/), monto: idx(/^(monto|costo|importe)/), prov: idx(/^proveed/), lugar: idx(/^(lugar|sector)/) };
+          if (c.tarea >= 0 && c.maq >= 0 && c.fecha >= 0) { h = i; C = c; }
+        }
+        if (h < 0) return null;
+        const val = (f, k) => C[k] >= 0 && f[C[k]] != null ? String(f[C[k]]).trim() : '';
+        const num = (f, k) => { const n = C[k] >= 0 ? Number(String(f[C[k]] == null ? '' : f[C[k]]).replace(/\./g, '').replace(',', '.').replace(/[^0-9.\-]/g, '')) : 0; return n > 0 ? n : 0; };
+        const trabajos = [], omitidas = []; let ultFecha = '';
+        for (let i = h + 1; i < filas.length; i++) {
+          const f = filas[i] || []; const tarea = val(f, 'tarea'); const maqTxt = C.maq >= 0 ? f[C.maq] : '';
+          if (!tarea) continue;
+          if (/^por (maquina|servicio)/.test(norm(tarea)) || (typeof maqTxt === 'number' && !maqTxt) || !String(maqTxt == null ? '' : maqTxt).trim()) { if (!/^por (maquina|servicio)/.test(norm(tarea))) omitidas.push(`Fila ${i + 1}: "${tarea.slice(0, 50)}" no tiene máquina`); continue; }
+          let fe = fecha(C.fecha >= 0 ? f[C.fecha] : ''), aprox = false;
+          if (!fe) { if (!ultFecha) { omitidas.push(`Fila ${i + 1}: "${tarea.slice(0, 50)}" no tiene fecha`); continue; } fe = ultFecha; aprox = true; }
+          else ultFecha = fe;
+          const maquina = equipoDe(maqTxt);
+          const t = tarea.replace(/\s+/g, ' ').slice(0, 160), desc = val(f, 'desc').replace(/\s+/g, ' ').slice(0, 300);
+          const nt = norm(t);
+          const tipo = /edilic/.test(norm(maquina)) ? 'mejora' : (/^(limpieza|carga |lubricacion|cb de filtro|cambio de filtro|engrase)/.test(nt) ? 'preventivo' : 'correctivo');
+          trabajos.push({ id: 'mt-h-' + hashTxt(fe + '|' + maquina + '|' + nt + '|' + norm(desc)), maquina, fecha: fe, tipo, tarea: t, descripcion: desc + (aprox ? (desc ? ' · ' : '') + '(sin fecha en la planilla: se tomó la de la fila anterior)' : ''), horas: num(f, 'hh'), monto: num(f, 'monto'), hecho_por: val(f, 'por').slice(0, 60), proveedor: val(f, 'prov').slice(0, 60), lugar: val(f, 'lugar').slice(0, 40), origen: 'planilla', fila: i + 1 });
+        }
+        return { trabajos, omitidas };
+      }
+      // agrupa trabajos de las inyectoras que hablan de lo mismo (palabras en común) → candidatos a preventivo
+      const VACIAS = new Set('de del en la el los las y o a al con por para p x se sin un una su sus que lado cb cambio cambios recambio falla fallas rotura roto rota revision reparacion repara desarme armado colocacion coloca nueva nuevo nuevas nuevos mal estado maquina maq inyectora ip todas'.split(' '));
+      function palabras(t) {
+        const ids = MAQS().map(m => solo(m.id));
+        return Array.from(new Set(norm(t).replace(/[^a-z0-9ñ ]/g, ' ').split(/\s+/).filter(w => w.length >= 4 && !VACIAS.has(w) && !/^\d+$/.test(w) && ids.indexOf(w) < 0).map(w => w.replace(/(es|s)$/, ''))));
+      }
+      const REDONDO = [7, 15, 30, 45, 60, 90, 120, 180, 365];
+      function sugerir(trabajos) {
+        const ids = MAQS().map(m => m.id);
+        const grupos = [];
+        trabajos.filter(t => ids.indexOf(t.maquina) >= 0 && t.tipo !== 'mejora').forEach(t => {
+          const P = palabras(t.tarea); if (!P.length) return;
+          let mejor = null, ms = 0;
+          grupos.forEach(g => { const com = P.filter(w => g.pal.has(w)).length; const sc = com / Math.min(P.length, g.pal.size); if ((com >= 2 || (com === 1 && P.length === 1 && g.pal.size === 1)) && sc >= 0.5 && sc > ms) { mejor = g; ms = sc; } });
+          if (!mejor) { mejor = { pal: new Set(P), items: [] }; grupos.push(mejor); }
+          mejor.items.push(t);
+        });
+        return grupos.filter(g => g.items.length >= 2).map((g, gi) => {
+          const porMaq = {};
+          g.items.forEach(t => (porMaq[t.maquina] = porMaq[t.maquina] || []).push(t.fecha));
+          const gaps = [];
+          Object.values(porMaq).forEach(L => { L.sort(); for (let i = 1; i < L.length; i++) { const d = Math.round((new Date(L[i] + 'T12:00:00') - new Date(L[i - 1] + 'T12:00:00')) / 864e5); if (d > 3) gaps.push(d); } });
+          gaps.sort((a, b) => a - b);
+          const base = gaps.length ? Math.max(30, gaps[Math.floor(gaps.length / 2)]) : 180;
+          const cada = REDONDO.reduce((a, b) => Math.abs(b - base) < Math.abs(a - base) ? b : a);
+          const cuenta = {}; g.items.forEach(t => { const k = t.tarea.trim(); cuenta[k] = (cuenta[k] || 0) + 1; });
+          const nombre = Object.entries(cuenta).sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)[0][0];
+          const tarea = 'Revisar: ' + nombre.charAt(0).toUpperCase() + nombre.slice(1).toLowerCase();
+          const maquinas = Object.keys(porMaq).sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+          return { id: 's' + gi, tarea: tarea.slice(0, 120), veces: g.items.length, maquinas, ultimo: Object.fromEntries(maquinas.map(m => [m, porMaq[m].slice().sort().pop()])), cadaDias: cada, porRepeticion: gaps.length > 0, ejemplos: g.items.slice(0, 4).map(t => t.fecha + ' ' + t.maquina + ': ' + t.tarea) };
+        }).sort((a, b) => b.veces - a.veces || a.tarea.localeCompare(b.tarea));
+      }
+      function aplicarHistorial(trabajos) {
+        const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || null;
+        if (!M) { toast('No se pudo abrir Mantenimiento'); return null; }
+        M.trabajos = M.trabajos || [];
+        const ya = new Set(M.trabajos.map(t => t.id));
+        const clave = t => t.fecha + '|' + t.maquina + '|' + norm(t.tarea);
+        const yaC = new Set(M.trabajos.map(clave));
+        const quien = (() => { try { return inoferUsuarioEtiqueta(); } catch (e) { return ''; } })();
+        let nuevos = 0, repetidos = 0;
+        trabajos.forEach(t => {
+          if (ya.has(t.id) || yaC.has(clave(t))) { repetidos++; return; }
+          const x = Object.assign({}, t); delete x.fila; x.cargadoPor = quien; x.cargadoAt = new Date().toISOString();
+          M.trabajos.push(x); ya.add(x.id); yaC.add(clave(x)); nuevos++;
+        });
+        try { inoferModGuardar('mantenimiento'); } catch (e) { }
+        return { nuevos, repetidos };
+      }
+      let previaH = null;
+      function mostrarHistorial(res, nombre) {
+        const sug = sugerir(res.trabajos);
+        previaH = { res, sug };
+        const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || {};
+        const ya = new Set((M.trabajos || []).map(t => t.id));
+        const repetidos = res.trabajos.filter(t => ya.has(t.id)).length;
+        const porEq = {}; res.trabajos.forEach(t => { porEq[t.maquina] = (porEq[t.maquina] || 0) + 1; });
+        const ids = MAQS().map(m => m.id);
+        const eqs = Object.entries(porEq).sort((a, b) => (ids.indexOf(a[0]) < 0) - (ids.indexOf(b[0]) < 0) || b[1] - a[1]);
+        const fechas = res.trabajos.map(t => t.fecha).sort();
+        const sinHH = res.trabajos.filter(t => !t.horas).length;
+        let w = $('inoferHistPrev'); if (w) w.remove();
+        w = document.createElement('div'); w.id = 'inoferHistPrev'; w.className = 'fixed inset-0 z-[72] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        w.innerHTML = `<div class="w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-950 text-slate-100 shadow-2xl">
+          <div class="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900 px-5 py-4"><div><div class="text-[11px] font-bold tracking-wider text-slate-400">MANTENIMIENTO · ${esc(nombre)}</div><div class="text-lg font-black text-white">🧾 Planilla de reparaciones → historial</div></div><button type="button" data-a="cerrar" class="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕ Cerrar</button></div>
+          <div class="space-y-4 p-5">
+            <label class="flex items-start gap-3 rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3"><input type="checkbox" id="hpHist" checked class="mt-1 h-5 w-5"><span class="text-sm"><b class="text-cyan-100">Pasar ${res.trabajos.length} trabajos al historial</b> <span class="text-slate-300">(${fF(fechas[0])} al ${fF(fechas[fechas.length - 1])})</span>${repetidos ? `<br><span class="text-xs text-slate-400">${repetidos} ya estaban cargados: no se duplican.</span>` : ''}
+              <span class="mt-2 flex flex-wrap gap-1">${eqs.map(([m, n]) => `<span class="rounded-full ${ids.indexOf(m) >= 0 ? 'bg-orange-500/20 text-orange-100' : 'bg-slate-800 text-slate-300'} px-2 py-0.5 text-[11px] font-bold">${esc(m)} · ${n}</span>`).join('')}</span>
+              <span class="mt-1 block text-[11px] text-slate-400">Las inyectoras se unificaron con los nombres de la app (IP 200 V → 200V…). Los otros equipos quedan con su nombre y se pueden filtrar en el historial.</span></span></label>
+            ${res.omitidas.length || sinHH ? `<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">${res.omitidas.length ? `<b>No se cargan ${res.omitidas.length} fila(s):</b><br>${res.omitidas.slice(0, 8).map(esc).join('<br>')}<br>` : ''}${sinHH ? `${sinHH} trabajos no tienen horas (HH): se cargan igual; conviene anotar las horas de máquina parada de acá en adelante.` : ''}</div>` : ''}
+            <div><div class="mb-1 text-sm font-black text-sky-200">💡 Preventivos sugeridos — cosas que se repitieron</div>
+              <div class="mb-2 text-xs text-slate-400">Tildá los que querés sumar al plan y ajustá cada cuántos días. Se arma uno por cada máquina donde pasó, contando desde la última vez.</div>
+              ${sug.length ? `<div class="max-h-[44vh] overflow-y-auto rounded-xl border border-slate-800"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900 text-left text-[10px] uppercase text-slate-400"><tr><th class="py-2 pl-2"></th><th class="pr-2">Tarea</th><th class="pr-2">Veces</th><th class="pr-2">Máquinas (última vez)</th><th class="pr-2">Cada (días)</th></tr></thead><tbody>
+                ${sug.map(x => `<tr class="border-t border-slate-800 align-top"><td class="py-2 pl-2 pr-2"><input type="checkbox" class="hp-s h-4 w-4" data-id="${x.id}" ${x.veces >= 3 ? 'checked' : ''}></td>
+                  <td class="py-1.5 pr-2"><input class="hp-t w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" data-id="${x.id}" value="${esc(x.tarea)}"><div class="mt-1 text-[10px] text-slate-500">${x.ejemplos.map(esc).join('<br>')}</div></td>
+                  <td class="pr-2 font-bold text-white">${x.veces}</td>
+                  <td class="pr-2 text-slate-300">${x.maquinas.map(m => `<b>${esc(m)}</b> ${fF(x.ultimo[m]).slice(0, 5)}`).join('<br>')}</td>
+                  <td class="pr-2"><input type="number" min="1" class="hp-c w-20 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white" data-id="${x.id}" value="${x.cadaDias}"><div class="text-[10px] text-slate-500">${x.porRepeticion ? 'según cada cuánto se repitió' : 'sugerido'}</div></td></tr>`).join('')}
+              </tbody></table></div>` : '<div class="text-xs text-slate-400">No encontré trabajos repetidos en las inyectoras.</div>'}</div>
+            <div class="flex flex-wrap items-center justify-end gap-2"><button type="button" data-a="cerrar" class="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300">Cancelar</button><button type="button" data-a="cargar" class="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-black text-emerald-950">✓ Cargar</button></div>
+          </div></div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => {
+          const b = e.target.closest('[data-a]'); if (!b && e.target !== w) return;
+          if (!b || b.dataset.a === 'cerrar') { w.remove(); return; }
+          const r = cargarHistorial({ historial: $('hpHist').checked, sugeridos: Array.from(w.querySelectorAll('.hp-s:checked')).map(c => ({ id: c.dataset.id, tarea: (w.querySelector(`.hp-t[data-id="${c.dataset.id}"]`) || {}).value, cadaDias: Number((w.querySelector(`.hp-c[data-id="${c.dataset.id}"]`) || {}).value) || 0 })) });
+          w.remove();
+          if (r) toast(`✓ Historial: ${r.nuevos} trabajos nuevos${r.repetidos ? ` (${r.repetidos} ya estaban)` : ''} · Plan preventivo: ${r.planes} ${r.planes === 1 ? 'tarea' : 'tareas'}`);
+        });
+      }
+      // opc: {historial: bool, sugeridos: [{id, tarea?, cadaDias?}]}
+      function cargarHistorial(opc) {
+        if (!previaH) return null;
+        opc = opc || {};
+        let r = { nuevos: 0, repetidos: 0 };
+        if (opc.historial !== false) r = aplicarHistorial(previaH.res.trabajos) || r;
+        const plan = [];
+        (opc.sugeridos || []).forEach(s => {
+          const x = previaH.sug.find(y => y.id === s.id); if (!x) return;
+          const tarea = String(s.tarea || x.tarea).trim().slice(0, 120); const cada = Math.max(1, Number(s.cadaDias) || x.cadaDias);
+          x.maquinas.forEach(m => plan.push({ maquina: m, tarea, cadaDias: cada, ultimo: x.ultimo[m], avisoDias: null, responsable: '' }));
+        });
+        let planes = 0;
+        if (plan.length) { const a = aplicar(plan, 'sumar'); planes = a ? a.nuevos + a.act : 0; }
+        else { try { inoferRenderMant(); } catch (e) { } }
+        const desde = previaH.res.trabajos.map(t => t.fecha).sort()[0];
+        if (desde && window.inoferMantDias) { const d = Math.round((new Date() - new Date(desde + 'T12:00:00')) / 864e5); inoferMantDias(d > 180 ? 365 : (d > 90 ? 180 : (d > 30 ? 90 : 30))); }
+        return { nuevos: r.nuevos, repetidos: r.repetidos, planes };
+      }
+      // planillas con formato aplicado hasta la columna XFD: se leen solo las primeras 40 columnas
+      function recortar(hoja) {
+        try { const R = XLSX.utils.decode_range(hoja['!ref'] || 'A1'); if (R.e.c > 39) { R.e.c = 39; hoja['!ref'] = XLSX.utils.encode_range(R); } if (R.e.r > 20000) { R.e.r = 20000; hoja['!ref'] = XLSX.utils.encode_range(R); } } catch (e) { }
+      }
       async function desdeArchivo(file) {
         try {
           let filas;
@@ -138,15 +285,18 @@
           } else {
             if (typeof XLSX === 'undefined' || !XLSX.read) throw new Error('No se pudo abrir Excel en este equipo (hace falta internet la primera vez).');
             const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array', cellDates: true });
-            let mejor = null, err = null;
-            wb.SheetNames.forEach(n => { if (mejor) return; try { const r = leerFilas(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null })); if (r.filas.length) mejor = r; } catch (e) { err = e; } });
+            let mejor = null, err = null, hist = null;
+            wb.SheetNames.forEach(n => { if (mejor) return; const hoja = wb.Sheets[n]; recortar(hoja); const filas2 = XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: null }); try { const r = leerFilas(filas2); if (r.filas.length) mejor = r; } catch (e) { err = e; if (!hist) { const hh = leerHistorial(filas2); if (hh && hh.trabajos.length) hist = hh; } } });
+            if (!mejor && hist) return mostrarHistorial(hist, file.name);
             if (!mejor) throw err || new Error('El archivo no tiene tareas.');
             return mostrar(mejor, file.name);
           }
-          const r = leerFilas(filas); if (!r.filas.length) throw new Error('El archivo no tiene tareas.' + (r.errores.length ? ' ' + r.errores[0] : ''));
+          let r; try { r = leerFilas(filas); } catch (e) { const hh = leerHistorial(filas); if (hh && hh.trabajos.length) return mostrarHistorial(hh, file.name); throw e; }
+          if (!r.filas.length) throw new Error('El archivo no tiene tareas.' + (r.errores.length ? ' ' + r.errores[0] : ''));
           mostrar(r, file.name);
         } catch (e) { toast('⚠️ ' + (e.message || e)); }
       }
-      window.inoferBasePreventivos = { desdeArchivo, leerFilas, armar, aplicar, frecuencia, maquinaDe, mostrar: (r, n) => mostrar(r, n || 'archivo'), previa: () => previa };
+      window.inoferBasePreventivos = { desdeArchivo, leerFilas, armar, aplicar, frecuencia, maquinaDe, mostrar: (r, n) => mostrar(r, n || 'archivo'), previa: () => previa,
+        leerHistorial, sugerir, mostrarHistorial: (r, n) => mostrarHistorial(r, n || 'archivo'), cargarHistorial, previaHistorial: () => previaH };
     })();
   </script>

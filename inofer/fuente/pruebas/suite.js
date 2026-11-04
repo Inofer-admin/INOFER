@@ -1011,6 +1011,38 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(!r.sinMarca && r.conMarca, 'roturas en mantenimiento: ' + JSON.stringify(r));
       ok(r.editado && r.esRot, 'editar historial: ' + JSON.stringify(r));
     });
+    await prueba('Mantenimiento: planilla de reparaciones → historial + preventivos sugeridos', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const B = inoferBasePreventivos;
+        const filas = [['Reparaciones / problemas', 'Maq o servicio', 'Lugar', 'Realizó', 'HH', 'Monto U$D', 'Fecha', 'Descripción observaciones', null, 'Proveedor'],
+          ['ROTURA VAINA TERMOCUPLA PRUEBA', 'IP 200 V', 'INYECCION', 'PROPIO', '', '', '02/02/2026', 'cambio vaina', null, 'PROV1'],
+          ['VAINA Y TERMOCUPLA PRUEBA ROTA', 'IP 200 V', 'INYECCION', 'PROPIO', '2', '', '13/06/2026', '', null, ''],
+          ['VAINA TERMOCUPLA PRUEBA', 'IP-200 N', 'INYECCION', 'PROPIO', '', '', '20/10/2026', '', null, ''],
+          ['FALLA SIN FECHA PRUEBA', 'H-50', '', '', '', '', null, '', null, ''],
+          ['cb a tobera PRUEBA', 'IP Z 30', '', '', '', '', '10 8 26', '', null, ''],
+          ['FILTRO AUTOELEVADOR PRUEBA', 'CLARK', '', '', '', '', '24/08/2026', '', null, ''],
+          ['Por maquina', 0, null, null]];
+        const h = B.leerHistorial(filas);
+        const sug = B.sugerir(h.trabajos);
+        const M = inoferModLocal('mantenimiento'); const antes = JSON.stringify({ p: M.planes || [], t: M.trabajos || [] });
+        B.mostrarHistorial(h, 'prueba.xlsx'); await esperar(100);
+        const hayModal = !!document.getElementById('inoferHistPrev'); document.getElementById('inoferHistPrev').remove();
+        const s0 = sug.find(x => /TERMOCUPLA/i.test(x.tarea));
+        const c1 = B.cargarHistorial({ historial: true, sugeridos: s0 ? [{ id: s0.id, cadaDias: 120 }] : [] });
+        const c2 = B.cargarHistorial({ historial: true, sugeridos: [] });
+        const pl = (M.planes || []).filter(p => /termocupla/i.test(p.tarea));
+        const clark = (M.trabajos || []).find(t => t.maquina === 'CLARK');
+        switchTab('mant'); await esperar(300);
+        const filtro = Array.from(document.querySelectorAll('#mtFiltro option')).map(o => o.value);
+        const a = JSON.parse(antes); M.planes = a.p; M.trabajos = a.t; inoferModGuardar('mantenimiento');
+        return { n: h.trabajos.length, maqs: h.trabajos.map(t => t.maquina), fechas: h.trabajos.map(t => t.fecha), prov: h.trabajos[0].proveedor, hh: h.trabajos[1].horas, nSug: sug.length, s0: s0 && [s0.veces, s0.maquinas.join(',')], hayModal, c1, c2, pl: pl.map(p => [p.maquina, p.cadaDias, p.ultimo]), clark: !!clark, filtro: filtro.indexOf('CLARK') >= 0 };
+      });
+      ok(r.n === 6 && r.maqs.join(',') === '200V,200V,200N,H50,Z30,CLARK' && r.fechas[3] === '2026-10-20' && r.fechas[4] === '2026-08-10' && r.prov === 'PROV1' && r.hh === 2, 'lectura: ' + JSON.stringify(r));
+      ok(r.s0 && r.s0[0] === 3 && r.s0[1] === '200V,200N' && r.hayModal, 'sugeridos: ' + JSON.stringify(r));
+      ok(r.c1.nuevos === 6 && r.c2.nuevos === 0 && r.c2.repetidos === 6 && r.pl.length === 2 && r.pl.every(p => p[1] === 120) && r.pl.some(p => p[0] === '200V' && p[2] === '2026-06-13'), 'carga: ' + JSON.stringify(r));
+      ok(r.clark && r.filtro, 'otros equipos: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
