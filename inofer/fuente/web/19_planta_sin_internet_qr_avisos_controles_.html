@@ -151,10 +151,13 @@
         }
         if ((d.scrap || 0) > Math.max(20, total * 0.15)) av.push(`El scrap es alto: ${n0(d.scrap)} piezas (${n1(d.scrap / Math.max(1, total) * 100)}% del total).`);
         if (!d.ok && !d.paradasMin) av.push('No cargaste piezas buenas ni paradas. Si la máquina estuvo parada, cargá el motivo.');
-        const otro = (o.logs || []).find(l => l.id !== d.editLogId && l.date === d.fecha && (norm(l.turno) === norm(d.turno) || (l.startTime === d.ini && l.endTime === d.fin)));
+        // varias piezas en un turno: solo es "repetido" si los horarios se pisan (la Carga rápida ya lo revisa sola: pisadaRevisada)
+        const tramo = (i, f) => { const a = aMin(i || '00:00'); let b = aMin(f || '00:00'); if (b <= a) b += 1440; return [a, b]; };
+        const seTocan = l => { if (!l.startTime || !d.ini) return true; const x = tramo(l.startTime, l.endTime), y = tramo(d.ini, d.fin); return Math.min(x[1], y[1]) - Math.max(x[0], y[0]) > 0; };
+        const otro = d.pisadaRevisada ? null : (o.logs || []).find(l => l.id !== d.editLogId && l.date === d.fecha && (norm(l.turno) === norm(d.turno) || (l.startTime === d.ini && l.endTime === d.fin)) && seTocan(l));
         if (otro) av.push(`Ya hay un turno ${d.turno} del ${fFecha(d.fecha)} cargado en esta orden (${n0(otro.okPcs)} buenas · ${otro.operator || ''}). ¿Es otro distinto?`);
         const m = (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : maqId(o.machine);
-        const otraOp = ordenes().find(x => x.id !== o.id && maqId(x.machine) === m && (x.logs || []).some(l => l.id !== d.editLogId && l.date === d.fecha && norm(l.turno) === norm(d.turno)));
+        const otraOp = d.pisadaRevisada ? null : ordenes().find(x => x.id !== o.id && maqId(x.machine) === m && (x.logs || []).some(l => l.id !== d.editLogId && l.date === d.fecha && norm(l.turno) === norm(d.turno) && seTocan(l)));
         if (otraOp && !otro) av.push(`En la ${m} ya cargaron el turno ${d.turno} del ${fFecha(d.fecha)} en otra orden (OP ${otraOp.ordNumber} · ${otraOp.part}).`);
         return av;
       };

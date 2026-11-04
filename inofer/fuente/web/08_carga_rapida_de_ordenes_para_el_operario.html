@@ -80,6 +80,26 @@
         });
       }
       const durH = t => ((((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440) / 60;
+      // ---- varias piezas en un turno: lo ya cargado en la máquina ese día, por horario ----
+      const hhmm = m => { m = ((Math.round(m) % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+      const tramo = (i, f) => { const a = aMin(i); let b = aMin(f); if (b <= a) b += 1440; return [a, b]; };
+      function cargasMaq(maq, fecha, sinLog) {
+        const out = [];
+        productionOrders.forEach(o => { if (maqDeOrden(o) !== maq) return; (o.logs || []).forEach(l => { if (l.id === sinLog || l.date !== fecha || !l.startTime) return; const [a, b] = tramo(l.startTime, l.endTime); out.push({ o, l, a, b }); }); });
+        return out.sort((x, y) => x.a - y.a);
+      }
+      // lo cargado dentro del horario de un turno (para la barra y para saber desde qué hora sigue la próxima pieza)
+      function delTurno(maq, fecha, t) {
+        const [ta, tb] = tramo(t.ini, t.fin);
+        const L = cargasMaq(maq, fecha).filter(c => Math.min(c.b, tb) - Math.max(c.a, ta) > 0);
+        const fin = L.reduce((m, c) => Math.max(m, Math.min(c.b, tb)), ta);
+        return { L, ta, tb, fin, libre: tb - fin };
+      }
+      function barraTurno(D) {
+        const tot = D.tb - D.ta || 1, cols = ['#10b981', '#f59e0b', '#22d3ee', '#a78bfa'];
+        return `<div class="relative h-4 overflow-hidden rounded-full bg-slate-800">${D.L.map((c, i) => `<span class="absolute top-0 h-full" style="left:${Math.max(0, (c.a - D.ta) / tot * 100)}%;width:${Math.max(1, (Math.min(c.b, D.tb) - Math.max(c.a, D.ta)) / tot * 100)}%;background:${cols[i % 4]}" title="${esc(c.o.part)}"></span>`).join('')}</div>
+          <div class="mt-1 flex justify-between text-[11px] text-slate-400"><span>${hhmm(D.ta)}</span><span>${D.L.map((c, i) => `<b style="color:${cols[i % 4]}">${esc(c.o.part)}</b> ${hhmm(c.a)}–${hhmm(c.b)}`).join(' · ')}</span><span>${hhmm(D.tb)}</span></div>`;
+      }
       function sugerido(o, t) {
         const c = cat().find(x => norm(x.part) === norm(o.part));
         const uh = Number(o.unitsPerHour) || Number(c && c.unitsPerHour) || 0;
@@ -164,9 +184,12 @@
           const o = productionOrders.find(x => x.id === st.ordId);
           if (!o) { st.paso = 'orden'; return render(); }
           const t = turnos().find(x => x.id === st.turno) || turnos()[0];
+          const cont = st.continuar && !st.editLogId && st.continuar.turno === st.turno ? st.continuar : null;
+          const iniVis = cont ? cont.ini : t.ini;
           const a = avance(o);
           const falta = Math.max(0, (Number(o.qtyTarget) || 0) - a.ok);
-          const sug = Math.min(sugerido(o, t), falta || Infinity) || 0;
+          const sug = Math.min(sugerido(o, { ini: iniVis, fin: t.fin }), falta || Infinity) || 0;
+          const Dc = cont ? delTurno(st.maq, cont.fecha, t) : null;
           const ult = ultimoTurnoMaq(st.maq);
           const frec = paradasFrecuentes(st.maq);
           const opers = operariosDe(st.maq);
@@ -174,13 +197,14 @@
               <div><span class="text-base font-black text-amber-300">${esc(o.part)}</span> <span class="text-xs text-slate-400">· ${esc(st.maq)} · OP ${esc(o.ordNumber)}</span></div>
               <div class="text-xs text-slate-300">Van <b>${a.ok.toLocaleString('es-AR')}</b> · faltan <b>${falta.toLocaleString('es-AR')}</b></div>
             </div>
+            ${cont && Dc ? `<div class="mb-3 rounded-xl border border-emerald-700 bg-emerald-950/40 px-3 py-2.5"><div class="mb-1.5 text-xs font-black text-emerald-300">Otra pieza en el mismo turno · arranca ${esc(cont.ini)}</div>${barraTurno(Dc)}</div>` : ''}
             <form id="crTurnoForm" class="space-y-4">
               <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Turno</span>
                 <div class="grid ${['grid-cols-1', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-2 sm:grid-cols-4'][Math.min(4, turnos().length)]} gap-2">${turnos().map(x => `<button type="button" class="cr-turno rounded-xl border-2 px-2 py-3 text-center font-bold ${x.id === st.turno ? 'border-amber-400 bg-amber-500/15 text-white' : 'border-slate-700 bg-slate-950 text-slate-300'}" data-t="${x.id}"><span class="block text-xl">${x.ico}</span><span class="block text-sm">${x.nombre}</span><span class="block text-[10px] font-normal text-slate-400">${x.ini} a ${x.fin}</span></button>`).join('')}</div>
-                <details class="mt-1.5 text-xs text-slate-400"><summary class="cursor-pointer">Cambiar horario o fecha</summary>
+                <details class="mt-1.5 text-xs text-slate-400" ${cont ? 'open' : ''}><summary class="cursor-pointer">${cont ? 'Horario de esta pieza (sigue de la anterior)' : 'Cambiar horario o fecha'}</summary>
                   <div class="mt-2 grid grid-cols-3 gap-2">
-                    <input id="crFecha" type="date" value="${st.fecha || hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
-                    <input id="crIni" type="time" value="${t.ini}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crFecha" type="date" value="${(cont && cont.fecha) || st.fecha || hoy()}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
+                    <input id="crIni" type="time" value="${iniVis}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
                     <input id="crFin" type="time" value="${t.fin}" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-white">
                   </div></details>
               </div>
@@ -459,9 +483,17 @@
         const durTurno = (((aMin($('crFin').value) - aMin($('crIni').value)) + 1440) % 1440) || 1440;
         const min = paradas.reduce((a, p) => a + p.min, 0);
         if (min > durTurno && !confirm(`Las paradas suman ${fmtMin(min)} y el turno dura ${fmtMin(durTurno)}. ¿Guardar igual?`)) return;
+        // horarios que se pisan con otra pieza cargada en la misma máquina ese día (las horas se contarían dos veces)
+        if (!st.pisadaOk) {
+          const ini = $('crIni').value || t.ini, fin = $('crFin').value || t.fin, fecha = $('crFecha').value || hoy();
+          const [ya, yb] = tramo(ini, fin);
+          const pis = cargasMaq(st.maq, fecha, st.editLogId).map(c => Object.assign(c, { m: Math.min(c.b, yb) - Math.max(c.a, ya) })).filter(c => c.m > 0);
+          if (pis.length) { avisoPisada(pis, ya, yb); return; }
+        }
+        st.pisadaOk = false;
         // controles: valores fuera de lo normal piden confirmación antes de guardar
         try {
-          const avisos = (window.inoferControlTurno || (() => []))(o, { ok, scrap: Number($('crScrap').value) || 0, baja: Number($('crBaja').value) || 0, fecha: $('crFecha').value || hoy(), ini: $('crIni').value || t.ini, fin: $('crFin').value || t.fin, paradasMin: min, turno: t.nombre, editLogId: st.editLogId });
+          const avisos = (window.inoferControlTurno || (() => []))(o, { pisadaRevisada: true, ok, scrap: Number($('crScrap').value) || 0, baja: Number($('crBaja').value) || 0, fecha: $('crFecha').value || hoy(), ini: $('crIni').value || t.ini, fin: $('crFin').value || t.fin, paradasMin: min, turno: t.nombre, editLogId: st.editLogId });
           if (avisos.bloqueo) { showToast(avisos.bloqueo); return; }
           if (avisos.length && !confirm('Revisá antes de guardar:\n\n• ' + avisos.join('\n• ') + '\n\n¿Está bien así? (Aceptar = guardar igual)')) return;
         } catch (e) { }
@@ -481,8 +513,10 @@
           o.logs.push(Object.assign({ id: lid }, datos, { cargadoPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '', cargadoAt: new Date().toISOString() }));
           try { if (window.inoferCronoUsar) inoferCronoUsar(st.maq, datos.date, { ini: datos.startTime, fin: datos.endTime }, lid); } catch (e) { }
         }
-        st.editLogId = ''; st.fecha = '';
+        st.editLogId = ''; st.fecha = ''; st.continuar = null;
         pref.operario = operario; guardarPref();
+        const tG = turnos().find(x => x.nombre === datos.turno) || t;
+        const Dg = delTurno(st.maq, datos.date, tG);
         const a = avance(o);
         if (a.pct >= 100 && o.status !== 'Completada') { o.status = 'Completada'; o.autoCompletada = true; }
         else if (a.pct < 100 && o.status === 'Completada' && o.autoCompletada) { o.status = 'En Proceso'; o.autoCompletada = false; }
@@ -496,10 +530,38 @@
           <div class="text-xl font-black text-white">${editando ? '¡Turno corregido!' : '¡Turno guardado!'}</div>
           <div class="text-sm text-slate-300">${esc(o.part)} · ${ok.toLocaleString('es-AR')} piezas buenas · avance de la orden ${a.pct}%</div>
           ${a.pct >= 100 ? '<div class="text-sm font-bold text-emerald-300">La orden llegó a la cantidad pedida y quedó como Completada.</div>' : ''}
+          <div class="mx-auto max-w-md rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left"><div class="mb-1.5 flex justify-between text-xs font-bold text-slate-300"><span>Turno ${esc(tG.nombre)} en la ${esc(st.maq)}</span><span class="${Dg.libre > 0 ? 'text-amber-300' : 'text-emerald-300'}">${Dg.libre > 0 ? `quedan ${fmtMin(Dg.libre)} sin cargar` : 'turno completo ✓'}</span></div>${barraTurno(Dg)}</div>
+          ${!editando && Dg.libre >= 15 ? `<button type="button" id="crOtraPieza" data-f="${esc(datos.date)}" data-t="${esc(tG.id)}" data-i="${hhmm(Dg.fin)}" class="mx-auto block w-full max-w-md rounded-2xl bg-amber-500 px-5 py-4 text-lg font-black text-slate-950">➕ Hice otra pieza en este turno<span class="block text-xs font-bold text-amber-950/80">sigue desde las ${hhmm(Dg.fin)}</span></button>` : ''}
           <div class="flex flex-wrap justify-center gap-2 pt-2">
-            <button type="button" id="crOtroTurno" class="rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-slate-950">Cargar otro turno</button>
+            ${!editando && Dg.libre >= 15 ? '<button type="button" id="crTermine" class="rounded-xl border border-slate-600 px-5 py-3 text-sm font-bold text-slate-200">Listo, terminé el turno</button>' : ''}
+            <button type="button" id="crOtroTurno" class="rounded-xl ${!editando && Dg.libre >= 15 ? 'border border-slate-700 text-slate-200 font-bold' : 'bg-amber-500 text-slate-950 font-black'} px-5 py-3 text-sm">Cargar otro turno</button>
             <button type="button" id="crOtraOrden" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-bold text-slate-200">Otra orden</button>
           </div></div>`;
+      }
+
+      function avisoPisada(pis, ya, yb) {
+        const fin = pis.reduce((m, c) => Math.max(m, c.b), 0), total = pis.reduce((m, c) => m + c.m, 0);
+        const puedeCorrer = fin < yb - 5;
+        let w = $('crPisada'); if (w) w.remove();
+        w = document.createElement('div'); w.id = 'crPisada'; w.className = 'fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4';
+        const fila = (txt, a, b, col) => `<div class="flex justify-between text-sm"><b class="text-white">${esc(txt)}</b><span class="text-slate-300">${hhmm(a)} – ${hhmm(b)}</span></div>`;
+        w.innerHTML = `<div class="w-full max-w-sm overflow-hidden rounded-2xl border-2 border-orange-500 bg-slate-900 text-slate-100">
+          <div class="bg-orange-950 px-4 py-3"><div class="text-xs font-black text-orange-300">⚠ Los horarios se pisan</div><div class="text-lg font-black text-orange-50">${fmtMin(total)} quedaría${total > 60 ? 'n' : ''} contado${total > 60 ? 's' : ''} dos veces</div></div>
+          <div class="space-y-3 p-4">
+            ${pis.map(c => fila(c.o.part + ' (ya cargada)', c.a, c.b)).join('')}${fila('Esta pieza', ya, yb)}
+            <p class="text-xs text-slate-300">Si se guarda así, el OEE y la utilización de la ${esc(st.maq)} salen mal.</p>
+            ${puedeCorrer ? `<button type="button" data-p="correr" data-i="${hhmm(fin)}" class="w-full rounded-xl bg-emerald-500 px-4 py-3.5 text-base font-black text-emerald-950">Que esta pieza arranque a las ${hhmm(fin)}</button>` : ''}
+            <button type="button" data-p="mano" class="w-full rounded-xl border border-slate-600 px-4 py-3 text-sm font-bold text-slate-200">Corregir el horario a mano</button>
+            <button type="button" data-p="igual" class="w-full px-4 py-2 text-xs text-slate-400 underline">Guardar igual</button>
+          </div></div>`;
+        document.body.appendChild(w);
+        w.addEventListener('click', e => {
+          const b = e.target.closest('button[data-p]'); if (!b && e.target !== w) return;
+          w.remove(); if (!b) return;
+          if (b.dataset.p === 'correr') { $('crIni').value = b.dataset.i; totalParadas(); const ok = $('crOk'); if (ok && ok.dataset.auto === '1') { const o = productionOrders.find(x => x.id === st.ordId); const tt = turnos().find(x => x.id === st.turno) || turnos()[0]; if (o) { const a2 = avance(o); const f2 = Math.max(0, (Number(o.qtyTarget) || 0) - a2.ok); ok.value = Math.min(sugerido(o, { ini: b.dataset.i, fin: $('crFin').value || tt.fin }), f2 || Infinity) || ''; } } guardarTurno(); }
+          else if (b.dataset.p === 'mano') { const d = $('crIni') && $('crIni').closest('details'); if (d) d.open = true; $('crIni') && $('crIni').focus(); }
+          else if (b.dataset.p === 'igual') { st.pisadaOk = true; guardarTurno(); }
+        });
       }
 
       function infoPieza() {
@@ -536,9 +598,9 @@
           if (e.target.closest('#crTurnosCfg')) return;
           const g = s => e.target.closest(s);
           let el;
-          if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; render(); }
+          if ((el = g('.cr-miga')) && !el.disabled) { st.paso = el.dataset.paso; st.nueva = false; if (st.paso === 'maquina') st.continuar = null; render(); }
           else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
-          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
+          else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
           else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
           else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
@@ -578,7 +640,7 @@
             v.querySelectorAll('.cr-oper').forEach(b => { const on = b === el; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); });
           }
           else if ((el = g('.cr-turno'))) {
-            st.turno = el.dataset.t; const t = turnos().find(x => x.id === st.turno);
+            st.turno = el.dataset.t; st.continuar = null; const t = turnos().find(x => x.id === st.turno);
             const o2 = productionOrders.find(x => x.id === st.ordId); const okI = $('crOk');
             if (o2 && okI && okI.dataset.auto === '1') { const a2 = avance(o2); const f2 = Math.max(0, (Number(o2.qtyTarget) || 0) - a2.ok); okI.value = Math.min(sugerido(o2, t), f2 || Infinity) || ''; }
             v.querySelectorAll('.cr-turno').forEach(b => { const on = b.dataset.t === st.turno; b.classList.toggle('border-amber-400', on); b.classList.toggle('bg-amber-500/15', on); b.classList.toggle('text-white', on); b.classList.toggle('border-slate-700', !on); b.classList.toggle('bg-slate-950', !on); b.classList.toggle('text-slate-300', !on); });
@@ -595,7 +657,7 @@
           else if (g('#crAddParada')) { $('crParadasList').insertAdjacentHTML('beforeend', filaParada()); totalParadas(); }
           else if ((el = g('.cr-pdel'))) { el.closest('.cr-prow').remove(); if (!document.querySelector('#crParadasList .cr-prow')) { st.parada = false; const no = v.querySelector('.cr-parada[data-p="0"]'); if (no) no.click(); } totalParadas(); }
           else if ((el = g('.cr-padd'))) { const r = el.closest('.cr-prow'); const tot = minFila(r) + Number(el.dataset.m); r.querySelector('.cr-ph').value = Math.floor(tot / 60) || ''; r.querySelector('.cr-pm').value = tot % 60 || ''; totalParadas(); }
-          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; render(); }
+          else if (g('#crOtroTurno')) { st.paso = 'turno'; st.editLogId = ''; st.continuar = null; render(); }
           else if ((el = g('.cr-log-edit'))) { window.inoferEditarTurno(st.ordId, el.dataset.id); }
           else if (g('#crCancelEdit')) { st.editLogId = ''; st.parada = false; render(); }
           else if ((el = g('.cr-log-del'))) {
@@ -608,7 +670,9 @@
             saveProductionOrders(); try { renderProductionOrdersView(); } catch (e) { }
             showToast('Turno borrado'); render();
           }
-          else if (g('#crOtraOrden')) { st.paso = 'orden'; render(); }
+          else if (g('#crOtraOrden')) { st.paso = 'orden'; st.continuar = null; render(); }
+          else if ((el = g('#crOtraPieza'))) { st.continuar = { fecha: el.dataset.f, turno: el.dataset.t, ini: el.dataset.i }; st.fecha = el.dataset.f; st.paso = 'orden'; st.nueva = false; st.editLogId = ''; render(); }
+          else if (g('#crTermine')) { st.continuar = null; st.paso = 'orden'; render(); }
         });
         v.addEventListener('input', e => { if (e.target.id === 'crOk') e.target.dataset.auto = ''; if (e.target.id === 'crPieza') infoPieza(); if (e.target.closest && e.target.closest('#crParadasList, #crIni, #crFin')) totalParadas(); });
         v.addEventListener('change', e => { if (e.target.closest && e.target.closest('#crParadasList') || e.target.id === 'crIni' || e.target.id === 'crFin') totalParadas(); });
@@ -621,7 +685,7 @@
             if (typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(part)) { showToast('Las piezas -R no se inyectan'); return; }
             const o = crearOrden(part, qty, $('crNumero').value.trim());
             showToast(`Orden ${o.ordNumber} creada para la ${o.part}`);
-            st.ordId = o.id; st.nueva = false; st.paso = 'turno'; st.turno = turnoActual(); render();
+            st.ordId = o.id; st.nueva = false; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render();
           } else if (e.target.id === 'crTurnoForm') guardarTurno();
         });
 
@@ -653,7 +717,7 @@
       function abrir(o) {
         o = o || {};
         if (o.maq) { st.maq = o.maq; pref.maq = o.maq; guardarPref(); }
-        st.editLogId = ''; st.nueva = false; st.parada = false; st.fecha = o.fecha || '';
+        st.editLogId = ''; st.continuar = null; st.nueva = false; st.parada = false; st.fecha = o.fecha || '';
         if (o.turnoNombre) { const t = turnos().find(x => norm(x.nombre) === norm(o.turnoNombre)); if (t) st.turno = t.id; } else st.turno = turnoActual();
         if (o.ordId && productionOrders.some(x => x.id === o.ordId)) { st.ordId = o.ordId; selectedOrderId = o.ordId; st.paso = 'turno'; }
         else st.paso = st.maq ? 'orden' : 'maquina';

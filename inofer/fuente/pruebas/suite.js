@@ -225,7 +225,9 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         document.querySelector('#crParadasList .cr-prow:last-child .cr-padd[data-m="30"]').click();
         [...document.querySelectorAll('.cr-oper')].find(b => b.dataset.n === 'Pedro').click();
         const antes = o.logs.length;
-        document.getElementById('crTurnoForm').requestSubmit(); await w(600);
+        document.getElementById('crTurnoForm').requestSubmit(); await w(300);
+        // otra prueba ya cargó este turno en la 200V: aparece el aviso de horarios pisados → "Guardar igual"
+        const pis = document.querySelector('#crPisada [data-p="igual"]'); if (pis) { pis.click(); await w(400); }
         const l = o.logs[o.logs.length - 1];
         return { sugerido, n: o.logs.length - antes, ok: l.okPcs, op: l.operator, par: (l.paradas || []).map(p => p.codigo + ':' + p.min).join(','), chip: chip.dataset.cod };
       });
@@ -830,6 +832,43 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const ficha = await p.evaluate(() => document.body.innerText);
       await p.close();
       ok(/031126-200V/.test(ficha) && /Pedro/.test(ficha) && /8801/.test(ficha), 'ficha pública: ' + ficha.slice(0, 200));
+    });
+    await prueba('Carga rápida: varias piezas en el mismo turno (sigue el horario y avisa si se pisan)', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const $ = id => document.getElementById(id);
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const F = '2026-10-20';
+        const T = inoferCargaRapida.turnos()[0];
+        productionOrders.push({ id: 'ord-vp1', ordNumber: '9901', part: 'PZA-VP1', machine: nom('Z30'), status: 'En Proceso', qtyTarget: 5000, unitsPerHour: 100, logs: [] });
+        productionOrders.push({ id: 'ord-vp2', ordNumber: '9902', part: 'PZA-VP2', machine: nom('Z30'), status: 'En Proceso', qtyTarget: 5000, unitsPerHour: 100, logs: [] });
+        const mitad = (() => { const a = T.ini.split(':').map(Number); const m = a[0] * 60 + a[1] + 240; return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); })();
+        const cargar = async (ini, fin, ok) => { $('crIni').value = ini; $('crFin').value = fin; $('crOk').value = String(ok); $('crOperario').value = 'Prueba'; $('crTurnoForm').requestSubmit(); await esperar(250); };
+        inoferCargaRapida.abrir({ maq: 'Z30', ordId: 'ord-vp1', fecha: F, turnoNombre: T.nombre }); await esperar(300);
+        await cargar(T.ini, mitad, 400);
+        const btn = $('crOtraPieza'); if (!btn) return { sinBoton: true, html: ($('inoferCR') || {}).innerText };
+        const sigue = btn.dataset.i;
+        btn.click(); await esperar(150);
+        document.querySelector('.cr-ord[data-id="ord-vp2"]').click(); await esperar(200);
+        const iniPuesto = $('crIni').value, finPuesto = $('crFin').value, banner = /Otra pieza en el mismo turno/.test($('inoferCR').textContent);
+        const sinAvisoOtraOp = !(inoferControlTurno(productionOrders.find(o => o.id === 'ord-vp2'), { ok: 400, fecha: F, ini: iniPuesto, fin: finPuesto, turno: T.nombre, paradasMin: 0 }) || []).some(x => /otra orden/.test(x));
+        await cargar(iniPuesto, finPuesto, 400);
+        const guardada2 = (productionOrders.find(o => o.id === 'ord-vp2').logs || []).length === 1;
+        const completo = /turno completo/.test($('inoferCR').textContent) && !$('crOtraPieza');
+        // ahora una carga que se pisa
+        inoferCargaRapida.abrir({ maq: 'Z30', ordId: 'ord-vp1', fecha: F, turnoNombre: T.nombre }); await esperar(300);
+        await cargar(T.ini, mitad, 100);
+        const modal = !!$('crPisada'); const noGuardo = productionOrders.find(o => o.id === 'ord-vp1').logs.length === 1;
+        const correr = !!document.querySelector('#crPisada [data-p="correr"]');
+        document.querySelector('#crPisada [data-p="igual"]').click(); await esperar(300);
+        const guardoIgual = productionOrders.find(o => o.id === 'ord-vp1').logs.length === 2;
+        productionOrders = productionOrders.filter(o => !/^ord-vp/.test(o.id)); saveProductionOrders();
+        return { sigue, mitad, iniPuesto, finPuesto, finT: T.fin, banner, sinAvisoOtraOp, guardada2, completo, modal, noGuardo, correr, guardoIgual };
+      });
+      ok(!r.sinBoton, 'no aparece "Hice otra pieza": ' + JSON.stringify(r).slice(0, 300));
+      ok(r.sigue === r.mitad && r.iniPuesto === r.mitad && r.finPuesto === r.finT && r.banner, 'la segunda pieza no sigue el horario: ' + JSON.stringify(r));
+      ok(r.sinAvisoOtraOp && r.guardada2 && r.completo, 'guardar la segunda pieza: ' + JSON.stringify(r));
+      ok(r.modal && r.noGuardo && !r.correr && r.guardoIgual, 'aviso de horarios pisados: ' + JSON.stringify(r));
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
