@@ -206,17 +206,24 @@
         p.id = 'presPlayer';
         p.className = 'fixed inset-0 z-[99990] hidden flex-col bg-slate-950 text-white';
         p.style.zIndex = '99990';
-        p.innerHTML = `<div class="flex items-center justify-between border-b border-slate-800 px-8 py-4">
-            <div class="flex items-center gap-4"><span class="rounded-lg bg-cyan-500/20 px-3 py-1 text-xl font-black text-cyan-300">INOFER</span><span id="presTitulo" class="text-2xl font-bold text-slate-300"></span></div>
-            <div class="flex items-center gap-6"><span id="presPuntos" class="flex gap-2"></span><span id="presReloj" class="text-3xl font-black tabular-nums text-white"></span>
-              <button type="button" id="presSalir" class="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-400 hover:text-white" title="Salir (Esc)">✕</button></div>
-          </div>
-          <div id="presCuerpo" class="flex min-h-0 flex-1 flex-col px-10 py-8"></div>
-          <div class="h-1.5 bg-slate-900"><div id="presBarra" class="h-full bg-cyan-500" style="width:0%"></div></div>
+        // Sin barra de arriba (pedido del usuario): la diapositiva ocupa toda la pantalla. Se dibuja en un escenario fijo de
+        // 1600×900 (como la vista previa y el pendrive) y se escala a la pantalla: en la tele (viewport chico) entra todo.
+        p.innerHTML = `<span id="presTitulo" class="hidden"></span><span id="presPuntos" class="hidden"></span><span id="presReloj" class="hidden"></span>
+          <div id="presEscenario" class="flex flex-col" style="position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:center center">
+            <div id="presCuerpo" class="flex min-h-0 flex-1 flex-col px-12 py-10"></div></div>
+          <div class="absolute inset-x-0 bottom-0 h-1.5 bg-slate-900"><div id="presBarra" class="h-full bg-cyan-500" style="width:0%"></div></div>
+          <button type="button" id="presSalir" class="absolute right-3 top-3 rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-400 opacity-0 transition-opacity hover:text-white focus:opacity-100" title="Salir (Esc)">✕</button>
           <div id="presAyuda" class="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-slate-800/90 px-4 py-2 text-sm text-slate-300 transition-opacity">← → cambiar · espacio pausa · F pantalla completa · Esc salir</div>`;
         document.body.appendChild(p);
+        escalar(); window.addEventListener('resize', escalar);
+        let tSalir = null; p.addEventListener('mousemove', () => { const x = $('presSalir'); if (!x) return; x.style.opacity = '1'; clearTimeout(tSalir); tSalir = setTimeout(() => { x.style.opacity = ''; }, 2500); });
         $('presSalir').addEventListener('click', detener);
         p.addEventListener('click', e => { if (e.target.closest('#presSalir')) return; pantallaCompleta(); });
+      }
+      function escalar() {
+        const e = $('presEscenario'); if (!e) return;
+        const k = Math.min(window.innerWidth / 1600, window.innerHeight / 900) || 1;
+        e.style.transform = `translate(-50%, -50%) scale(${k})`;
       }
       function pantallaCompleta() { try { if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); } catch (e) { } }
       function mostrar(i) {
@@ -240,7 +247,7 @@
       function iniciarPres() {
         montarPlayer();
         const p = $('presPlayer'); p.classList.remove('hidden'); p.classList.add('flex');
-        play.on = true; play.pausa = false; mostrar(0);
+        escalar(); play.on = true; play.pausa = false; mostrar(0);
         clearInterval(play.reloj); play.reloj = setInterval(tic, 1000); tic();
         setTimeout(() => { const a = $('presAyuda'); if (a) a.style.opacity = '0'; }, 6000);
         pedirPantallaEncendida();
