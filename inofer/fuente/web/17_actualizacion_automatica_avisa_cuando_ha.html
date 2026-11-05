@@ -3,6 +3,11 @@
     (function () {
       var meta = document.querySelector('meta[name="inofer-version"]');
       var actual = meta ? meta.content : '0';
+      // recargar con la dirección cambiada (?v=versión): algunos navegadores de tele (TV Bro / WebView) con reload() muestran la copia vieja
+      function recargarNueva(v) {
+        try { var u = new URL(location.href); u.searchParams.set('v', v || String(Date.now())); location.replace(u.toString()); }
+        catch (e) { location.reload(); }
+      }
       try { var vt = document.getElementById('inoferVersionTag'); if (vt) vt.textContent = 'versión ' + actual; } catch (e) { }
       var esJava = !!window.__INOFER_JAVA;
       var esWeb = /^https?:$/.test(location.protocol) && !esJava;
@@ -14,7 +19,7 @@
         d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:99999;background:#0e7490;color:#fff;padding:10px 14px;border-radius:12px;font:600 13px Inter,Arial,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;gap:10px;align-items:center;max-width:calc(100vw - 32px)';
         d.innerHTML = '<span>✨ Hay una nueva versión de INOFER</span><button type="button" style="background:#fff;color:#0e7490;border:0;border-radius:8px;padding:6px 12px;font-weight:800;cursor:pointer">Actualizar ahora</button>';
         d.querySelector('button').onclick = function () {
-          var go = function () { location.reload(); };
+          var go = function () { recargarNueva(pendiente); };
           if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
             navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); go(); }).catch(go);
           } else go();
@@ -35,7 +40,7 @@
       function aplicar() {
         var b = document.getElementById('inoferUpdateBanner');
         if (b) b.querySelector('span').textContent = '✨ Actualizando INOFER…';
-        var go = function () { location.reload(); };
+        var go = function () { recargarNueva(pendiente); };
         if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
           navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); setTimeout(go, 600); }).catch(go);
         } else go();
