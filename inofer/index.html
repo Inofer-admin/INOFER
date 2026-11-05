@@ -16,7 +16,7 @@
       try { window.dispatchEvent(new Event('inofer-installed')); } catch (x) {}
     });
   </script>
-  <meta name="inofer-version" content="2026.11.04.07" />
+  <meta name="inofer-version" content="2026.11.05.01" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -11586,11 +11586,17 @@ ${lines}${trendNote}`;
         const ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0);
         if (!ds || !meta || !meta.data) return;
         ctx.save();
-        ctx.font = 'bold 11px Inter, Arial, sans-serif';
+        // en la tele (chart.$tv): letra grande y, si no entran todas, solo el último valor
+        const tv = chart.$tv, fs = tv ? tv.f : 11;
+        ctx.font = `bold ${fs}px Inter, Arial, sans-serif`;
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        const n = meta.data.length, ultimo = n - 1;
+        const todos = !tv || (chart.chartArea && (chart.chartArea.right - chart.chartArea.left) / Math.max(1, n) > fs * 4.2);
         meta.data.forEach((pt, i) => {
           const v = ds.data[i]; if (v === null || v === undefined) return;
+          if (!todos && i !== ultimo) return;
+          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = inoferPct(v), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
           const txt = inoferPct(v), w = ctx.measureText(txt).width;
           if (ds.type === 'bar') { ctx.textAlign = 'center'; ctx.fillText(txt, pt.x, pt.y - 9); return; }
           const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
@@ -11620,8 +11626,12 @@ ${lines}${trendNote}`;
       if (hi - lo < 2) { hi = Math.min(def.max, lo + 2); }
       if (canvas.__chart) { try { canvas.__chart.destroy(); } catch (e) { } }
       const grid = 'rgba(255,255,255,0.45)';
+      // presentación en la tele: letras según el alto del gráfico, meses sin girar, menos líneas
+      const tvMode = !!(opts && (opts.grande || opts.tv));
+      const altoCaja = tvMode ? ((canvas.parentElement && canvas.parentElement.clientHeight) || 400) : 0;
+      const F = tvMode ? Math.max(13, Math.min(30, Math.round(altoCaja / (opts.tv === 'chico' ? 13 : 20)))) : 11;
       const cumple = v => def.mayorEsMejor ? v >= meta : v <= meta;
-      const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
+      const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: tvMode ? 4 : 2.5, pointRadius: tvMode ? Math.round(F / 3) : 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
       if (esBarra) Object.assign(principal, { type: 'bar', borderWidth: 0, borderRadius: 3, maxBarThickness: 46, backgroundColor: tipo === 'semaforo' ? vals.map(v => cumple(v) ? '#15803d' : '#b91c1c') : '#0f172a' });
       if (tipo === 'area') Object.assign(principal, { fill: 'start', backgroundColor: 'rgba(15,23,42,0.35)' });
       if (tipo === 'escalon') Object.assign(principal, { stepped: 'middle' });
@@ -11640,19 +11650,20 @@ ${lines}${trendNote}`;
         },
         options: {
           responsive: true, maintainAspectRatio: false, animation: !(opts && opts.sinAnimacion),
-          layout: { padding: { right: 36, top: 6 } },
+          layout: { padding: { right: tvMode ? F * 2 : 36, top: tvMode ? F : 6 } },
           plugins: {
-            legend: { display: true, position: 'bottom', labels: { color: '#ffffff', boxWidth: 18, font: { weight: 'bold', size: 11 } } },
-            title: { display: true, text: def.titulo, color: '#ffffff', font: { size: 16, weight: 'bold' }, padding: { bottom: 10 } },
+            legend: { display: !tvMode || opts.tv !== 'chico', position: 'bottom', labels: { color: '#ffffff', boxWidth: tvMode ? F * 1.5 : 18, font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 } } },
+            title: { display: true, text: tvMode && opts.tv === 'chico' && isFinite(meta) ? def.titulo + ' · meta ' + inoferPct(meta) : def.titulo, color: '#ffffff', font: { size: tvMode ? Math.round(F * 1.35) : 16, weight: 'bold' }, padding: { bottom: tvMode ? F * 0.6 : 10 } },
             tooltip: { callbacks: { label: c => `${c.dataset.label}: ${inoferPct(c.parsed.y)}` } }
           },
           scales: {
-            x: { grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 } } },
-            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 }, callback: v => inoferPct(v) } }
+            x: { grid: { color: grid, display: !tvMode }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxRotation: 0, autoSkip: true, autoSkipPadding: F, callback(v) { const t = this.getLabelForValue(v); return String(t).split(/[-\s]/)[0]; } } : {}) } },
+            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxTicksLimit: opts.tv === 'chico' ? 4 : 6 } : {}), callback: v => inoferPct(v) } }
           }
         },
         plugins: [...(opts && opts.sinEtiquetas ? [] : [inoferKpiEtiquetas]), { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
       });
+      if (tvMode) { chart.$tv = { f: F }; chart.update('none'); }
       canvas.__chart = chart;
       return chart;
     }
@@ -15536,6 +15547,7 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const d = new Date();
         if (periodo === 'hoy') return hoyIso();
         if (periodo === 'mes') return hoyIso().slice(0, 8) + '01';
+        if (periodo === '90d') { const d2 = new Date(); d2.setDate(d2.getDate() - 90); return d2.getFullYear() + '-' + String(d2.getMonth() + 1).padStart(2, '0') + '-' + String(d2.getDate()).padStart(2, '0'); }
         d.setDate(d.getDate() - (periodo === '30d' ? 29 : 6));
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       }
@@ -15576,9 +15588,14 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
         const o = d.opciones || {};
         const tit = (t, sub) => `<div class="mb-6"><div class="text-5xl font-black text-white">${t}</div>${sub ? `<div class="mt-1 text-2xl text-slate-400">${sub}</div>` : ''}</div>`;
         if (d.tipo === 'tablero' || d.tipo === 'paradas' || d.tipo === 'maquinas') {
-          const regs = registros(o.periodo, o.maquina);
-          const per = PERIODOS[o.periodo || '7d'] + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
-          if (!regs.length) { cont.innerHTML = tit(TIPOS[d.tipo].nombre.replace(/^\S+\s/, ''), per) + '<div class="text-3xl text-slate-400">Todavía no hay horas cargadas en este período.</div>'; return; }
+          // si en el período elegido todavía no hay nada (ej. "Hoy" a primera hora), se amplía solo y se avisa
+          let perUsado = o.periodo || '7d', regs = registros(perUsado, o.maquina), ampliado = false;
+          for (const alt of ['7d', '30d', '90d']) { if (regs.length) break; if (alt === perUsado) continue; const r2 = registros(alt, o.maquina); if (r2.length) { regs = r2; ampliado = PERIODOS[perUsado]; perUsado = alt; } }
+          const per = (PERIODOS[perUsado] || 'Últimos 90 días') + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas') + (ampliado ? ` <span class="text-amber-300">· ${esc(ampliado)} todavía no tiene turnos cargados</span>` : '');
+          if (!regs.length) {
+            const sinPermiso = typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol !== 'admin' && inoferSession.permisos && inoferSession.permisos.partes === 'none' && inoferSession.permisos.ordenes === 'none';
+            cont.innerHTML = tit(TIPOS[d.tipo].nombre.replace(/^\S+\s/, ''), per) + `<div class="text-3xl text-slate-400">${sinPermiso ? 'Este usuario no tiene permiso para ver partes ni órdenes: en Usuarios y permisos tocá <b>📺 Pantalla</b> y guardá.' : 'Todavía no hay turnos cargados en los últimos 90 días.'}</div>`; return;
+          }
           const agg = computeAggregates(regs);
           if (d.tipo === 'tablero') {
             cont.innerHTML = tit('Utilización de máquinas', per) + `<div class="grid flex-1 grid-cols-1 items-center gap-10 lg:grid-cols-2">
@@ -15597,11 +15614,14 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
           return;
         }
         if (d.tipo === 'oee') {
-          const r = window.inoferOEE ? inoferOEE(registros(o.periodo, 'ALL')) : null;
+          let perO = o.periodo || '7d', ampO = '';
+          let r = window.inoferOEE ? inoferOEE(registros(perO, 'ALL')) : null;
+          for (const alt of ['7d', '30d', '90d']) { if (!window.inoferOEE || (r && r.horas)) break; if (alt === perO) continue; const r2 = inoferOEE(registros(alt, 'ALL')); if (r2 && r2.horas) { r = r2; ampO = PERIODOS[perO]; perO = alt; } }
+          const perTxt = (PERIODOS[perO] || 'Últimos 90 días') + (ampO ? ` <span class="text-amber-300">· ${esc(ampO)} todavía no tiene turnos cargados</span>` : '');
           const p = v => v == null ? '—' : (Math.round(v * 1000) / 10).toLocaleString('es-AR') + '%';
           const col = v => v == null ? 'text-slate-400' : (v >= 0.85 ? 'text-emerald-400' : (v >= 0.6 ? 'text-amber-300' : 'text-rose-400'));
-          if (!r || !r.horas) { cont.innerHTML = tit('OEE', PERIODOS[o.periodo || '7d']) + '<div class="text-3xl text-slate-400">Todavía no hay turnos de órdenes en este período.</div>'; return; }
-          cont.innerHTML = tit('OEE · eficiencia total de los equipos', PERIODOS[o.periodo || '7d'] + ' · meta clase mundial 85%') + `<div class="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
+          if (!r || !r.horas) { cont.innerHTML = tit('OEE', perTxt) + '<div class="text-3xl text-slate-400">Todavía no hay turnos de órdenes cargados en los últimos 90 días.</div>'; return; }
+          cont.innerHTML = tit('OEE · eficiencia total de los equipos', perTxt + ' · meta clase mundial 85%') + `<div class="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
             <div class="flex flex-col items-center justify-center rounded-3xl border-2 border-slate-700 p-6"><div class="text-3xl font-bold text-slate-300">OEE</div><div class="text-9xl font-black ${col(r.OEE)}">${p(r.OEE)}</div>
               <div class="mt-4 grid w-full grid-cols-3 gap-4 text-center">${[['Disponibilidad', r.D], ['Rendimiento', r.R], ['Calidad', r.C]].map(([t, v]) => `<div><div class="text-xl text-slate-400">${t}</div><div class="text-4xl font-black ${col(v)}">${p(v)}</div></div>`).join('')}</div></div>
             <div class="space-y-5">${barras(Object.keys(r.maquinas).sort().map(m => ({ n: m, v: (r.maquinas[m].OEE || 0) * 100, c: r.maquinas[m].OEE >= 0.85 ? '#34d399' : (r.maquinas[m].OEE >= 0.6 ? '#fbbf24' : '#fb7185'), t: p(r.maquinas[m].OEE) })))}</div></div>`;
@@ -21021,8 +21041,8 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
         },
         kpis4(d, cont, h) {
           const defs = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
-          cont.innerHTML = h.tit('Indicadores de planta', 'Últimos 12 meses de cada uno') + `<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-4">${defs.map(k => `<div class="relative min-h-0 rounded-2xl p-2" style="background:#5b9bd5"><canvas data-kpi="${esc(k.key)}"></canvas></div>`).join('')}</div>`;
-          cont.querySelectorAll('canvas[data-kpi]').forEach(cv => { try { const dd = inoferKpiData(cv.dataset.kpi); if (dd.datos.length && typeof inoferKpiDibujar === 'function') { const g = inoferKpiDibujar(cv, cv.dataset.kpi, { datos: dd.datos.slice(-12) }); if (g) h.grafico(g); } } catch (e) { } });
+          cont.innerHTML = h.tit('Indicadores de planta', 'Últimos 12 meses de cada uno') + `<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-5">${defs.map(k => `<div class="relative min-h-0 rounded-2xl p-2" style="background:#5b9bd5"><canvas data-kpi="${esc(k.key)}"></canvas></div>`).join('')}</div>`;
+          cont.querySelectorAll('canvas[data-kpi]').forEach(cv => { try { const dd = inoferKpiData(cv.dataset.kpi); if (dd.datos.length && typeof inoferKpiDibujar === 'function') { const g = inoferKpiDibujar(cv, cv.dataset.kpi, { datos: dd.datos.slice(-12), tv: 'chico' }); if (g) h.grafico(g); } } catch (e) { } });
         },
         mantenimiento(d, cont, h) {
           const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || {};

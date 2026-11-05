@@ -56,6 +56,7 @@
         const d = new Date();
         if (periodo === 'hoy') return hoyIso();
         if (periodo === 'mes') return hoyIso().slice(0, 8) + '01';
+        if (periodo === '90d') { const d2 = new Date(); d2.setDate(d2.getDate() - 90); return d2.getFullYear() + '-' + String(d2.getMonth() + 1).padStart(2, '0') + '-' + String(d2.getDate()).padStart(2, '0'); }
         d.setDate(d.getDate() - (periodo === '30d' ? 29 : 6));
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       }
@@ -96,9 +97,14 @@
         const o = d.opciones || {};
         const tit = (t, sub) => `<div class="mb-6"><div class="text-5xl font-black text-white">${t}</div>${sub ? `<div class="mt-1 text-2xl text-slate-400">${sub}</div>` : ''}</div>`;
         if (d.tipo === 'tablero' || d.tipo === 'paradas' || d.tipo === 'maquinas') {
-          const regs = registros(o.periodo, o.maquina);
-          const per = PERIODOS[o.periodo || '7d'] + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
-          if (!regs.length) { cont.innerHTML = tit(TIPOS[d.tipo].nombre.replace(/^\S+\s/, ''), per) + '<div class="text-3xl text-slate-400">Todavía no hay horas cargadas en este período.</div>'; return; }
+          // si en el período elegido todavía no hay nada (ej. "Hoy" a primera hora), se amplía solo y se avisa
+          let perUsado = o.periodo || '7d', regs = registros(perUsado, o.maquina), ampliado = false;
+          for (const alt of ['7d', '30d', '90d']) { if (regs.length) break; if (alt === perUsado) continue; const r2 = registros(alt, o.maquina); if (r2.length) { regs = r2; ampliado = PERIODOS[perUsado]; perUsado = alt; } }
+          const per = (PERIODOS[perUsado] || 'Últimos 90 días') + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas') + (ampliado ? ` <span class="text-amber-300">· ${esc(ampliado)} todavía no tiene turnos cargados</span>` : '');
+          if (!regs.length) {
+            const sinPermiso = typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol !== 'admin' && inoferSession.permisos && inoferSession.permisos.partes === 'none' && inoferSession.permisos.ordenes === 'none';
+            cont.innerHTML = tit(TIPOS[d.tipo].nombre.replace(/^\S+\s/, ''), per) + `<div class="text-3xl text-slate-400">${sinPermiso ? 'Este usuario no tiene permiso para ver partes ni órdenes: en Usuarios y permisos tocá <b>📺 Pantalla</b> y guardá.' : 'Todavía no hay turnos cargados en los últimos 90 días.'}</div>`; return;
+          }
           const agg = computeAggregates(regs);
           if (d.tipo === 'tablero') {
             cont.innerHTML = tit('Utilización de máquinas', per) + `<div class="grid flex-1 grid-cols-1 items-center gap-10 lg:grid-cols-2">
@@ -117,11 +123,14 @@
           return;
         }
         if (d.tipo === 'oee') {
-          const r = window.inoferOEE ? inoferOEE(registros(o.periodo, 'ALL')) : null;
+          let perO = o.periodo || '7d', ampO = '';
+          let r = window.inoferOEE ? inoferOEE(registros(perO, 'ALL')) : null;
+          for (const alt of ['7d', '30d', '90d']) { if (!window.inoferOEE || (r && r.horas)) break; if (alt === perO) continue; const r2 = inoferOEE(registros(alt, 'ALL')); if (r2 && r2.horas) { r = r2; ampO = PERIODOS[perO]; perO = alt; } }
+          const perTxt = (PERIODOS[perO] || 'Últimos 90 días') + (ampO ? ` <span class="text-amber-300">· ${esc(ampO)} todavía no tiene turnos cargados</span>` : '');
           const p = v => v == null ? '—' : (Math.round(v * 1000) / 10).toLocaleString('es-AR') + '%';
           const col = v => v == null ? 'text-slate-400' : (v >= 0.85 ? 'text-emerald-400' : (v >= 0.6 ? 'text-amber-300' : 'text-rose-400'));
-          if (!r || !r.horas) { cont.innerHTML = tit('OEE', PERIODOS[o.periodo || '7d']) + '<div class="text-3xl text-slate-400">Todavía no hay turnos de órdenes en este período.</div>'; return; }
-          cont.innerHTML = tit('OEE · eficiencia total de los equipos', PERIODOS[o.periodo || '7d'] + ' · meta clase mundial 85%') + `<div class="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
+          if (!r || !r.horas) { cont.innerHTML = tit('OEE', perTxt) + '<div class="text-3xl text-slate-400">Todavía no hay turnos de órdenes cargados en los últimos 90 días.</div>'; return; }
+          cont.innerHTML = tit('OEE · eficiencia total de los equipos', perTxt + ' · meta clase mundial 85%') + `<div class="grid flex-1 grid-cols-1 gap-8 lg:grid-cols-2">
             <div class="flex flex-col items-center justify-center rounded-3xl border-2 border-slate-700 p-6"><div class="text-3xl font-bold text-slate-300">OEE</div><div class="text-9xl font-black ${col(r.OEE)}">${p(r.OEE)}</div>
               <div class="mt-4 grid w-full grid-cols-3 gap-4 text-center">${[['Disponibilidad', r.D], ['Rendimiento', r.R], ['Calidad', r.C]].map(([t, v]) => `<div><div class="text-xl text-slate-400">${t}</div><div class="text-4xl font-black ${col(v)}">${p(v)}</div></div>`).join('')}</div></div>
             <div class="space-y-5">${barras(Object.keys(r.maquinas).sort().map(m => ({ n: m, v: (r.maquinas[m].OEE || 0) * 100, c: r.maquinas[m].OEE >= 0.85 ? '#34d399' : (r.maquinas[m].OEE >= 0.6 ? '#fbbf24' : '#fb7185'), t: p(r.maquinas[m].OEE) })))}</div></div>`;

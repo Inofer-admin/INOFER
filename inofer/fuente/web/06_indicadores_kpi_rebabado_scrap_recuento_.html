@@ -80,11 +80,17 @@
         const ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0);
         if (!ds || !meta || !meta.data) return;
         ctx.save();
-        ctx.font = 'bold 11px Inter, Arial, sans-serif';
+        // en la tele (chart.$tv): letra grande y, si no entran todas, solo el último valor
+        const tv = chart.$tv, fs = tv ? tv.f : 11;
+        ctx.font = `bold ${fs}px Inter, Arial, sans-serif`;
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        const n = meta.data.length, ultimo = n - 1;
+        const todos = !tv || (chart.chartArea && (chart.chartArea.right - chart.chartArea.left) / Math.max(1, n) > fs * 4.2);
         meta.data.forEach((pt, i) => {
           const v = ds.data[i]; if (v === null || v === undefined) return;
+          if (!todos && i !== ultimo) return;
+          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = inoferPct(v), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
           const txt = inoferPct(v), w = ctx.measureText(txt).width;
           if (ds.type === 'bar') { ctx.textAlign = 'center'; ctx.fillText(txt, pt.x, pt.y - 9); return; }
           const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
@@ -114,8 +120,12 @@
       if (hi - lo < 2) { hi = Math.min(def.max, lo + 2); }
       if (canvas.__chart) { try { canvas.__chart.destroy(); } catch (e) { } }
       const grid = 'rgba(255,255,255,0.45)';
+      // presentación en la tele: letras según el alto del gráfico, meses sin girar, menos líneas
+      const tvMode = !!(opts && (opts.grande || opts.tv));
+      const altoCaja = tvMode ? ((canvas.parentElement && canvas.parentElement.clientHeight) || 400) : 0;
+      const F = tvMode ? Math.max(13, Math.min(30, Math.round(altoCaja / (opts.tv === 'chico' ? 13 : 20)))) : 11;
       const cumple = v => def.mayorEsMejor ? v >= meta : v <= meta;
-      const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
+      const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: tvMode ? 4 : 2.5, pointRadius: tvMode ? Math.round(F / 3) : 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
       if (esBarra) Object.assign(principal, { type: 'bar', borderWidth: 0, borderRadius: 3, maxBarThickness: 46, backgroundColor: tipo === 'semaforo' ? vals.map(v => cumple(v) ? '#15803d' : '#b91c1c') : '#0f172a' });
       if (tipo === 'area') Object.assign(principal, { fill: 'start', backgroundColor: 'rgba(15,23,42,0.35)' });
       if (tipo === 'escalon') Object.assign(principal, { stepped: 'middle' });
@@ -134,19 +144,20 @@
         },
         options: {
           responsive: true, maintainAspectRatio: false, animation: !(opts && opts.sinAnimacion),
-          layout: { padding: { right: 36, top: 6 } },
+          layout: { padding: { right: tvMode ? F * 2 : 36, top: tvMode ? F : 6 } },
           plugins: {
-            legend: { display: true, position: 'bottom', labels: { color: '#ffffff', boxWidth: 18, font: { weight: 'bold', size: 11 } } },
-            title: { display: true, text: def.titulo, color: '#ffffff', font: { size: 16, weight: 'bold' }, padding: { bottom: 10 } },
+            legend: { display: !tvMode || opts.tv !== 'chico', position: 'bottom', labels: { color: '#ffffff', boxWidth: tvMode ? F * 1.5 : 18, font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 } } },
+            title: { display: true, text: tvMode && opts.tv === 'chico' && isFinite(meta) ? def.titulo + ' · meta ' + inoferPct(meta) : def.titulo, color: '#ffffff', font: { size: tvMode ? Math.round(F * 1.35) : 16, weight: 'bold' }, padding: { bottom: tvMode ? F * 0.6 : 10 } },
             tooltip: { callbacks: { label: c => `${c.dataset.label}: ${inoferPct(c.parsed.y)}` } }
           },
           scales: {
-            x: { grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 } } },
-            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: 11 }, callback: v => inoferPct(v) } }
+            x: { grid: { color: grid, display: !tvMode }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxRotation: 0, autoSkip: true, autoSkipPadding: F, callback(v) { const t = this.getLabelForValue(v); return String(t).split(/[-\s]/)[0]; } } : {}) } },
+            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxTicksLimit: opts.tv === 'chico' ? 4 : 6 } : {}), callback: v => inoferPct(v) } }
           }
         },
         plugins: [...(opts && opts.sinEtiquetas ? [] : [inoferKpiEtiquetas]), { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
       });
+      if (tvMode) { chart.$tv = { f: F }; chart.update('none'); }
       canvas.__chart = chart;
       return chart;
     }

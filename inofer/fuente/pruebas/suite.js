@@ -1043,6 +1043,32 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.c1.nuevos === 6 && r.c2.nuevos === 0 && r.c2.repetidos === 6 && r.pl.length === 2 && r.pl.every(p => p[1] === 120) && r.pl.some(p => p[0] === '200V' && p[2] === '2026-06-13'), 'carga: ' + JSON.stringify(r));
       ok(r.clark && r.filtro, 'otros equipos: ' + JSON.stringify(r));
     });
+    await prueba('Presentación en la tele: gráficos de indicadores con letra grande', async () => {
+      const r = await A.evaluate(async () => {
+        const st = document.createElement('div'); st.style.cssText = 'position:fixed;left:0;top:0;width:960px;height:540px;display:flex;flex-direction:column;z-index:-1';
+        document.body.appendChild(st);
+        inoferPresInterna.render({ tipo: 'kpis4', opciones: {} }, st);
+        await new Promise(res => setTimeout(res, 300));
+        const cs = Array.from(st.querySelectorAll('canvas')).map(c => c.__chart).filter(Boolean);
+        const out = cs.map(c => ({ f: c.$tv && c.$tv.f, rot: c.options.scales.x.ticks.maxRotation }));
+        cs.forEach(c => c.destroy());
+        // velocímetro con "Hoy" sin turnos todavía → se amplía solo a los últimos 7 días
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const d0 = new Date(); d0.setDate(d0.getDate() - 2); const f = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
+        const hayHoy = inoferRegistrosDeOrdenes().some(x => x.date === new Date().toISOString().slice(0, 10));
+        productionOrders.push({ id: 'ord-tv', ordNumber: '9941', part: 'PZA-TV', machine: nom('200V'), status: 'En Proceso', qtyTarget: 1000, unitsPerHour: 100, logs: [{ id: 'ltv', date: f, startTime: '06:00', endTime: '14:00', okPcs: 700, scrapPcs: 0, paradas: [], stopMinutes: 0 }] });
+        inoferPresInterna.render({ tipo: 'tablero', opciones: { periodo: 'hoy', maquina: 'ALL' } }, st);
+        const txt = st.textContent;
+        inoferPresInterna.render({ tipo: 'oee', opciones: { periodo: 'hoy' } }, st);
+        const txt2 = st.textContent;
+        productionOrders = productionOrders.filter(o => o.id !== 'ord-tv'); st.remove();
+        out.push({ gauge: /Utilización/.test(txt) && (hayHoy || /todavía no tiene turnos/.test(txt)), oee: /OEE · eficiencia/.test(txt2) });
+        return out;
+      });
+      const ult = r.pop();
+      ok(r.length && r.every(x => x.f >= 13 && x.rot === 0), 'tv: ' + JSON.stringify(r));
+      ok(ult.gauge && ult.oee, 'velocímetro sin turnos hoy: ' + JSON.stringify(ult));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();

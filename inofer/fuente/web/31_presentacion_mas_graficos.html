@@ -125,8 +125,8 @@
         },
         kpis4(d, cont, h) {
           const defs = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
-          cont.innerHTML = h.tit('Indicadores de planta', 'Últimos 12 meses de cada uno') + `<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-4">${defs.map(k => `<div class="relative min-h-0 rounded-2xl p-2" style="background:#5b9bd5"><canvas data-kpi="${esc(k.key)}"></canvas></div>`).join('')}</div>`;
-          cont.querySelectorAll('canvas[data-kpi]').forEach(cv => { try { const dd = inoferKpiData(cv.dataset.kpi); if (dd.datos.length && typeof inoferKpiDibujar === 'function') { const g = inoferKpiDibujar(cv, cv.dataset.kpi, { datos: dd.datos.slice(-12) }); if (g) h.grafico(g); } } catch (e) { } });
+          cont.innerHTML = h.tit('Indicadores de planta', 'Últimos 12 meses de cada uno') + `<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-5">${defs.map(k => `<div class="relative min-h-0 rounded-2xl p-2" style="background:#5b9bd5"><canvas data-kpi="${esc(k.key)}"></canvas></div>`).join('')}</div>`;
+          cont.querySelectorAll('canvas[data-kpi]').forEach(cv => { try { const dd = inoferKpiData(cv.dataset.kpi); if (dd.datos.length && typeof inoferKpiDibujar === 'function') { const g = inoferKpiDibujar(cv, cv.dataset.kpi, { datos: dd.datos.slice(-12), tv: 'chico' }); if (g) h.grafico(g); } } catch (e) { } });
         },
         mantenimiento(d, cont, h) {
           const M = (window.inoferModLocal && inoferModLocal('mantenimiento')) || {};
