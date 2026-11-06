@@ -948,6 +948,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         return { cod, cat: (window.INOFER_CODIGO_CATEGORIA || {})[32], opc: !!document.querySelector('.cr-pcod') || true };
       });
       ok(r.cod === '32-Actualizar fechador' && r.cat === 'puesta_punto', 'código 32: ' + JSON.stringify(r));
+      const r2 = await A.evaluate(() => ['33-Cambio de cuchara', '34-Carga de aceites / desmoldantes', '35-Pulido de noyos'].map(c => INOFER_28_CODES.includes(c) && window.INOFER_CODIGO_CATEGORIA[parseInt(c)] === 'mant_preventivo'));
+      ok(r2.every(Boolean), 'códigos 33-35: ' + JSON.stringify(r2));
       const V = await equipo(b); await ingresar(V, 'vesol', '3333'); await V.waitForTimeout(1200);
       const v = await V.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); const e = await inoferCloudPost({ action: 'msgEstado', token: inoferAuthToken() }); const u = await inoferCloudPost({ action: 'solActualizar', token: inoferAuthToken(), id: (d.solicitudes[0] || {}).id, estado: 'resuelta' }); return { ve: (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'), flag: e.solVerTodas, responde: u.status }; });
       await V.context().close();
