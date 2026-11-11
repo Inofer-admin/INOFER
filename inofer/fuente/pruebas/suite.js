@@ -205,8 +205,40 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       await run(limpiar);
       ok(prox && prox > new Date() && proxBA === String(hora).padStart(2, '0') + ':00' && pr.INFORME_AT_UID, 'no programó el envío exacto: ' + JSON.stringify({ prox: pr.INFORME_PROXIMO, proxBA }));
       ok(/Informe enviado/.test(r1) && /ya se envió/.test(r2), 'a la hora elegida no mandó (o mandó dos veces): ' + JSON.stringify({ r1, r2 }));
-      ok(/No es el día y la hora/.test(r3), 'mandó fuera de horario: ' + r3);
+      ok(/no es el día y la hora/i.test(r3), 'mandó fuera de horario: ' + r3);
       ok(info.proximo && info.zona && info.chequeo && info.chequeo.local, 'respaldoInfo sin el horario: ' + JSON.stringify(info).slice(0, 300));
+    });
+    await prueba('Tres informes por mail: producción, mantenimiento y órdenes, cada uno con sus mails', async () => {
+      const pedir = ruta => new Promise((res, rej) => http.get(`http://127.0.0.1:${PUERTO_NUBE}` + ruta, r => { let b = ''; r.on('data', c => b += c); r.on('end', () => res(b)); }).on('error', rej));
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const t = inoferAuthToken();
+        const inf = async tipo => inoferCloudPost({ action: 'informeSemanal', token: t, semana: '2026-01-05', tipo });
+        const p = await inf('prod'), m = await inf('mant'), o = await inf('ord');
+        // pantalla: tarjetas de los tres y cambio de informe
+        inoferInformeSemanal('2026-01-05'); await w(600);
+        document.querySelector('#infMailCfg').click(); await w(300);
+        const hay = ['#infEmails', '#infEmails_mant', '#infEmails_ord', '#infIgual_mant'].every(s => !!document.querySelector(s));
+        document.querySelector('#infEmails_mant').value = 'mant@prueba.com'; document.querySelector('#infIgual_mant').checked = false;
+        document.querySelector('#infDia_mant').value = '2'; document.querySelector('#infHora_mant').value = '8';
+        document.querySelector('#infEmails_ord').value = 'ord@prueba.com';
+        document.querySelector('#infMailSave').click(); await w(2500);
+        const c = inoferModLocal('informes') || {};
+        document.querySelector('[data-inftipo="mant"]').click(); await w(1200);
+        const fr = document.querySelector('#infFrame'); const txtFrame = fr && fr.srcdoc || '';
+        const env = await inoferCloudPost({ action: 'informeEnviarAhora', token: t, semana: '2026-01-05', tipo: 'mant' });
+        const mm = document.getElementById('inoferPlantaModal'); if (mm) mm.remove();
+        return { p: [p.status, /Informe semanal de producción/.test(p.html), /Material consumido/.test(p.html), /Órdenes completadas/.test(p.html)], m: [m.status, /Mantenimiento/.test(m.html), /Trabajos de la semana/.test(m.html), /Piezas buenas/i.test(m.html)], o: [o.status, /Órdenes de producción/.test(o.html), /Abiertas/.test(o.html)],
+          hay, cfg: c.tipos, frame: /Trabajos de la semana/.test(txtFrame), env: env.mensaje || env.error };
+      });
+      const props = JSON.parse(await pedir('/__state')).props;
+      ok(r.p[0] === 'ok' && r.p[1] && r.p[2] && !r.p[3], 'producción: ' + JSON.stringify(r.p));
+      ok(r.m[0] === 'ok' && r.m[1] && r.m[2] && !r.m[3], 'mantenimiento: ' + JSON.stringify(r.m));
+      ok(r.o[0] === 'ok' && r.o[1] && r.o[2], 'órdenes: ' + JSON.stringify(r.o));
+      ok(r.hay && r.cfg && r.cfg.mant && r.cfg.mant.emails.join() === 'mant@prueba.com' && r.cfg.mant.dia === 2 && r.cfg.mant.hora === 8 && r.cfg.ord.emails.join() === 'ord@prueba.com', 'config por informe: ' + JSON.stringify(r.cfg));
+      ok(r.frame && /Informe de mantenimiento enviado a mant@prueba\.com/.test(r.env), 'ver y enviar el de mantenimiento: ' + JSON.stringify({ frame: r.frame, env: r.env }));
+      ok(props.INFORME_PROXIMO_MANT && props.INFORME_PROXIMO_ORD, 'no programó mantenimiento/órdenes: ' + JSON.stringify(Object.keys(props).filter(k => /INFORME_/.test(k))));
+      await A.evaluate(async () => { const c = inoferModLocal('informes'); delete c.tipos; inoferModGuardar('informes'); await new Promise(r => setTimeout(r, 1500)); });
     });
     await prueba('Órdenes desde el Gantt: propone, aprueba, ajusta y borra', async () => {
       const r = await A.evaluate(async () => {

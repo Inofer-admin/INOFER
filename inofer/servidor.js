@@ -1348,12 +1348,15 @@ function datosSemana_(mods, registros, lunes) {
       R.ok += ok; R.scrap += sc; R.baja += bj; R.disp += h; R.turnos++;
       if (!R.maq[m]) R.maq[m] = { ok: 0, scrap: 0, disp: 0, paradas: 0, correctivo: 0 };
       R.maq[m].ok += ok; R.maq[m].scrap += sc; R.maq[m].disp += h;
-      const pz = R.piezas[o.part] = R.piezas[o.part] || { ok: 0, scrap: 0, maq: m };
-      pz.ok += ok; pz.scrap += sc;
+      const pz = R.piezas[o.part] = R.piezas[o.part] || { ok: 0, scrap: 0, baja: 0, kg: 0, mat: '', maq: m };
+      pz.ok += ok; pz.scrap += sc; pz.baja += bj;
+      const uph = num_(o.unitsPerHour || c.unitsPerHour);
+      if (uph) R.maq[m].std = (R.maq[m].std || 0) + (ok + sc) / uph;
       const precio = num_(c.precio || o.precio);
       if (precio) R.facturado += ok * precio; else if (ok) R.sinPrecio += ok;
       const kgp = num_(c.weightWithSprueKg || o.weightWithSprueKg), mat = String(c.material || o.material || '').toUpperCase();
       if (kgp && mat) R.kg[mat] = (R.kg[mat] || 0) + (ok + sc + bj) * kgp;
+      if (kgp) { pz.kg += (ok + sc + bj) * kgp; pz.kgp = kgp; } if (mat) pz.mat = mat;
       const ps = (l.paradas && l.paradas.length) ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: l.stopMinutes }] : []);
       ps.forEach(function (p) {
         const cod = parseInt(String(p.codigo || ''), 10), hh = num_(p.min) / 60, cat = COD_CAT_SRV[cod] || 'otros';
@@ -1392,76 +1395,243 @@ function datosSemana_(mods, registros, lunes) {
   // órdenes
   R.opCompletadas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status === 'Completada' && (o.logs || []).some(function (l) { return enSem(l.date); }); }).length;
   R.opAbiertas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status !== 'Completada'; }).length;
+  const hecho = function (o) { return (o.logs || []).reduce(function (s, l) { return s + num_(l.okPcs); }, 0); };
+  const ultimoLog = function (o) { return (o.logs || []).reduce(function (s, l) { return String(l.date || '') > s ? String(l.date || '') : s; }, ''); };
+  const ficha = function (o) { const h = hecho(o), obj = num_(o.qtyTarget); return { num: o.ordNumber || '', pieza: o.part || '', maq: maqId_(o.machine), hecho: h, objetivo: obj, pct: obj ? Math.min(999, h / obj * 100) : 0, semana: (o.logs || []).reduce(function (s, l) { return s + (enSem(String(l.date || '')) ? num_(l.okPcs) : 0); }, 0), ultimo: ultimoLog(o) }; };
+  const ords = (mods.orders || []).filter(function (o) { return o && !DEMO_ORD_SRV[o.id]; });
+  R.ordCompl = ords.filter(function (o) { return o.status === 'Completada' && (o.logs || []).some(function (l) { return enSem(l.date); }); }).map(ficha);
+  R.ordAbiertas = ords.filter(function (o) { return o.status !== 'Completada' && o.status !== 'Detenida por rotura'; }).map(ficha).sort(function (a, b) { return b.pct - a.pct; });
+  R.ordDetenidas = ords.filter(function (o) { return o.status === 'Detenida por rotura'; }).map(function (o) { const f = ficha(o); f.motivo = (o.rotura && o.rotura.motivo) || ''; f.desde = (o.rotura && o.rotura.desde) || ''; return f; });
   // mantenimiento
   const mant = mods.mantenimiento || {};
   R.trabajos = (mant.trabajos || []).filter(function (t) { return enSem(t.fecha); });
-  R.preventivosVencidos = (mant.planes || []).filter(function (p) { return p.ultimo && num_(p.cadaDias) && sumarDias_(p.ultimo, num_(p.cadaDias)) < sumarDias_(dom, 1); });
+  const corte = sumarDias_(dom, 1);
+  R.preventivosVencidos = (mant.planes || []).filter(function (p) { return p.ultimo && num_(p.cadaDias) && sumarDias_(p.ultimo, num_(p.cadaDias)) < corte; })
+    .map(function (p) { const v = sumarDias_(p.ultimo, num_(p.cadaDias)); return { maquina: p.maquina, tarea: p.tarea, vence: v, dias: Math.round((new Date(corte + 'T12:00:00Z') - new Date(v + 'T12:00:00Z')) / 864e5) }; });
+  R.prevProximos = (mant.planes || []).filter(function (p) { if (!p.ultimo || !num_(p.cadaDias)) return false; const v = sumarDias_(p.ultimo, num_(p.cadaDias)); return v >= corte && v <= sumarDias_(corte, 7); })
+    .map(function (p) { return { maquina: p.maquina, tarea: p.tarea, vence: sumarDias_(p.ultimo, num_(p.cadaDias)) }; }).sort(function (a, b) { return a.vence < b.vence ? -1 : 1; });
+  R.roturasAbiertas = (mant.roturas || []).filter(function (x) { return x && x.estado !== 'resuelta'; });
   return R;
 }
-function htmlInforme_(R, P, verPrecios, extra) {
+// ===== Informes por mail (11/11/2026): tres informes separados, cada uno con sus mails, día y hora =====
+// prod = producción (piezas, plan, máquinas, paradas, material por pieza) · mant = mantenimiento · ord = órdenes de producción
+const INF_TIPOS = { prod: { nombre: 'producción', titulo: 'Informe semanal de producción', color: '#0f172a', acento: '#67e8f9', boton: '#22d3ee', botonTxt: '#083344', ir: '' },
+  mant: { nombre: 'mantenimiento', titulo: 'Mantenimiento', color: '#7c2d12', acento: '#fdba74', boton: '#fdba74', botonTxt: '#431407', ir: '?ir=mant' },
+  ord: { nombre: 'órdenes de producción', titulo: 'Órdenes de producción', color: '#1e3a8a', acento: '#93c5fd', boton: '#93c5fd', botonTxt: '#172554', ir: '' } };
+const INF_APP = 'https://inofer-admin.github.io/INOFER/inofer/';
+function hInf_() {
   const e = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
   const n0 = function (v) { return Math.round(num_(v)).toLocaleString('es-AR'); };
   const n1 = function (v) { return (Math.round(num_(v) * 10) / 10).toLocaleString('es-AR'); };
+  const fd = function (iso) { if (!iso) return ''; const p = String(iso).split('-'); return p[2] + '/' + p[1]; };
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const rango = function (l, d) { const a = l.split('-').map(Number), b = d.split('-').map(Number); return 'lunes ' + a[2] + (a[1] !== b[1] ? ' de ' + MESES[a[1] - 1] : '') + ' al domingo ' + b[2] + ' de ' + MESES[b[1] - 1]; };
+  const semIso = function (l) { const p = l.split('-').map(Number); const d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 3)); const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); return 1 + Math.round(((d - y) / 864e5 - 3 + ((y.getUTCDay() + 6) % 7)) / 7); };
+  const barra = function (pct, color, ancho) { const w = Math.max(0, Math.min(100, Math.round(num_(pct)))); return '<table role="presentation" style="width:' + (ancho || '100%') + ';border-collapse:collapse"><tr><td style="padding:0;background:#e2e8f0;border-radius:7px;height:12px"><div style="width:' + w + '%;height:12px;background:' + color + ';border-radius:7px"></div></td></tr></table>'; };
+  const titulo = function (t, sub) { return '<tr><td style="padding:22px 28px 8px"><table role="presentation" style="width:100%;border-collapse:collapse"><tr><td style="font-size:16px;font-weight:800;color:#0f172a">' + t + '</td><td style="text-align:right;font-size:12px;color:#475569">' + (sub || '') + '</td></tr></table></td></tr>'; };
+  const tile = function (t, v, s, tono) { const fondo = tono === 'mal' ? '#fef2f2' : (tono === 'bien' ? '#ecfdf5' : '#ffffff'), borde = tono === 'mal' ? '#fecaca' : (tono === 'bien' ? '#a7f3d0' : '#e2e8f0'), col = tono === 'mal' ? '#b91c1c' : (tono === 'bien' ? '#047857' : '#0f172a'); return '<td style="padding:4px;width:25%;vertical-align:top"><div style="border:1px solid ' + borde + ';background:' + fondo + ';border-radius:10px;padding:10px 12px"><div style="font-size:10px;font-weight:700;color:#475569;letter-spacing:.04em">' + t + '</div><div style="font-size:21px;font-weight:900;color:' + col + ';margin:2px 0">' + v + '</div><div style="font-size:11px;color:#475569">' + (s || '') + '</div></div></td>'; };
+  const marco = function (tipo, R, cuerpo, pie) {
+    const T = INF_TIPOS[tipo];
+    return '<div style="background:#f1f5f9;padding:16px 8px;font-family:Arial,Helvetica,sans-serif;color:#0f172a"><table role="presentation" style="max-width:720px;width:100%;margin:0 auto;border-collapse:collapse;background:#ffffff;border-radius:14px;overflow:hidden">' +
+      '<tr><td style="background:' + T.color + ';padding:20px 28px"><table role="presentation" style="width:100%;border-collapse:collapse"><tr><td><div style="font-size:12px;font-weight:800;letter-spacing:3px;color:' + T.acento + '">INOFER</div><div style="font-size:21px;font-weight:800;color:#ffffff;margin-top:2px">' + T.titulo + '</div><div style="font-size:13px;color:#e2e8f0;margin-top:2px">Semana ' + semIso(R.lunes) + ' · ' + rango(R.lunes, R.domingo) + '</div></td>' +
+      '<td style="text-align:right;vertical-align:bottom"><a href="' + INF_APP + T.ir + '" style="display:inline-block;padding:10px 14px;border-radius:10px;background:' + T.boton + ';color:' + T.botonTxt + ';font-weight:800;font-size:13px;text-decoration:none">Abrir en INOFER</a></td></tr></table></td></tr>' +
+      cuerpo + '<tr><td style="padding:18px 28px 20px"><div style="border-top:1px solid #e2e8f0;padding-top:8px;font-size:11px;color:#64748b">' + pie + '</div></td></tr></table></div>';
+  };
+  return { e: e, n0: n0, n1: n1, fd: fd, rango: rango, semIso: semIso, barra: barra, titulo: titulo, tile: tile, marco: marco };
+}
+// ---------- PRODUCCIÓN ----------
+function htmlInforme_(R, P, verPrecios, extra) {
+  const H = hInf_(), e = H.e, n0 = H.n0, n1 = H.n1;
+  extra = extra || {};
   const plata = function (v) { return '$ ' + Math.round(num_(v)).toLocaleString('es-AR'); };
-  const fd = function (iso) { const p = iso.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
-  const delta = function (a, b, inv, suf) { if (!b) return ''; const d = (a - b) / Math.abs(b) * 100; if (!isFinite(d) || Math.abs(d) < 0.5) return '<span style="color:#64748b">= sem. anterior</span>'; const bueno = inv ? d < 0 : d > 0; return '<span style="color:' + (bueno ? '#059669' : '#dc2626') + '">' + (d > 0 ? '▲ ' : '▼ ') + n1(Math.abs(d)) + '%' + (suf || '') + '</span>'; };
-  const tile = function (t, v, s) { return '<td style="padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;vertical-align:top;width:25%"><div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em">' + t + '</div><div style="font-size:22px;font-weight:800;color:#0f172a;margin:2px 0">' + v + '</div><div style="font-size:11px">' + (s || '') + '</div></td>'; };
-  const th = 'style="text-align:left;padding:6px 8px;background:#f1f5f9;font-size:11px;color:#334155;border-bottom:1px solid #cbd5e1"';
-  const td = 'style="padding:5px 8px;font-size:12px;border-bottom:1px solid #e2e8f0"';
-  const tdr = 'style="padding:5px 8px;font-size:12px;border-bottom:1px solid #e2e8f0;text-align:right"';
-  let h = '<div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;max-width:860px;margin:0 auto">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #0891b2;padding-bottom:8px;margin-bottom:14px"><div><div style="font-size:26px;font-weight:900;letter-spacing:.06em;color:#0891b2">INOFER</div><div style="font-size:15px;font-weight:700">Informe semanal de producción</div></div><div style="text-align:right;font-size:12px;color:#475569">Semana del ' + fd(R.lunes) + ' al ' + fd(R.domingo) + '<br>Generado el ' + e(extra.generado) + '</div></div>';
-  h += '<table style="width:100%;border-collapse:separate;border-spacing:6px;margin:0 -6px"><tr>' +
-    tile('Piezas buenas', n0(R.ok), delta(R.ok, P.ok)) + tile('Scrap', n1(R.scrapPct) + '%', n0(R.scrap) + ' u · ' + delta(R.scrapPct, P.scrapPct, true)) +
-    tile('Utilización', n1(R.util) + '%', n1(R.disp) + ' h disponibles · ' + delta(R.util, P.util)) +
-    (verPrecios ? tile('Facturación producida', plata(R.facturado), delta(R.facturado, P.facturado) + (R.sinPrecio ? '<br><span style="color:#b45309">' + n0(R.sinPrecio) + ' u sin precio</span>' : '')) : tile('Turnos cargados', n0(R.turnos), delta(R.turnos, P.turnos))) + '</tr></table>';
+  const vs = function (a, b, inv) { if (!b) return ''; const d = (a - b) / Math.abs(b) * 100; if (!isFinite(d) || Math.abs(d) < 0.5) return '= semana anterior'; const bueno = inv ? d < 0 : d > 0; return '<span style="color:' + (bueno ? '#047857' : '#b91c1c') + ';font-weight:700">' + (d > 0 ? '▲ ' : '▼ ') + n1(Math.abs(d)) + '% vs anterior</span>'; };
+  const metaScrap = num_(extra.metaScrap) || 0;
   const cumpl = R.programado ? Math.min(999, R.ok / R.programado * 100) : 0;
-  h += '<h3 style="font-size:14px;margin:18px 0 6px">Cumplimiento del plan (Gantt)</h3>';
-  h += R.programado ? '<div style="font-size:12px;margin-bottom:6px">Programado <b>' + n0(R.programado) + '</b> u · producido <b>' + n0(R.ok) + '</b> u · cumplimiento <b style="color:' + (cumpl >= 90 ? '#059669' : (cumpl >= 70 ? '#b45309' : '#dc2626')) + '">' + n1(cumpl) + '%</b>' + (verPrecios && R.facturaProg ? ' · facturación programada ' + plata(R.facturaProg) : '') + '</div>' : '<div style="font-size:12px;color:#64748b">No había nada programado en el Gantt para esta semana.</div>';
-  const piezas = {}; Object.keys(R.progPiezas).forEach(function (p) { piezas[p] = 1; }); Object.keys(R.piezas).forEach(function (p) { piezas[p] = 1; });
-  const lista = Object.keys(piezas).map(function (p) { return { p: p, prog: R.progPiezas[p] || 0, ok: (R.piezas[p] || {}).ok || 0, sc: (R.piezas[p] || {}).scrap || 0 }; }).sort(function (a, b) { return (b.prog + b.ok) - (a.prog + a.ok); }).slice(0, 25);
-  if (lista.length) {
-    h += '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Pieza</th><th ' + th + ' style="text-align:right">Programado</th><th ' + th + ' style="text-align:right">Producido</th><th ' + th + ' style="text-align:right">Scrap</th><th ' + th + ' style="text-align:right">Cumpl.</th></tr>';
-    lista.forEach(function (x) { const c = x.prog ? x.ok / x.prog * 100 : null; h += '<tr><td ' + td + '>' + e(x.p) + '</td><td ' + tdr + '>' + (x.prog ? n0(x.prog) : '—') + '</td><td ' + tdr + '>' + n0(x.ok) + '</td><td ' + tdr + '>' + (x.sc ? n0(x.sc) : '') + '</td><td ' + tdr + '>' + (c == null ? 'fuera de plan' : '<b style="color:' + (c >= 90 ? '#059669' : (c >= 70 ? '#b45309' : '#dc2626')) + '">' + n1(c) + '%</b>') + '</td></tr>'; });
-    h += '</table>';
+  const fuera = {}; (extra.fueraIds || []).forEach(function (m) { fuera[m] = 1; });
+  // orden fijo de la planta (las claves numéricas como '180' JS las pone primero)
+  const orden = MAQ_SRV.map(function (x) { return x[0]; }); Object.keys(R.maq).forEach(function (m) { if (orden.indexOf(m) < 0) orden.push(m); });
+  const maqs = orden.filter(function (m) { const x = R.maq[m]; return x && (x.disp || x.ok || fuera[m]); });
+  const utilDe = function (x) { return x.disp ? Math.max(0, (x.disp - x.paradas) / x.disp * 100) : 0; };
+  const oeeDe = function (x) { if (!x.disp || !x.std) return null; const run = Math.max(0, x.disp - x.paradas), q = (x.ok + x.scrap) ? x.ok / (x.ok + x.scrap) : 0; return Math.min(run, x.std) / x.disp * q * 100; };
+  // --- la semana en 3 líneas
+  const lineas = [];
+  lineas.push((R.ok >= (P.ok || 0) ? '✔' : '✖') + ' Se hicieron <b>' + n0(R.ok) + ' piezas buenas</b>' + (P.ok ? ', ' + n1(Math.abs((R.ok - P.ok) / P.ok * 100)) + '% ' + (R.ok >= P.ok ? 'más' : 'menos') + ' que la semana anterior' : '') + '.');
+  const peor = maqs.filter(function (m) { return R.maq[m].disp > 0; }).sort(function (a, b) { return R.maq[b].paradas - R.maq[a].paradas; })[0];
+  const cods = Object.keys(R.codigos).map(function (k) { return [k, R.codigos[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
+  const nomCod = function (c) { return String(c).split('-').slice(1).join('-').trim() || String(c); };
+  if (peor && R.maq[peor].paradas > 0) lineas.push('✖ La <b>' + e(peor) + '</b> fue la que más paró: <b>' + n1(R.maq[peor].paradas) + ' h</b>' + (cods.length ? '. Lo que más tiempo se llevó en la planta: <b>' + e(nomCod(cods[0][0]).toLowerCase()) + '</b>' : '') + '.');
+  const piezasAll = {}; Object.keys(R.progPiezas).forEach(function (p) { piezasAll[p] = 1; }); Object.keys(R.piezas).forEach(function (p) { piezasAll[p] = 1; });
+  const plan = Object.keys(piezasAll).map(function (p) { const prog = R.progPiezas[p] || 0, ok = (R.piezas[p] || {}).ok || 0; return { p: p, prog: prog, ok: ok, c: prog ? ok / prog * 100 : null }; });
+  const abajo = plan.filter(function (x) { return x.c != null && x.c < 70; }).length;
+  if (R.programado) lineas.push('● Se cumplió el <b>' + n1(cumpl) + '%</b> de lo programado' + (abajo ? '; ' + abajo + ' pieza' + (abajo > 1 ? 's quedaron' : ' quedó') + ' abajo del 70%' : '') + '.');
+  let c = '<tr><td style="padding:18px 28px 0"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#475569;margin-bottom:6px">LA SEMANA EN ' + lineas.length + ' LÍNEA' + (lineas.length > 1 ? 'S' : '') + '</div><div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.6;color:#1e293b">' + lineas.join('<br>') + '</div></td></tr>';
+  // --- cuadros
+  const malScrap = metaScrap ? R.scrapPct > metaScrap : false;
+  c += '<tr><td style="padding:12px 24px 0"><table role="presentation" style="width:100%;border-collapse:collapse"><tr>' +
+    H.tile('PIEZAS BUENAS', n0(R.ok), vs(R.ok, P.ok), '') +
+    H.tile('SCRAP', n1(R.scrapPct) + '%', (metaScrap ? 'meta ' + n1(metaScrap) + '% · ' : '') + n0(R.scrap) + ' u', metaScrap ? (malScrap ? 'mal' : 'bien') : '') +
+    H.tile('UTILIZACIÓN', n1(R.util) + '%', n1(R.disp) + ' h disponibles', R.util >= 80 ? 'bien' : (R.util < 60 && R.disp ? 'mal' : '')) +
+    (verPrecios ? H.tile('FACTURACIÓN', plata(R.facturado), vs(R.facturado, P.facturado) + (R.sinPrecio ? '<br><span style="color:#b45309">' + n0(R.sinPrecio) + ' u sin precio</span>' : ''), '') : H.tile('TURNOS CARGADOS', n0(R.turnos), vs(R.turnos, P.turnos), '')) +
+    '</tr></table></td></tr>';
+  // --- cumplimiento del plan
+  c += H.titulo('Cumplimiento del plan', R.programado ? 'programado ' + n0(R.programado) + ' · producido ' + n0(R.ok) + ' · <b>' + n1(cumpl) + '%</b>' : '');
+  const conPlan = plan.filter(function (x) { return x.prog; }).sort(function (a, b) { return a.c - b.c; });
+  const fueraPlan = plan.filter(function (x) { return !x.prog && x.ok; });
+  if (!conPlan.length && !fueraPlan.length) c += '<tr><td style="padding:0 28px;font-size:13px;color:#475569">No hubo nada programado ni producido esta semana.</td></tr>';
+  else {
+    c += '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px">';
+    conPlan.slice(0, 12).forEach(function (x) { const col = x.c >= 90 ? '#059669' : (x.c >= 70 ? '#d97706' : '#dc2626'), txt = x.c >= 90 ? '#047857' : (x.c >= 70 ? '#b45309' : '#b91c1c'); c += '<tr><td style="padding:4px 8px 4px 0;width:120px;font-weight:700">' + e(x.p) + '</td><td style="padding:4px 0">' + H.barra(Math.min(100, x.c), col) + '</td><td style="padding:4px 0 4px 8px;width:120px;text-align:right;color:#475569;font-size:12px">' + n0(x.ok) + ' / ' + n0(x.prog) + '</td><td style="padding:4px 0 4px 8px;width:50px;text-align:right;font-weight:800;color:' + txt + '">' + n0(x.c) + '%</td></tr>'; });
+    c += '</table>';
+    if (conPlan.length > 12) c += '<div style="font-size:12px;color:#475569;margin-top:4px">… y ' + (conPlan.length - 12) + ' piezas más, todas por encima de las de la lista.</div>';
+    if (fueraPlan.length) c += '<div style="font-size:12px;color:#475569;margin-top:6px">Fuera del plan: ' + fueraPlan.map(function (x) { return '<b>' + e(x.p) + '</b> ' + n0(x.ok); }).join(' · ') + '</div>';
+    c += '</td></tr>';
   }
-  h += '<h3 style="font-size:14px;margin:18px 0 6px">Por máquina</h3><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Máquina</th><th ' + th + ' style="text-align:right">Buenas</th><th ' + th + ' style="text-align:right">Scrap</th><th ' + th + ' style="text-align:right">Horas disp.</th><th ' + th + ' style="text-align:right">Paradas</th><th ' + th + ' style="text-align:right">Utilización</th><th ' + th + ' style="text-align:right">Roturas</th></tr>';
-  Object.keys(R.maq).forEach(function (m) { const x = R.maq[m]; const u = x.disp ? Math.max(0, (x.disp - x.paradas) / x.disp * 100) : 0; h += '<tr><td ' + td + '><b>' + e(m) + '</b></td><td ' + tdr + '>' + n0(x.ok) + '</td><td ' + tdr + '>' + n0(x.scrap) + '</td><td ' + tdr + '>' + n1(x.disp) + ' h</td><td ' + tdr + '>' + n1(x.paradas) + ' h</td><td ' + tdr + '>' + (x.disp ? n1(u) + '%' : '—') + '</td><td ' + tdr + '>' + (x.correctivo ? n1(x.correctivo) + ' h' : '') + '</td></tr>'; });
-  h += '</table>';
-  const cods = Object.keys(R.codigos).map(function (k) { return [k, R.codigos[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
-  h += '<h3 style="font-size:14px;margin:18px 0 6px">Paradas</h3><table style="width:100%;border-collapse:collapse"><tr><td style="vertical-align:top;width:50%;padding-right:8px"><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Categoría</th><th ' + th + ' style="text-align:right">Horas</th></tr>';
-  CATS_SRV.forEach(function (c) { if (R.cat[c[0]]) h += '<tr><td ' + td + '>' + c[1] + '</td><td ' + tdr + '>' + n1(R.cat[c[0]]) + ' h</td></tr>'; });
-  h += '<tr><td ' + td + '><b>Total</b></td><td ' + tdr + '><b>' + n1(R.paradas) + ' h</b> ' + delta(R.paradas, P.paradas, true) + '</td></tr></table></td><td style="vertical-align:top;width:50%"><table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Principales motivos</th><th ' + th + ' style="text-align:right">Horas</th></tr>';
-  cods.forEach(function (c) { h += '<tr><td ' + td + '>' + e(c[0]) + '</td><td ' + tdr + '>' + n1(c[1]) + ' h</td></tr>'; });
-  if (!cods.length) h += '<tr><td ' + td + ' colspan="2" style="color:#64748b">Sin paradas con código.</td></tr>';
-  h += '</table></td></tr></table>';
-  const kgs = Object.keys(R.kg);
-  if (kgs.length) h += '<h3 style="font-size:14px;margin:18px 0 6px">Material consumido</h3><div style="font-size:12px">' + kgs.map(function (k) { return '<b>' + e(k) + '</b>: ' + n1(R.kg[k]) + ' kg'; }).join(' · ') + '</div>';
-  if (extra.stockBajo && extra.stockBajo.length) h += '<div style="margin-top:8px;font-size:12px;color:#b45309">⚠️ Stock bajo: ' + extra.stockBajo.map(e).join(' · ') + '</div>';
-  h += '<h3 style="font-size:14px;margin:18px 0 6px">Órdenes y mantenimiento</h3><div style="font-size:12px;line-height:1.6">Órdenes completadas en la semana: <b>' + R.opCompletadas + '</b> · abiertas ahora: <b>' + R.opAbiertas + '</b><br>';
-  h += 'Trabajos de mantenimiento: <b>' + R.trabajos.length + '</b>' + (R.trabajos.length ? ' (' + R.trabajos.slice(0, 6).map(function (t) { return e(t.maquina + ': ' + (t.tarea || t.descripcion || t.tipo)); }).join('; ') + ')' : '') + '<br>';
-  if (R.preventivosVencidos.length) h += '<span style="color:#dc2626">Preventivos vencidos: ' + R.preventivosVencidos.map(function (p) { return e(p.maquina + ' · ' + p.tarea); }).join('; ') + '</span><br>';
-  if (extra.fueraServicio && extra.fueraServicio.length) h += '<span style="color:#dc2626">Máquinas fuera de servicio: ' + extra.fueraServicio.map(e).join('; ') + '</span>';
-  h += '</div><div style="margin-top:22px;border-top:1px solid #e2e8f0;padding-top:6px;font-size:10px;color:#94a3b8">INOFER · Informe generado automáticamente con los turnos de las Órdenes de Producción y los partes de horas cargados. La semana anterior se usa como comparación.</div></div>';
-  return h;
+  // --- por máquina
+  c += H.titulo('Por máquina', '');
+  c += '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px"><tr style="background:#f1f5f9;color:#334155;font-size:11px;text-align:left"><th style="padding:7px 8px">Máquina</th><th style="padding:7px 8px;text-align:right">Buenas</th><th style="padding:7px 8px;text-align:right">Scrap</th><th style="padding:7px 8px">Utilización</th><th style="padding:7px 8px;text-align:right">Paradas</th><th style="padding:7px 8px;text-align:right">OEE</th></tr>';
+  maqs.forEach(function (m) {
+    const x = R.maq[m];
+    if (fuera[m] && !x.disp && !x.ok) { c += '<tr style="border-top:1px solid #e2e8f0;color:#475569"><td style="padding:7px 8px;font-weight:800">' + e(m) + '</td><td style="padding:7px 8px" colspan="5">Fuera de servicio</td></tr>'; return; }
+    const u = utilDe(x), o = oeeDe(x), sp = (x.ok + x.scrap) ? x.scrap / (x.ok + x.scrap) * 100 : 0, malo = x.disp && u < 60;
+    c += '<tr style="border-top:1px solid #e2e8f0' + (malo ? ';background:#fef2f2' : '') + '"><td style="padding:7px 8px;font-weight:800">' + e(m) + '</td><td style="padding:7px 8px;text-align:right">' + n0(x.ok) + '</td><td style="padding:7px 8px;text-align:right">' + n1(sp) + '%</td>' +
+      '<td style="padding:7px 8px"><table role="presentation" style="border-collapse:collapse"><tr><td style="padding:0;width:90px">' + H.barra(u, malo ? '#dc2626' : '#0891b2', '90px') + '</td><td style="padding:0 0 0 6px;font-size:12px">' + n0(u) + '%</td></tr></table></td>' +
+      '<td style="padding:7px 8px;text-align:right">' + n1(x.paradas) + ' h</td><td style="padding:7px 8px;text-align:right;font-weight:800;color:' + (o == null ? '#475569' : (o >= 75 ? '#047857' : (o < 50 ? '#b91c1c' : '#0f172a'))) + '">' + (o == null ? '—' : n0(o) + '%') + '</td></tr>';
+  });
+  c += '</table></td></tr>';
+  // --- paradas
+  c += H.titulo('Paradas: en qué se fue el tiempo', 'total ' + n1(R.paradas) + ' h' + (P.paradas ? ' · ' + vs(R.paradas, P.paradas, true) : ''));
+  const top = cods.slice(0, 8), max = top.length ? top[0][1] : 0;
+  if (!top.length) c += '<tr><td style="padding:0 28px;font-size:13px;color:#475569">Sin paradas con código esta semana.</td></tr>';
+  else {
+    c += '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px">';
+    top.forEach(function (x, i) { c += '<tr><td style="padding:4px 8px 4px 0;width:210px">' + e(nomCod(x[0])) + '</td><td style="padding:4px 0">' + H.barra(max ? x[1] / max * 100 : 0, i === 0 ? '#f97316' : '#fdba74') + '</td><td style="padding:4px 0 4px 8px;width:60px;text-align:right;font-weight:700">' + n1(x[1]) + ' h</td></tr>'; });
+    c += '</table></td></tr>';
+  }
+  // --- material y piezas inyectadas
+  const kgs = Object.keys(R.kg).sort(function (a, b) { return R.kg[b] - R.kg[a]; });
+  c += H.titulo('Material consumido', kgs.length ? kgs.map(function (k) { return '<b>' + e(k) + '</b> ' + n0(R.kg[k]) + ' kg'; }).join(' · ') : '');
+  const pzs = Object.keys(R.piezas).map(function (p) { const x = R.piezas[p]; return { p: p, x: x }; }).filter(function (o) { return o.x.ok || o.x.scrap || o.x.baja; }).sort(function (a, b) { return (b.x.kg || 0) - (a.x.kg || 0) || (b.x.ok - a.x.ok); });
+  if (pzs.length) {
+    c += '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:12px"><tr style="background:#f1f5f9;color:#334155;font-size:11px;text-align:left"><th style="padding:7px 8px">Pieza inyectada</th><th style="padding:7px 8px">Máq.</th><th style="padding:7px 8px">Aleación</th><th style="padding:7px 8px;text-align:right">Buenas</th><th style="padding:7px 8px;text-align:right">Scrap + baja</th><th style="padding:7px 8px;text-align:right">kg/pieza</th><th style="padding:7px 8px;text-align:right">kg</th></tr>';
+    pzs.forEach(function (o) { const x = o.x; c += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:6px 8px;font-weight:700">' + e(o.p) + '</td><td style="padding:6px 8px">' + e(x.maq || '') + '</td><td style="padding:6px 8px">' + e(x.mat || '—') + '</td><td style="padding:6px 8px;text-align:right">' + n0(x.ok) + '</td><td style="padding:6px 8px;text-align:right">' + n0(x.scrap + x.baja) + '</td><td style="padding:6px 8px;text-align:right">' + (x.kgp ? (Math.round(x.kgp * 1000) / 1000).toLocaleString('es-AR') : '—') + '</td><td style="padding:6px 8px;text-align:right;font-weight:800">' + (x.kg ? n1(x.kg) : '—') + '</td></tr>'; });
+    c += '</table><div style="font-size:11px;color:#64748b;margin-top:4px">kg = (buenas + scrap + baja) × peso con colada de la pieza. Las piezas sin peso o sin aleación en la base de datos muestran "—".</div></td></tr>';
+  }
+  if (extra.stockBajo && extra.stockBajo.length) c += '<tr><td style="padding:8px 28px 0;font-size:13px;color:#b45309;font-weight:700">⚠ Stock bajo: ' + extra.stockBajo.map(e).join(' · ') + '</td></tr>';
+  return H.marco('prod', R, c, 'INOFER · Hecho con los turnos de las órdenes y los partes de horas. Se compara con la semana anterior.' + (extra.generado ? ' Generado el ' + e(extra.generado) + '.' : ''));
 }
 function textoInforme_(R, P, verPrecios) {
-  const n0 = function (v) { return Math.round(num_(v)).toLocaleString('es-AR'); };
-  const n1 = function (v) { return (Math.round(num_(v) * 10) / 10).toLocaleString('es-AR'); };
-  const fd = function (iso) { const p = iso.split('-'); return p[2] + '/' + p[1]; };
+  const H = hInf_(), n0 = H.n0, n1 = H.n1;
   const cods = Object.keys(R.codigos).map(function (k) { return [k, R.codigos[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 3);
-  let t = '*INOFER · Semana ' + fd(R.lunes) + ' al ' + fd(R.domingo) + '*\n';
+  let t = '*INOFER · Producción · Semana ' + H.semIso(R.lunes) + ' (' + H.fd(R.lunes) + ' al ' + H.fd(R.domingo) + ')*\n';
   t += '✅ Piezas buenas: ' + n0(R.ok) + (P.ok ? ' (sem. ant. ' + n0(P.ok) + ')' : '') + '\n';
   t += '❌ Scrap: ' + n1(R.scrapPct) + '% (' + n0(R.scrap) + ' u)\n';
   t += '⚙️ Utilización: ' + n1(R.util) + '%\n';
-  if (R.programado) t += '📅 Cumplimiento del Gantt: ' + n1(R.ok / R.programado * 100) + '%\n';
+  if (R.programado) t += '📅 Cumplimiento del plan: ' + n1(R.ok / R.programado * 100) + '%\n';
   if (verPrecios && R.facturado) t += '💰 Facturación producida: $ ' + n0(R.facturado) + '\n';
-  t += '⏱️ Paradas: ' + n1(R.paradas) + ' h' + (cods.length ? ' · principales: ' + cods.map(function (c) { return c[0].split('-').slice(1).join('-').trim() || c[0]; }).map(function (x, i) { return x + ' ' + n1(cods[i][1]) + ' h'; }).join(', ') : '') + '\n';
-  t += '📋 Órdenes completadas: ' + R.opCompletadas + ' · abiertas: ' + R.opAbiertas;
+  const kgs = Object.keys(R.kg); if (kgs.length) t += '🧱 Material: ' + kgs.map(function (k) { return k + ' ' + n0(R.kg[k]) + ' kg'; }).join(' · ') + '\n';
+  t += '⏱️ Paradas: ' + n1(R.paradas) + ' h' + (cods.length ? ' · principales: ' + cods.map(function (c) { return (c[0].split('-').slice(1).join('-').trim() || c[0]) + ' ' + n1(c[1]) + ' h'; }).join(', ') : '');
   return t;
 }
+// ---------- MANTENIMIENTO ----------
+function htmlMant_(R, extra) {
+  const H = hInf_(), e = H.e, n0 = H.n0, n1 = H.n1;
+  extra = extra || {};
+  let c = '';
+  const fuera = extra.fueraDet || [];
+  c += '<tr><td style="padding:18px 28px 0">' + (fuera.length
+    ? '<div style="border:2px solid #dc2626;background:#fef2f2;border-radius:10px;padding:12px 14px"><div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#b91c1c">MÁQUINAS FUERA DE SERVICIO</div>' + fuera.map(function (f) { return '<div style="font-size:15px;font-weight:800;margin-top:4px">' + e(f.m) + (f.motivo ? ' · ' + e(f.motivo) : '') + '</div>' + (f.desde ? '<div style="font-size:12px;color:#7f1d1d">Parada desde el ' + e(H.fd(f.desde)) + (f.dias != null ? ' · ' + f.dias + ' día' + (f.dias === 1 ? '' : 's') : '') + '</div>' : ''); }).join('') + '</div>'
+    : '<div style="border:1px solid #a7f3d0;background:#ecfdf5;border-radius:10px;padding:10px 14px;font-size:14px;font-weight:700;color:#047857">✔ Todas las máquinas en servicio.</div>') + '</td></tr>';
+  // trabajos sin repetir (misma máquina + misma tarea en la semana = una fila con ×N)
+  const vistos = {}, trabajos = [];
+  R.trabajos.slice().sort(function (a, b) { return String(a.fecha) < String(b.fecha) ? -1 : 1; }).forEach(function (t) {
+    const tarea = String(t.tarea || t.descripcion || t.tipo || '').replace(/^Revisar:\s*/i, '');
+    const k = String(t.maquina) + '|' + tarea.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (vistos[k]) { vistos[k].veces++; return; }
+    vistos[k] = { maquina: t.maquina, tarea: tarea, tipo: t.tipo || 'correctivo', fecha: t.fecha, horas: num_(t.horas), veces: 1, por: t.hecho_por || t.proveedor || '' };
+    trabajos.push(vistos[k]);
+  });
+  const corr = trabajos.filter(function (t) { return t.tipo === 'correctivo'; }).length, prev = trabajos.filter(function (t) { return t.tipo === 'preventivo'; }).length;
+  c += '<tr><td style="padding:12px 24px 0"><table role="presentation" style="width:100%;border-collapse:collapse"><tr>' +
+    H.tile('TRABAJOS', String(trabajos.length), corr + ' correctivo' + (corr === 1 ? '' : 's') + ' · ' + prev + ' preventivo' + (prev === 1 ? '' : 's'), '') +
+    H.tile('HS. PARADA POR ROTURA', n1(R.cat.mant_correctivo || 0) + ' h', 'de los turnos cargados', (R.cat.mant_correctivo || 0) > 8 ? 'mal' : '') +
+    H.tile('PREVENTIVOS VENCIDOS', String(R.preventivosVencidos.length), R.prevProximos.length + ' vencen esta semana', R.preventivosVencidos.length ? 'mal' : 'bien') +
+    H.tile('ROTURAS ABIERTAS', String(R.roturasAbiertas.length), R.roturasAbiertas.length ? 'sin resolver' : 'ninguna', R.roturasAbiertas.length ? 'mal' : 'bien') +
+    '</tr></table></td></tr>';
+  c += H.titulo('Trabajos de la semana', '');
+  if (!trabajos.length) c += '<tr><td style="padding:0 28px;font-size:13px;color:#475569">No se cargaron trabajos de mantenimiento esta semana.</td></tr>';
+  else {
+    c += '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px"><tr style="background:#f1f5f9;color:#334155;font-size:11px;text-align:left"><th style="padding:7px 8px">Máquina</th><th style="padding:7px 8px">Trabajo</th><th style="padding:7px 8px">Tipo</th><th style="padding:7px 8px">Día</th></tr>';
+    const colTipo = { correctivo: '#b91c1c', preventivo: '#047857', mejora: '#1d4ed8' };
+    trabajos.forEach(function (t) { c += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:7px 8px;font-weight:800">' + e(t.maquina) + '</td><td style="padding:7px 8px">' + e(t.tarea) + (t.veces > 1 ? ' <span style="color:#475569">(×' + t.veces + ')</span>' : '') + (t.horas ? ' <span style="color:#475569">· ' + n1(t.horas) + ' h</span>' : '') + '</td><td style="padding:7px 8px;font-weight:700;color:' + (colTipo[t.tipo] || '#475569') + '">' + e(t.tipo.charAt(0).toUpperCase() + t.tipo.slice(1)) + '</td><td style="padding:7px 8px">' + e(H.fd(t.fecha)) + '</td></tr>'; });
+    c += '</table></td></tr>';
+  }
+  if (R.roturasAbiertas.length) {
+    c += H.titulo('Roturas sin resolver', '');
+    c += '<tr><td style="padding:0 28px;font-size:13px">' + R.roturasAbiertas.map(function (x) { return '<div style="border-radius:8px;background:#fef2f2;padding:8px 12px;margin-bottom:6px"><b>' + e(x.maquina) + '</b> · ' + e(x.motivo || x.descripcion || 'Rotura') + ' <span style="color:#7f1d1d">· desde el ' + e(H.fd(x.fecha)) + '</span></div>'; }).join('') + '</td></tr>';
+  }
+  c += H.titulo('Preventivos', '');
+  if (!R.preventivosVencidos.length && !R.prevProximos.length) c += '<tr><td style="padding:0 28px;font-size:13px;color:#047857;font-weight:700">✔ No hay preventivos vencidos ni por vencer esta semana.</td></tr>';
+  else {
+    c += '<tr><td style="padding:0 28px;font-size:13px">';
+    R.preventivosVencidos.forEach(function (p) { c += '<table role="presentation" style="width:100%;border-collapse:collapse;background:#fef2f2;border-radius:8px;margin-bottom:6px"><tr><td style="padding:8px 12px"><b>' + e(p.maquina) + '</b> · ' + e(String(p.tarea || '').replace(/^Revisar:\s*/i, '')) + '</td><td style="padding:8px 12px;text-align:right;white-space:nowrap;font-weight:800;color:#b91c1c">vencido hace ' + p.dias + ' día' + (p.dias === 1 ? '' : 's') + '</td></tr></table>'; });
+    R.prevProximos.forEach(function (p) { c += '<table role="presentation" style="width:100%;border-collapse:collapse;background:#fffbeb;border-radius:8px;margin-bottom:6px"><tr><td style="padding:8px 12px"><b>' + e(p.maquina) + '</b> · ' + e(String(p.tarea || '').replace(/^Revisar:\s*/i, '')) + '</td><td style="padding:8px 12px;text-align:right;white-space:nowrap;font-weight:800;color:#b45309">vence el ' + e(H.fd(p.vence)) + '</td></tr></table>'; });
+    c += '</td></tr>';
+  }
+  return H.marco('mant', R, c, 'INOFER · Sale de Mantenimiento (trabajos, roturas y plan preventivo) y de las paradas por rotura cargadas en los turnos.' + (extra.generado ? ' Generado el ' + e(extra.generado) + '.' : ''));
+}
+function textoMant_(R, extra) {
+  const H = hInf_();
+  let t = '*INOFER · Mantenimiento · Semana ' + H.semIso(R.lunes) + ' (' + H.fd(R.lunes) + ' al ' + H.fd(R.domingo) + ')*\n';
+  const fuera = (extra && extra.fueraDet) || [];
+  t += fuera.length ? '⛔ Fuera de servicio: ' + fuera.map(function (f) { return f.m + (f.motivo ? ' (' + f.motivo + ')' : ''); }).join('; ') + '\n' : '✅ Todas las máquinas en servicio\n';
+  t += '🔧 Trabajos: ' + R.trabajos.length + '\n';
+  if (R.preventivosVencidos.length) t += '⚠️ Preventivos vencidos: ' + R.preventivosVencidos.map(function (p) { return p.maquina + ' · ' + String(p.tarea || '').replace(/^Revisar:\s*/i, ''); }).join('; ') + '\n';
+  if (R.prevProximos.length) t += '📅 Vencen esta semana: ' + R.prevProximos.length + '\n';
+  if (R.roturasAbiertas.length) t += '🚨 Roturas sin resolver: ' + R.roturasAbiertas.length;
+  return t.trim();
+}
+// ---------- ÓRDENES ----------
+function htmlOrd_(R, extra) {
+  const H = hInf_(), e = H.e, n0 = H.n0;
+  extra = extra || {};
+  let c = '';
+  const atrasadas = R.ordAbiertas.filter(function (o) { return !o.semana; });
+  c += '<tr><td style="padding:18px 24px 0"><table role="presentation" style="width:100%;border-collapse:collapse"><tr>' +
+    H.tile('COMPLETADAS', String(R.ordCompl.length), 'en la semana', R.ordCompl.length ? 'bien' : '') +
+    H.tile('ABIERTAS', String(R.ordAbiertas.length), 'ahora', '') +
+    H.tile('SIN AVANCE EN LA SEMANA', String(atrasadas.length), 'abiertas sin turnos', atrasadas.length ? 'mal' : '') +
+    H.tile('DETENIDAS POR ROTURA', String(R.ordDetenidas.length), R.ordDetenidas.length ? 'esperando el molde' : 'ninguna', R.ordDetenidas.length ? 'mal' : '') +
+    '</tr></table></td></tr>';
+  const tabla = function (lista, conAvance) {
+    let h = '<tr><td style="padding:0 28px"><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px"><tr style="background:#f1f5f9;color:#334155;font-size:11px;text-align:left"><th style="padding:7px 8px">OP</th><th style="padding:7px 8px">Pieza</th><th style="padding:7px 8px">Máq.</th>' + (conAvance ? '<th style="padding:7px 8px">Avance</th><th style="padding:7px 8px;text-align:right">Esta semana</th>' : '<th style="padding:7px 8px;text-align:right">Hechas</th><th style="padding:7px 8px;text-align:right">Terminó</th>') + '</tr>';
+    lista.forEach(function (o) {
+      h += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:7px 8px;font-weight:800">' + e(o.num) + '</td><td style="padding:7px 8px">' + e(o.pieza) + '</td><td style="padding:7px 8px">' + e(o.maq) + '</td>' +
+        (conAvance ? '<td style="padding:7px 8px"><table role="presentation" style="border-collapse:collapse"><tr><td style="padding:0;width:100px">' + H.barra(o.pct, o.pct >= 100 ? '#059669' : '#2563eb', '100px') + '</td><td style="padding:0 0 0 6px;font-size:12px;white-space:nowrap">' + n0(o.pct) + '% · ' + n0(o.hecho) + ' / ' + n0(o.objetivo) + '</td></tr></table></td><td style="padding:7px 8px;text-align:right;' + (o.semana ? '' : 'color:#b91c1c;font-weight:700') + '">' + (o.semana ? n0(o.semana) : 'sin avance') + '</td>'
+          : '<td style="padding:7px 8px;text-align:right">' + n0(o.hecho) + (o.objetivo ? ' / ' + n0(o.objetivo) : '') + '</td><td style="padding:7px 8px;text-align:right">' + e(H.fd(o.ultimo)) + '</td>') + '</tr>';
+    });
+    return h + '</table></td></tr>';
+  };
+  c += H.titulo('Completadas en la semana', '');
+  c += R.ordCompl.length ? tabla(R.ordCompl, false) : '<tr><td style="padding:0 28px;font-size:13px;color:#475569">Ninguna orden se completó esta semana.</td></tr>';
+  c += H.titulo('Abiertas', 'de la más avanzada a la menos');
+  c += R.ordAbiertas.length ? tabla(R.ordAbiertas, true) : '<tr><td style="padding:0 28px;font-size:13px;color:#475569">No hay órdenes abiertas.</td></tr>';
+  if (R.ordDetenidas.length) {
+    c += H.titulo('Detenidas por rotura de molde', '');
+    c += '<tr><td style="padding:0 28px;font-size:13px">' + R.ordDetenidas.map(function (o) { return '<div style="border-radius:8px;background:#fef2f2;padding:8px 12px;margin-bottom:6px"><b>OP ' + e(o.num) + '</b> · ' + e(o.pieza) + ' · ' + e(o.maq) + (o.motivo ? ' · ' + e(o.motivo) : '') + (o.desde ? ' <span style="color:#7f1d1d">· desde el ' + e(H.fd(o.desde)) + '</span>' : '') + '</div>'; }).join('') + '</td></tr>';
+  }
+  return H.marco('ord', R, c, 'INOFER · Sale de las órdenes de producción y de los turnos cargados en ellas.' + (extra.generado ? ' Generado el ' + e(extra.generado) + '.' : ''));
+}
+function textoOrd_(R) {
+  const H = hInf_(), n0 = H.n0;
+  let t = '*INOFER · Órdenes · Semana ' + H.semIso(R.lunes) + ' (' + H.fd(R.lunes) + ' al ' + H.fd(R.domingo) + ')*\n';
+  t += '✅ Completadas: ' + (R.ordCompl.length ? R.ordCompl.map(function (o) { return 'OP ' + o.num + ' ' + o.pieza; }).join(', ') : 'ninguna') + '\n';
+  t += '🔄 Abiertas: ' + R.ordAbiertas.length + (R.ordAbiertas.length ? ' (' + R.ordAbiertas.slice(0, 6).map(function (o) { return 'OP ' + o.num + ' ' + n0(o.pct) + '%'; }).join(', ') + ')' : '') + '\n';
+  if (R.ordDetenidas.length) t += '🔧 Detenidas por rotura: ' + R.ordDetenidas.map(function (o) { return 'OP ' + o.num + ' ' + o.pieza; }).join(', ');
+  return t.trim();
+}
 function puedeVerPreciosSrv_(u) { return !!u && (u.rol === 'admin' || (puede(u, 'catalogo', 'view') && !(u.permisos && u.permisos.detalle && u.permisos.detalle.precios_ver === false))); }
-function armarInforme_(u, lunes) {
+function armarInforme_(u, lunes, tipo) {
+  tipo = INF_TIPOS[tipo] ? tipo : 'prod';
   const mods = obtenerEstadoModulos();
   try { const arch = leerArchivo_(true).map(function (x) { return x.o; }).filter(function (o) { return o; }); if (arch.length) mods.orders = (mods.orders || []).concat(arch); } catch (e) {}
   const regs = obtenerRegistros();
@@ -1472,14 +1642,21 @@ function armarInforme_(u, lunes) {
   const stockBajo = [];
   Object.keys(((mods.stock || {}).materiales) || {}).forEach(function (k) { const s = mods.stock.materiales[k]; if (s && s.ultimoCalculo != null && num_(s.minimo) && num_(s.ultimoCalculo) < num_(s.minimo)) stockBajo.push(k + ' ' + Math.round(num_(s.ultimoCalculo)) + ' kg'); });
   const generado = Utilities.formatDate(new Date(), zonaHoja_(), 'dd/MM/yyyy HH:mm');
-  return { status: 'ok', semana: lunes, html: htmlInforme_(R, P, verPrecios, { generado: generado, fueraServicio: fueraServicio, stockBajo: stockBajo }), texto: textoInforme_(R, P, verPrecios), resumen: { ok: R.ok, scrapPct: R.scrapPct, util: R.util, facturado: verPrecios ? R.facturado : null, programado: R.programado } };
+  const hoyIso = isoDia_(new Date());
+  const fueraIds = Object.keys(setup).filter(function (m) { return setup[m] && setup[m].activa === false; });
+  const fueraDet = fueraIds.map(function (m) { const d = setup[m].desde || ''; return { m: m, motivo: setup[m].motivo || '', desde: d, dias: d ? Math.max(0, Math.round((new Date(hoyIso + 'T12:00:00Z') - new Date(d + 'T12:00:00Z')) / 864e5)) : null }; });
+  const metaScrap = mods.kpis && mods.kpis.scrap && num_(mods.kpis.scrap.meta);
+  const extra = { generado: generado, fueraServicio: fueraServicio, fueraIds: fueraIds, fueraDet: fueraDet, stockBajo: stockBajo, metaScrap: metaScrap };
+  const html = tipo === 'mant' ? htmlMant_(R, extra) : (tipo === 'ord' ? htmlOrd_(R, extra) : htmlInforme_(R, P, verPrecios, extra));
+  const texto = tipo === 'mant' ? textoMant_(R, extra) : (tipo === 'ord' ? textoOrd_(R) : textoInforme_(R, P, verPrecios));
+  return { status: 'ok', semana: lunes, tipo: tipo, html: html, texto: texto, resumen: { ok: R.ok, scrapPct: R.scrapPct, util: R.util, facturado: verPrecios ? R.facturado : null, programado: R.programado } };
 }
 function accionInforme(u, body) {
   if (body.action === 'informeEnviarAhora') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador puede enviar el informe por mail.' };
     const sem = /^\d{4}-\d{2}-\d{2}$/.test(String(body.semana || '')) ? lunesDe_(String(body.semana)) : '';
     try {
-      const r = enviarInformeSemanal(true, { semana: sem, manual: true, por: u });
+      const r = enviarInformeSemanal(true, { semana: sem, manual: true, por: u, tipo: INF_TIPOS[body.tipo] ? body.tipo : 'prod' });
       return { status: /^Informe enviado/.test(r) ? 'ok' : 'error', mensaje: r, error: /^Informe enviado/.test(r) ? '' : r };
     } catch (e) {
       const m = String(e.message || e);
@@ -1491,17 +1668,18 @@ function accionInforme(u, body) {
   if (!(u.rol === 'admin' || puede(u, 'indicadores', 'view') || puede(u, 'ordenes', 'view'))) return { status: 'error', error: 'Tu usuario no puede ver el informe.' };
   const hoy = isoDia_(new Date());
   const lunes = /^\d{4}-\d{2}-\d{2}$/.test(String(body.semana || '')) ? lunesDe_(String(body.semana)) : sumarDias_(lunesDe_(hoy), -7);
-  return armarInforme_(u, lunes);
+  return armarInforme_(u, lunes, body.tipo);
 }
 // Lo llama el disparador semanal de Apps Script (función inoferInformeSemanal del Código.gs)
 // El disparador del informe corre cada hora y el servidor decide si toca mandar (día y hora elegidos en INOFER)
 function ajustarDisparadores_() {
   try {
     const p = PropertiesService.getScriptProperties();
-    const uid = p.getProperty('DISPARADOR_INFORME_UID'), atUid = p.getProperty('INFORME_AT_UID');
+    const uid = p.getProperty('DISPARADOR_INFORME_UID');
+    const exactos = {}; ['', '_MANT', '_ORD'].forEach(function (x) { const v = p.getProperty('INFORME_AT_UID' + x); if (v) exactos[v] = 1; });
     const ts = ScriptApp.getProjectTriggers();
-    // el disparador "exacto" del día y hora elegidos (programarInforme_) no se toca
-    const inf = ts.filter(function (t) { return t.getHandlerFunction() === 'inoferInformeSemanal' && t.getUniqueId() !== atUid; });
+    // los disparadores "exactos" del día y hora de cada informe (programarInforme_) no se tocan
+    const inf = ts.filter(function (t) { return t.getHandlerFunction() === 'inoferInformeSemanal' && !exactos[t.getUniqueId()]; });
     if (uid && inf.length === 1 && inf[0].getUniqueId() === uid) return;
     inf.forEach(function (t) { ScriptApp.deleteTrigger(t); });
     const nuevo = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().everyHours(1).create();
@@ -1528,56 +1706,80 @@ function proximoEnvioInforme_(cfg, desde) {
   }
   return null;
 }
-function programarInforme_() {
+// Config de cada informe: 'prod' usa los campos de siempre del módulo informes; 'mant' y 'ord' van en informes.tipos[tipo]
+function cfgTipoInforme_(cfg, tipo) {
+  cfg = cfg || {};
+  if (tipo === 'prod') return { emails: cfg.emails || [], activo: cfg.activo !== false, dia: cfg.dia, hora: cfg.hora };
+  const t = (cfg.tipos && cfg.tipos[tipo]) || {};
+  return { emails: t.emails || [], activo: t.activo !== false, dia: t.igual ? cfg.dia : t.dia, hora: t.igual ? cfg.hora : t.hora };
+}
+function sfxInforme_(tipo) { return tipo === 'prod' ? '' : '_' + String(tipo).toUpperCase(); }
+function programarInforme_(soloTipo) {
   const p = PropertiesService.getScriptProperties();
-  try {
-    const cfg = obtenerEstadoModulos().informes || {};
-    const atUid = p.getProperty('INFORME_AT_UID');
-    ScriptApp.getProjectTriggers().forEach(function (t) { if (atUid && t.getUniqueId() === atUid) ScriptApp.deleteTrigger(t); });
-    p.deleteProperty('INFORME_AT_UID'); p.deleteProperty('INFORME_PROXIMO');
-    const emails = (cfg.emails || []).filter(function (x) { return /@/.test(String(x)); });
-    if (cfg.activo === false || !emails.length) return null;
-    const f = proximoEnvioInforme_(cfg);
-    if (!f) return null;
-    const t = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().at(f).create();
-    p.setProperty('INFORME_AT_UID', t.getUniqueId());
-    p.setProperty('INFORME_PROXIMO', f.toISOString());
-    return f;
-  } catch (e) { p.setProperty('INFORME_PROG_ERROR', String(e.message || e).slice(0, 300)); return null; }
+  let primero = null;
+  let cfg = {};
+  try { cfg = obtenerEstadoModulos().informes || {}; } catch (e) { p.setProperty('INFORME_PROG_ERROR', String(e.message || e).slice(0, 300)); return null; }
+  Object.keys(INF_TIPOS).forEach(function (tipo) {
+    if (soloTipo && soloTipo !== tipo) return;
+    const sfx = sfxInforme_(tipo);
+    try {
+      const c = cfgTipoInforme_(cfg, tipo);
+      const atUid = p.getProperty('INFORME_AT_UID' + sfx);
+      ScriptApp.getProjectTriggers().forEach(function (t) { if (atUid && t.getUniqueId() === atUid) ScriptApp.deleteTrigger(t); });
+      p.deleteProperty('INFORME_AT_UID' + sfx); p.deleteProperty('INFORME_PROXIMO' + sfx);
+      const emails = (c.emails || []).filter(function (x) { return /@/.test(String(x)); });
+      if (c.activo === false || !emails.length) return;
+      const f = proximoEnvioInforme_(c);
+      if (!f) return;
+      const t = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().at(f).create();
+      p.setProperty('INFORME_AT_UID' + sfx, t.getUniqueId());
+      p.setProperty('INFORME_PROXIMO' + sfx, f.toISOString());
+      if (tipo === 'prod') primero = f;
+      p.deleteProperty('INFORME_PROG_ERROR');
+    } catch (e) { p.setProperty('INFORME_PROG_ERROR', String(e.message || e).slice(0, 300)); }
+  });
+  return primero;
 }
 function enviarInformeSemanal(forzar, opc) {
   opc = opc || {};
   if (!opc.manual) ajustarDisparadores_();
   if (!opc.manual) { try { archivoAutomatico_(); } catch (e) {} try { revisarAvisosPush_(true); } catch (e) {} }
+  // a mano (o "forzar"): un solo informe; el disparador: revisa los tres y manda los que tocan
+  if (forzar) return enviarInformeTipo_(INF_TIPOS[opc.tipo] ? opc.tipo : 'prod', true, opc);
+  return Object.keys(INF_TIPOS).map(function (t) { return enviarInformeTipo_(t, false, opc); }).join(' | ');
+}
+function enviarInformeTipo_(tipo, forzar, opc) {
+  const T = INF_TIPOS[tipo], sfx = sfxInforme_(tipo), clave = tipo === 'prod' ? 'Informe' : 'Informe de ' + T.nombre;
   const mods = obtenerEstadoModulos();
-  const cfg = mods.informes || {};
+  const cfg = mods.informes || {}, ct = cfgTipoInforme_(cfg, tipo);
   const props = PropertiesService.getScriptProperties();
-  const emails = (cfg.emails || []).filter(function (x) { return /@/.test(String(x)); });
-  if (!emails.length) return 'No hay mails cargados en INOFER (Informe semanal → Enviar por mail).';
-  if (cfg.activo === false && !forzar) return 'El envío por mail está desactivado.';
+  const emails = (ct.emails || []).filter(function (x) { return /@/.test(String(x)); });
+  if (!emails.length) return clave + ': no hay mails cargados en INOFER (Informe semanal → Envío automático).';
+  if (ct.activo === false && !forzar) return clave + ': el envío por mail está desactivado.';
   const ahora = new Date(), tz = zonaHoja_();
-  const h = horarioInforme_(cfg);
+  const h = horarioInforme_(ct);
   if (!forzar) {
     const dow = Number(Utilities.formatDate(ahora, tz, 'u')) % 7, hora = Number(Utilities.formatDate(ahora, tz, 'H'));
     // si el disparador exacto ya pasó (o no existe), se programa el próximo
-    const prox = props.getProperty('INFORME_PROXIMO');
-    if (!prox || new Date(prox).getTime() < ahora.getTime() - 5 * 60000) programarInforme_();
+    const prox = props.getProperty('INFORME_PROXIMO' + sfx);
+    if (!prox || new Date(prox).getTime() < ahora.getTime() - 5 * 60000) programarInforme_(tipo);
     const enHora = dow === h.dia && hora >= h.hora && hora < h.hora + INFORME_MARGEN_H;
     props.setProperty('INFORME_CHEQUEO', JSON.stringify({ at: ahora.toISOString(), tz: tz, local: Utilities.formatDate(ahora, tz, 'EEE dd/MM HH:mm'), enHora: enHora }));
-    if (!enHora) return 'No es el día y la hora elegidos.';
+    if (!enHora) return clave + ': no es el día y la hora elegidos.';
   }
   const hoy = isoDia_(ahora);
   const lunes = opc.semana || sumarDias_(lunesDe_(hoy), -7);
-  if (!forzar && props.getProperty('INFORME_ENVIADO_' + lunes)) return 'El informe de esa semana ya se envió.';
+  const marca = 'INFORME_ENVIADO_' + (sfx ? sfx.slice(1) + '_' : '') + lunes;
+  if (!forzar && props.getProperty(marca)) return clave + ': el de esa semana ya se envió.';
   // el disparador exacto y el de cada hora pueden coincidir: que mande uno solo
   let lockInf = null;
-  if (!forzar) { lockInf = LockService.getScriptLock(); if (!lockInf.tryLock(30000)) return 'Otro envío en curso.'; if (props.getProperty('INFORME_ENVIADO_' + lunes)) { lockInf.releaseLock(); return 'El informe de esa semana ya se envió.'; } }
+  if (!forzar) { lockInf = LockService.getScriptLock(); if (!lockInf.tryLock(30000)) return 'Otro envío en curso.'; if (props.getProperty(marca)) { lockInf.releaseLock(); return clave + ': el de esa semana ya se envió.'; } }
   const admin = { rol: 'admin', usuario: 'sistema', nombre: 'Informe automático', permisos: {} };
   const quien = opc.por ? (opc.por.nombre || opc.por.usuario) : '';
-  const inf = armarInforme_(admin, lunes);
-  const p = lunes.split('-');
-  const asunto = 'INOFER · Informe semanal ' + p[2] + '/' + p[1] + '/' + p[0];
-  const html = '<div style="background:#fff;padding:12px">' + inf.html + '</div>', texto = inf.texto.replace(/\*/g, '');
+  const inf = armarInforme_(admin, lunes, tipo);
+  const Hs = hInf_();
+  const asunto = 'INOFER · ' + (tipo === 'prod' ? 'Producción' : T.titulo) + ' · semana ' + Hs.semIso(lunes) + ' (' + Hs.fd(lunes) + ' al ' + Hs.fd(sumarDias_(lunes, 6)) + ')';
+  const html = inf.html, texto = inf.texto.replace(/\*/g, '');
   const alias = String(cfg.alias || '').trim();
   let como = '';
   try {
@@ -1601,13 +1803,13 @@ function enviarInformeSemanal(forzar, opc) {
     como = sinPermiso ? ' (desde la cuenta dueña: falta el permiso de Gmail para el alias)' : ' (sin el alias: ' + m0 + ')';
   }
   // el envío a mano no cuenta como el automático (el programado sale igual en su día y hora)
-  if (!opc.manual) props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
+  if (!opc.manual) props.setProperty(marca, ahora.toISOString());
   if (lockInf) { try { lockInf.releaseLock(); } catch (e) {} }
-  if (!opc.manual) programarInforme_();
-  try { enviarPush_('informe', { titulo: 'Informe semanal listo', cuerpo: 'Ya salió por mail el informe de la semana del ' + lunes.split('-').reverse().join('/') + '.', ir: 'hoy', tag: 'informe' }); } catch (e) {}
-  props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como + (opc.manual ? ' · enviado a mano' + (quien ? ' por ' + quien : '') : ''), semana: lunes }));
-  auditar_(opc.por || admin, 'mail', 'informes', ['Informe semanal (semana del ' + lunes.split('-').reverse().join('/') + ') enviado' + (opc.manual ? ' a mano' : '') + ' a ' + emails.join(', ') + como]);
-  return 'Informe enviado a ' + emails.join(', ') + como;
+  if (!opc.manual) programarInforme_(tipo);
+  if (tipo === 'prod') try { enviarPush_('informe', { titulo: 'Informe semanal listo', cuerpo: 'Ya salió por mail el informe de la semana del ' + lunes.split('-').reverse().join('/') + '.', ir: 'hoy', tag: 'informe' }); } catch (e) {}
+  props.setProperty('INFORME_ULTIMO' + sfx, JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como + (opc.manual ? ' · enviado a mano' + (quien ? ' por ' + quien : '') : ''), semana: lunes }));
+  auditar_(opc.por || admin, 'mail', 'informes', [clave + ' (semana del ' + lunes.split('-').reverse().join('/') + ') enviado' + (opc.manual ? ' a mano' : '') + ' a ' + emails.join(', ') + como]);
+  return (tipo === 'prod' ? 'Informe enviado a ' : clave + ' enviado a ') + emails.join(', ') + como;
 }
 
 // =====================================================================
@@ -1951,7 +2153,7 @@ function accionRotura(u, body) {
   if (body.action === 'respaldoInfo') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
     const p = PropertiesService.getScriptProperties();
-    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID'), proximo: p.getProperty('INFORME_PROXIMO') || '', chequeo: jsonSeguro_(p.getProperty('INFORME_CHEQUEO'), null), zona: zonaHoja_(), progError: p.getProperty('INFORME_PROG_ERROR') || '' };
+    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID'), proximo: p.getProperty('INFORME_PROXIMO') || '', tipos: { prod: { proximo: p.getProperty('INFORME_PROXIMO') || '', ultimo: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null) }, mant: { proximo: p.getProperty('INFORME_PROXIMO_MANT') || '', ultimo: jsonSeguro_(p.getProperty('INFORME_ULTIMO_MANT'), null) }, ord: { proximo: p.getProperty('INFORME_PROXIMO_ORD') || '', ultimo: jsonSeguro_(p.getProperty('INFORME_ULTIMO_ORD'), null) } }, chequeo: jsonSeguro_(p.getProperty('INFORME_CHEQUEO'), null), zona: zonaHoja_(), progError: p.getProperty('INFORME_PROG_ERROR') || '' };
   }
   if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
   if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };
