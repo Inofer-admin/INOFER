@@ -1054,6 +1054,10 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
               const el = w.querySelector('#infEstado'); if (!el) return;
               const u = r.informe; const t = [];
               t.push(u && u.fecha ? `Último envío: ${new Date(u.fecha).toLocaleString('es-AR')}${u.como ? ' ' + esc(u.como) : ''}` : 'Todavía no se envió ningún informe.');
+              if (r.proximo) t.push(`<span class="text-emerald-300">⏰ Próximo envío: ${new Date(r.proximo).toLocaleString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>`);
+              else t.push('<span class="text-amber-300">⏰ Todavía no hay un envío programado: tocá "Guardar" para programarlo.</span>');
+              if (r.zona) t.push(`<span class="text-slate-400">Zona horaria de la planilla: ${esc(r.zona)}${r.chequeo && r.chequeo.local ? ' · último control: ' + esc(r.chequeo.local) : ''}</span>`);
+              if (r.progError) t.push(`<span class="text-rose-300">⚠️ No se pudo programar: ${esc(r.progError)}</span>`);
               if (r.informeError) t.push(`<span class="text-rose-300">⚠️ ${esc(r.informeError)}</span>`);
               el.innerHTML = t.join('<br>');
             }).catch(() => { });

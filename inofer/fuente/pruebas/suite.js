@@ -182,6 +182,32 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.dia === 5 && r.hora === 15 && r.alias === 'inofer.informes@gmail.com' && r.emails.join() === 'a@b.com', 'no guardó el horario: ' + JSON.stringify(r));
       await A.evaluate(() => { const m = document.getElementById('inoferPlantaModal'); if (m) m.remove(); });
     });
+    await prueba('Informe por mail: sale a la hora elegida (disparador exacto + ventana de 2 h)', async () => {
+      const pedir = ruta => new Promise((res, rej) => http.get(`http://127.0.0.1:${PUERTO_NUBE}` + ruta, r => { let b = ''; r.on('data', c => b += c); r.on('end', () => res(b)); }).on('error', rej));
+      const run = code => pedir('/__run?f=' + encodeURIComponent('(function(){ ' + code + ' })'));
+      const props = async () => JSON.parse(await pedir('/__state')).props;
+      const ba = {}; new Intl.DateTimeFormat('en-US', { timeZone: 'America/Buenos_Aires', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).forEach(p => { ba[p.type] = p.value; });
+      const dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[ba.weekday], hora = Number(ba.hour);
+      const guardar = async (h) => A.evaluate(async (c) => { const m = inoferModLocal('informes'); Object.assign(m, { emails: ['a@b.com'], activo: true, dia: c.dia, hora: c.hora, alias: '' }); inoferModGuardar('informes'); await new Promise(r => setTimeout(r, 2500)); }, h);
+      const limpiar = "const p = PropertiesService.getScriptProperties(); Object.keys(p.getProperties()).filter(k => /^INFORME_ENVIADO_/.test(k)).forEach(k => p.deleteProperty(k));";
+      const enviar = "PropertiesService.getScriptProperties().setProperty('__R', String(inoferServidor_().enviarInformeSemanal(false)));";
+      // 1) horario = ahora → manda; guardar programó el próximo (la semana que viene a esa hora)
+      await guardar({ dia: dow, hora });
+      let pr = await props();
+      const prox = pr.INFORME_PROXIMO ? new Date(pr.INFORME_PROXIMO) : null;
+      const proxBA = prox ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Buenos_Aires', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(prox) : '';
+      await run(limpiar + enviar); pr = await props(); const r1 = pr.__R;
+      await run(enviar); pr = await props(); const r2 = pr.__R;
+      // 2) horario a otra hora (12 h corrido) → no manda aunque sea el mismo día
+      await run(limpiar); await guardar({ dia: dow, hora: (hora + 12) % 24 });
+      await run(enviar); pr = await props(); const r3 = pr.__R;
+      const info = await A.evaluate(async () => inoferCloudPost({ action: 'respaldoInfo', token: inoferAuthToken() }));
+      await run(limpiar);
+      ok(prox && prox > new Date() && proxBA === String(hora).padStart(2, '0') + ':00' && pr.INFORME_AT_UID, 'no programó el envío exacto: ' + JSON.stringify({ prox: pr.INFORME_PROXIMO, proxBA }));
+      ok(/Informe enviado/.test(r1) && /ya se envió/.test(r2), 'a la hora elegida no mandó (o mandó dos veces): ' + JSON.stringify({ r1, r2 }));
+      ok(/No es el día y la hora/.test(r3), 'mandó fuera de horario: ' + r3);
+      ok(info.proximo && info.zona && info.chequeo && info.chequeo.local, 'respaldoInfo sin el horario: ' + JSON.stringify(info).slice(0, 300));
+    });
     await prueba('Órdenes desde el Gantt: propone, aprueba, ajusta y borra', async () => {
       const r = await A.evaluate(async () => {
         const w = ms => new Promise(r => setTimeout(r, ms));
@@ -708,7 +734,10 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const ops1 = inoferGanttInterpretar('pasá todo lo de la semana 22 a la semana 23');
         const ops2 = inoferGanttInterpretar('cuántas horas libres tiene la 200V en la semana 22');
         const ops3 = inoferGanttInterpretar(`donde está programada la ${cat.part}`);
-        const sem = inoferSemanasEnTexto('del 16 al 21 de noviembre y la semana que viene');
+        const lejos = new Date(); lejos.setDate(lejos.getDate() + 21 - ((lejos.getDay() + 6) % 7)); let fin = new Date(lejos); fin.setDate(fin.getDate() + 5); if (fin.getMonth() !== lejos.getMonth()) { lejos.setDate(lejos.getDate() + 7); fin = new Date(lejos); fin.setDate(fin.getDate() + 5); }
+        const MESES_T = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+        // una semana que nunca es "la que viene" (3 semanas adelante), así la prueba no depende de la fecha
+        const sem = inoferSemanasEnTexto(`del ${lejos.getDate()} al ${fin.getDate()} de ${MESES_T[fin.getMonth()]} y la semana que viene`);
         // cambio grande: primero muestra y espera "Aplicar"
         const t = await inoferGanttChat('pasá todo lo de la semana 22 a la semana 23');
         const log = document.getElementById('inoferGanttChatLog'); const conBoton = !!(log && log.querySelector('.gc-aplicar'));

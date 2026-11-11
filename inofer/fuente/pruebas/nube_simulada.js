@@ -52,12 +52,35 @@ const ctx = {
   Utilities: {
     DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
     computeDigest: (alg, s) => Array.from(crypto.createHash('sha256').update(String(s), 'utf8').digest()).map(b => (b > 127 ? b - 256 : b)),
-    getUuid: () => crypto.randomUUID(), sleep() {}, formatDate: d => d.toISOString().slice(0, 10)
+    getUuid: () => crypto.randomUUID(), sleep() {},
+    // como el de Apps Script: respeta la zona horaria y los formatos que usa el servidor
+    formatDate: (d, tz, fmt) => {
+      if (!fmt) return d.toISOString().slice(0, 10);
+      const o = {}; new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short', hourCycle: 'h23' }).formatToParts(d).forEach(p => { o[p.type] = p.value; });
+      const u = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 }[o.weekday];
+      return fmt.replace(/yyyy|MM|dd|HH|H|mm|ss|EEE|u/g, t => ({ yyyy: o.year, MM: o.month, dd: o.day, HH: o.hour, H: String(Number(o.hour)), mm: o.minute, ss: o.second, EEE: o.weekday, u: String(u) })[t]);
+    },
+    parseDate: (str, tz, fmt) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(str); if (!m) return new Date(NaN);
+      const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+      const ver = ctx.Utilities.formatDate(new Date(guess), tz, 'yyyy-MM-dd HH:mm');
+      const v = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/.exec(ver);
+      const off = Date.UTC(+v[1], +v[2] - 1, +v[3], +v[4], +v[5]) - guess;
+      return new Date(guess - off);
+    }
   },
   Session: { getScriptTimeZone: () => 'America/Buenos_Aires' },
   MailApp: { sendEmail: o => { (globalThis.__mails = globalThis.__mails || []).push(o); }, getRemainingDailyQuota: () => 100 },
   GmailApp: { getAliases: () => [], sendEmail: (to, a, b, o) => { (globalThis.__mails = globalThis.__mails || []).push(Object.assign({ to, subject: a }, o)); } },
-  ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ everyHours: () => ({ create: () => ({ getUniqueId: () => 'x' }) }) }) }) },
+  ScriptApp: (() => {
+    let trig = [], n = 0;
+    const nuevo = (fn, info) => ({ create: () => { const id = 't' + (++n); const t = { getUniqueId: () => id, getHandlerFunction: () => fn, info }; trig.push(t); ctx.__triggers = trig; return t; } });
+    return {
+      getProjectTriggers: () => trig.slice(),
+      deleteTrigger(t) { trig = trig.filter(x => x.getUniqueId() !== t.getUniqueId()); ctx.__triggers = trig; },
+      newTrigger: fn => ({ timeBased: () => ({ everyHours: h => nuevo(fn, { cada: h }), everyDays: () => ({ atHour: h => nuevo(fn, { diaria: h }) }), at: f => nuevo(fn, { at: f.toISOString() }) }) })
+    };
+  })(),
   ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ s, setMimeType() { return this; } }) },
   HtmlService: { createHtmlOutput: s => ({ s }) },
   Logger: { log: (...a) => console.log('[GAS]', ...a) },

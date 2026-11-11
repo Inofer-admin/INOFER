@@ -1498,9 +1498,10 @@ function accionInforme(u, body) {
 function ajustarDisparadores_() {
   try {
     const p = PropertiesService.getScriptProperties();
-    const uid = p.getProperty('DISPARADOR_INFORME_UID');
+    const uid = p.getProperty('DISPARADOR_INFORME_UID'), atUid = p.getProperty('INFORME_AT_UID');
     const ts = ScriptApp.getProjectTriggers();
-    const inf = ts.filter(function (t) { return t.getHandlerFunction() === 'inoferInformeSemanal'; });
+    // el disparador "exacto" del día y hora elegidos (programarInforme_) no se toca
+    const inf = ts.filter(function (t) { return t.getHandlerFunction() === 'inoferInformeSemanal' && t.getUniqueId() !== atUid; });
     if (uid && inf.length === 1 && inf[0].getUniqueId() === uid) return;
     inf.forEach(function (t) { ScriptApp.deleteTrigger(t); });
     const nuevo = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().everyHours(1).create();
@@ -1511,6 +1512,38 @@ function horarioInforme_(cfg) {
   const dia = cfg && cfg.dia != null && cfg.dia !== '' ? Math.max(0, Math.min(6, Number(cfg.dia))) : 1;
   const hora = cfg && cfg.hora != null && cfg.hora !== '' ? Math.max(0, Math.min(23, Number(cfg.hora))) : 7;
   return { dia: dia, hora: hora };
+}
+// Envío a la hora exacta: un disparador de una sola vez en el día y la hora elegidos (zona horaria de la planilla).
+// El disparador de cada hora queda solo de respaldo y únicamente manda dentro de las 2 horas siguientes al horario.
+const INFORME_MARGEN_H = 2;
+function proximoEnvioInforme_(cfg, desde) {
+  const tz = zonaHoja_(), h = horarioInforme_(cfg);
+  desde = desde || new Date();
+  const hoy = isoDia_(desde);
+  for (let i = 0; i <= 8; i++) {
+    const dia = sumarDias_(hoy, i);
+    const f = Utilities.parseDate(dia + ' ' + (h.hora < 10 ? '0' : '') + h.hora + ':00', tz, 'yyyy-MM-dd HH:mm');
+    const dow = Number(Utilities.formatDate(f, tz, 'u')) % 7;
+    if (dow === h.dia && f.getTime() > desde.getTime() + 60000) return f;
+  }
+  return null;
+}
+function programarInforme_() {
+  const p = PropertiesService.getScriptProperties();
+  try {
+    const cfg = obtenerEstadoModulos().informes || {};
+    const atUid = p.getProperty('INFORME_AT_UID');
+    ScriptApp.getProjectTriggers().forEach(function (t) { if (atUid && t.getUniqueId() === atUid) ScriptApp.deleteTrigger(t); });
+    p.deleteProperty('INFORME_AT_UID'); p.deleteProperty('INFORME_PROXIMO');
+    const emails = (cfg.emails || []).filter(function (x) { return /@/.test(String(x)); });
+    if (cfg.activo === false || !emails.length) return null;
+    const f = proximoEnvioInforme_(cfg);
+    if (!f) return null;
+    const t = ScriptApp.newTrigger('inoferInformeSemanal').timeBased().at(f).create();
+    p.setProperty('INFORME_AT_UID', t.getUniqueId());
+    p.setProperty('INFORME_PROXIMO', f.toISOString());
+    return f;
+  } catch (e) { p.setProperty('INFORME_PROG_ERROR', String(e.message || e).slice(0, 300)); return null; }
 }
 function enviarInformeSemanal(forzar, opc) {
   opc = opc || {};
@@ -1526,11 +1559,19 @@ function enviarInformeSemanal(forzar, opc) {
   const h = horarioInforme_(cfg);
   if (!forzar) {
     const dow = Number(Utilities.formatDate(ahora, tz, 'u')) % 7, hora = Number(Utilities.formatDate(ahora, tz, 'H'));
-    if (dow !== h.dia || hora < h.hora) return 'Todavía no es el día y la hora elegidos.';
+    // si el disparador exacto ya pasó (o no existe), se programa el próximo
+    const prox = props.getProperty('INFORME_PROXIMO');
+    if (!prox || new Date(prox).getTime() < ahora.getTime() - 5 * 60000) programarInforme_();
+    const enHora = dow === h.dia && hora >= h.hora && hora < h.hora + INFORME_MARGEN_H;
+    props.setProperty('INFORME_CHEQUEO', JSON.stringify({ at: ahora.toISOString(), tz: tz, local: Utilities.formatDate(ahora, tz, 'EEE dd/MM HH:mm'), enHora: enHora }));
+    if (!enHora) return 'No es el día y la hora elegidos.';
   }
   const hoy = isoDia_(ahora);
   const lunes = opc.semana || sumarDias_(lunesDe_(hoy), -7);
   if (!forzar && props.getProperty('INFORME_ENVIADO_' + lunes)) return 'El informe de esa semana ya se envió.';
+  // el disparador exacto y el de cada hora pueden coincidir: que mande uno solo
+  let lockInf = null;
+  if (!forzar) { lockInf = LockService.getScriptLock(); if (!lockInf.tryLock(30000)) return 'Otro envío en curso.'; if (props.getProperty('INFORME_ENVIADO_' + lunes)) { lockInf.releaseLock(); return 'El informe de esa semana ya se envió.'; } }
   const admin = { rol: 'admin', usuario: 'sistema', nombre: 'Informe automático', permisos: {} };
   const quien = opc.por ? (opc.por.nombre || opc.por.usuario) : '';
   const inf = armarInforme_(admin, lunes);
@@ -1561,6 +1602,8 @@ function enviarInformeSemanal(forzar, opc) {
   }
   // el envío a mano no cuenta como el automático (el programado sale igual en su día y hora)
   if (!opc.manual) props.setProperty('INFORME_ENVIADO_' + lunes, ahora.toISOString());
+  if (lockInf) { try { lockInf.releaseLock(); } catch (e) {} }
+  if (!opc.manual) programarInforme_();
   try { enviarPush_('informe', { titulo: 'Informe semanal listo', cuerpo: 'Ya salió por mail el informe de la semana del ' + lunes.split('-').reverse().join('/') + '.', ir: 'hoy', tag: 'informe' }); } catch (e) {}
   props.setProperty('INFORME_ULTIMO', JSON.stringify({ fecha: ahora.toISOString(), a: emails.length, como: como + (opc.manual ? ' · enviado a mano' + (quien ? ' por ' + quien : '') : ''), semana: lunes }));
   auditar_(opc.por || admin, 'mail', 'informes', ['Informe semanal (semana del ' + lunes.split('-').reverse().join('/') + ') enviado' + (opc.manual ? ' a mano' : '') + ' a ' + emails.join(', ') + como]);
@@ -1908,7 +1951,7 @@ function accionRotura(u, body) {
   if (body.action === 'respaldoInfo') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
     const p = PropertiesService.getScriptProperties();
-    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID') };
+    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID'), proximo: p.getProperty('INFORME_PROXIMO') || '', chequeo: jsonSeguro_(p.getProperty('INFORME_CHEQUEO'), null), zona: zonaHoja_(), progError: p.getProperty('INFORME_PROG_ERROR') || '' };
   }
   if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
   if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };
@@ -2396,6 +2439,8 @@ function doPost(e) {
         guardarModuloSinLock_(body.moduleKey, body.moduleData);
       }
     } finally { lockM.releaseLock(); }
+    // cambió el día/hora o los mails del informe → se reprograma el envío exacto
+    if (body.moduleKey === 'informes') { try { programarInforme_(); } catch (e) {} }
     const paqM = paqueteDatos(u, records);
     paqM.versiones = versiones_();
     if (fusion) paqM.fusion = { modulo: body.moduleKey, conflictos: fusion.conflictos || 0, deOtros: fusion.deOtros || 0 };
