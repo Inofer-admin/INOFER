@@ -238,7 +238,7 @@
           ${puede ? `<div class="grid gap-3 sm:grid-cols-3">
             <button type="button" id="mmCargar" class="rounded-3xl bg-emerald-500 px-4 py-8 text-2xl font-black text-slate-950 shadow-xl shadow-emerald-500/20 active:scale-[0.98] sm:col-span-2">📝 CARGAR TURNO</button>
             <button type="button" id="mmRotura" class="rounded-3xl border-2 border-rose-500/60 bg-rose-500/15 px-4 py-8 text-xl font-black text-rose-200 active:scale-[0.98]">🔧 AVISAR ROTURA</button></div>` : '<div class="text-center text-sm text-slate-400">Este usuario solo puede ver.</div>'}
-          <div class="text-center"><button type="button" id="mmCambiar" class="text-xs text-slate-500 underline">Cambiar de máquina o salir del modo tablet</button></div>
+          <div class="text-center"><button type="button" id="mmCambiar" class="min-h-[44px] px-4 text-sm text-slate-400 underline">Cambiar de máquina o salir del modo tablet</button></div>
         </div>`;
       }
       // Elegir qué OP está puesta en la máquina (pantalla grande, para tocar con el dedo)
@@ -264,7 +264,10 @@
         if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = 'mmVolver'; b.className = 'fixed bottom-4 left-4 z-[60] hidden rounded-2xl border border-amber-500/50 bg-slate-900/95 px-4 py-3 text-sm font-black text-amber-300 shadow-2xl'; document.body.appendChild(b); b.addEventListener('click', () => switchTab('mimaq')); }
         const m = miMaq(), v = $('viewMiMaq');
         b.textContent = '⬅ Volver a la ' + m;
-        b.classList.toggle('hidden', !m || !sesion() || !v || !v.classList.contains('hidden'));
+        const oculto = !m || !sesion() || !v || !v.classList.contains('hidden');
+        b.classList.toggle('hidden', oculto);
+        // que el botón flotante no tape "Guardar turno" ni lo último de la pantalla: se deja lugar abajo
+        document.body.style.paddingBottom = oculto ? '' : '88px';
       }
 
       // ---------------------------------------------------------------------------------

@@ -332,8 +332,12 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const r = await T.evaluate(() => ({ vis: !document.getElementById('viewMiMaq').classList.contains('hidden'), txt: document.getElementById('viewMiMaq').innerText }));
       ok(r.vis && /200V/.test(r.txt) && /CARGAR TURNO/.test(r.txt), 'no entró a la pantalla de la máquina');
       await T.evaluate(() => document.getElementById('mmCargar').click()); await T.waitForTimeout(500);
-      const r2 = await T.evaluate(() => ({ cr: !document.getElementById('orderSubViewRapida').classList.contains('hidden'), maq: inoferCargaRapida.estado.maq, volver: !document.getElementById('mmVolver').classList.contains('hidden') }));
+      const r2 = await T.evaluate(() => ({ cr: !document.getElementById('orderSubViewRapida').classList.contains('hidden'), maq: inoferCargaRapida.estado.maq, volver: !document.getElementById('mmVolver').classList.contains('hidden'), lugar: document.body.style.paddingBottom }));
       ok(r2.cr && r2.maq === '200V' && r2.volver, 'el botón Cargar turno no llevó a la carga: ' + JSON.stringify(r2));
+      ok(r2.lugar === '88px', 'el botón Volver puede tapar Guardar turno: ' + JSON.stringify(r2));
+      await T.evaluate(() => switchTab('mimaq')); await T.waitForTimeout(300);
+      const alto = await T.evaluate(() => ({ h: document.getElementById('mmCambiar').getBoundingClientRect().height, pad: document.body.style.paddingBottom }));
+      ok(alto.h >= 40 && alto.pad === '', 'Cambiar de máquina muy chico o sobra el espacio: ' + JSON.stringify(alto));
       ok(!T._errs.length, 'errores: ' + T._errs.slice(0, 2).join(' | '));
     });
     await prueba('Copia de seguridad descargable', async () => {
