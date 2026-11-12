@@ -329,3 +329,12 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Nombres de operarios: permiso detallado `kpi_operarios` (Indicadores, `opt: true` = apagado hasta habilitarlo). Servidor `puedeVerOperariosSrv_`; a los demás `anonimizarRebabado_` les manda "Operario N" (`anonimo: true`) y no pueden guardar `rebabadoOp`. El equipo borra la copia con nombres si el usuario no tiene el permiso.
 - Presentación: la diapositiva "kpis" muestra hasta 6 indicadores con datos y NUNCA los de plata; "kpis4" sigue con los 4 de siempre.
 - SheetJS 0.18.5 sigue desde el CDN en la app; copia en `fuente/vendor/xlsx-0.18.5.full.min.js` (Apache 2.0) solo para la suite (`addScriptTag`). NUNCA subir las planillas reales al repo (SCRAP_*, CONTROL_DE_PRODUCCION, para_claude).
+
+## PENDIENTES del usuario (al 12/11/2026, para retomar en un chat nuevo)
+- Tiene que subir UNA vez en Indicadores → 📥 Subir planillas: para_claude.xlsx (historial), los SCRAP_<mes>_26.xlsx y CONTROL_DE_PRODUCCION_26.xlsx. En CONTROL DE PRODUCCIÓN hay una fila de COLL con fecha 14/05/1900 (no se carga) y un operario "FECHA" en 14 turnos de octubre (preguntar si es apellido real).
+- Tiene que subir o pegar la planilla de análisis actual en el Gantt automático (ya no viene precargada).
+- Tiene que cargar los mails de los informes de mantenimiento y de órdenes (modal del informe → ⚙️ Envío automático).
+- Habilitar a quien corresponda el permiso "Ver los nombres de los operarios" (Usuarios y permisos → Indicadores).
+- Metas de los indicadores nuevos (cumplimiento, piezas, $/kg, facturación) arrancan vacías; el usuario dijo que las metas "ya están puestas" (las de siempre).
+- Ver también "Pedidos para el futuro" (INOFER TV, Google Play, alcances 2–6, mantenimiento futuro, profesionalizar).
+- Entorno: esbuild está en /opt/npm-tools/node_modules/esbuild (npm no anda en la nube); para correr pruebas con Excel real usar fuente/vendor/xlsx-0.18.5.full.min.js. Las planillas reales del usuario están en /mnt/user-data/attachments/<sesión>/ y NUNCA van al repo.
