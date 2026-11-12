@@ -40,7 +40,7 @@ async function generarCss(html) {
   } finally { await b.close(); }
 }
 // (12/11/2026) Achicar el código (minificar) con esbuild si está instalado: saca espacios y comentarios y
-// acorta los nombres internos. NO cambia los nombres globales (los usan los botones y las otras partes).
+// acorta los nombres internos. NO cambia los nombres globales (los usan los botones y las otras partes). Sin keepNames ni target: esos meten ayudantes globales con nombres cortos que chocan entre partes.
 // Si esbuild no está, se arma igual sin achicar. INOFER_SIN_MINIFICAR=1 lo saltea.
 function cargarEsbuild() {
   if (process.env.INOFER_SIN_MINIFICAR === '1') return null;
@@ -52,7 +52,7 @@ function minificar(html, es) {
   const out = html.replace(/<script([^>]*)>([\s\S]*?)<\/script>/g, (todo, attrs, code) => {
     if (/\bsrc=|type="(?!text\/javascript)/i.test(attrs) || code.length < 200 || /^\s*\/\* Chart\.js/.test(code)) return todo;
     let r;
-    try { r = es.transformSync(code, { minify: true, keepNames: true, target: 'es2020', charset: 'utf8', legalComments: 'none' }).code; }
+    try { r = es.transformSync(code, { minify: true, charset: 'utf8', legalComments: 'none' }).code; }
     catch (e) { throw new Error('esbuild no pudo achicar un script: ' + String(e.message).slice(0, 300)); }
     r = r.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--');
     n++; antes += code.length; despues += r.length;

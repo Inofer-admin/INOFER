@@ -100,7 +100,47 @@ function getStateSheet() {
 // (Gantt, catálogo, órdenes) se guardan partidos en varias columnas (B y D en adelante).
 const CHUNK = 45000;
 
+// (12/11/2026) Copia rápida: leer la hoja de módulos es lo más lento de cada carga. Se guarda una copia
+// en la caché de Apps Script con una "firma" hecha de las versiones de cada módulo; cuando alguien guarda
+// un módulo cambia su versión, la firma ya no coincide y se vuelve a leer la hoja. Partida en pedazos chicos
+// porque la caché acepta hasta 100 KB por clave.
+const CACHE_MOD_PEDAZO = 30000;
+function firmaModulos_() {
+  try {
+    const v = versiones_(); const ks = Object.keys(v).filter(function (k) { return k !== 'records'; }).sort();
+    const txt = ks.map(function (k) { return k + '=' + v[k]; }).join('|');
+    const d = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, txt, Utilities.Charset.UTF_8);
+    return 'inofer_mod_' + d.slice(0, 12).map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+  } catch (e) { return ''; }
+}
+function leerCacheModulos_(firma) {
+  if (!firma) return null;
+  try {
+    const c = CacheService.getScriptCache(); const n = Number(c.get(firma) || 0); if (!n) return null;
+    const ks = []; for (let i = 0; i < n; i++) ks.push(firma + '_' + i);
+    const m = c.getAll(ks); let txt = '';
+    for (let i = 0; i < n; i++) { if (m[ks[i]] == null) return null; txt += m[ks[i]]; }
+    return JSON.parse(txt);
+  } catch (e) { return null; }
+}
+function guardarCacheModulos_(firma, state) {
+  if (!firma) return;
+  try {
+    const txt = JSON.stringify(state); const m = {}; let n = 0;
+    for (let p = 0; p < txt.length; p += CACHE_MOD_PEDAZO) m[firma + '_' + (n++)] = txt.substring(p, p + CACHE_MOD_PEDAZO);
+    if (n > 400) return; // demasiado grande: se lee siempre de la hoja
+    const c = CacheService.getScriptCache(); c.putAll(m, 21600); c.put(firma, String(n), 21600);
+  } catch (e) { }
+}
 function obtenerEstadoModulos() {
+  const firma = firmaModulos_();
+  const enCache = leerCacheModulos_(firma);
+  if (enCache) return enCache;
+  const st = leerEstadoModulosHoja_();
+  guardarCacheModulos_(firma, st);
+  return st;
+}
+function leerEstadoModulosHoja_() {
   const sheet = getStateSheet();
   const rows = sheet.getDataRange().getValues();
   const state = {};
@@ -411,7 +451,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin' };
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt' };
 // área 'a|b' = alcanza con tener permiso en cualquiera de las dos
 function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
