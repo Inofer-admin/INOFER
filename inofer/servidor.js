@@ -451,7 +451,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt', calidad: 'ordenes',
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt', calidad: 'ordenes', calidadDatos: 'ordenes',
   kpisPrecio: 'indicadores', scrapDet: 'indicadores', scrapCosto: 'indicadores', rebabadoOp: 'indicadores' };
 // (12/11/2026) módulos de indicadores con plata: solo a quien ve precios. Rebabado por operario: los nombres solo a quien
 // el admin habilitó (permiso detallado kpi_operarios); al resto le llegan como "Operario 1, 2…" y no puede guardar ese módulo.
@@ -1245,7 +1245,7 @@ function camposCambiados_(a, b, ignorar) {
   return out;
 }
 const NOMBRE_MODULO_ = { orders: 'Órdenes', gantt: 'Gantt', catalog: 'Base de datos', weekly: 'Cierres semanales', memory: 'IA', config: 'Configuración', pistones: 'Pistones', kpis: 'Indicadores',
-  turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal' };
+  turnos: 'Turnos', setup: 'Set-up y máquinas', presentacion: 'Presentación', mantenimiento: 'Mantenimiento', stock: 'Stock', avisos: 'Avisos', informes: 'Informe semanal', calidad: 'Causas de rechazo', calidadDatos: 'Calidad' };
 function resumenCambio_(clave, ant, nue) {
   if (igual_(ant, nue)) return [];
   const out = [];
@@ -1333,6 +1333,14 @@ function resumenCambio_(clave, ant, nue) {
     });
     Object.keys(FA).forEach(function (id) { if (!FN[id]) out.push('Material ' + FA[id].k + ': borró el fardo N° ' + FA[id].f.numero); });
     if (!out.length) out.push('Cambió mínimos o datos del stock');
+  } else if (clave === 'calidadDatos') {
+    const LA = porId_(ant && ant.liberaciones), LN = porId_(nue && nue.liberaciones), NA = porId_(ant && ant.ncs), NN = porId_(nue && nue.ncs), PA = porId_(ant && ant.planes), PN = porId_(nue && nue.planes);
+    Object.keys(LN).forEach(function (id) { if (LA[id]) return; const l = LN[id]; out.push((l.tipo === 'primera' ? 'Primera pieza ' : (l.tipo === 'concesion' ? 'Liberó con concesión ' : 'Control en proceso ')) + (l.pieza || '') + ' en la ' + (l.maq || '') + ': ' + (l.res === 'retenida' ? 'RETENIDA' : 'OK') + (l.nota ? ' (' + l.nota + ')' : '')); });
+    Object.keys(NN).forEach(function (id) { const n = NN[id]; if (!NA[id]) out.push('Abrió la no conformidad ' + (n.num || '') + ': ' + (n.titulo || '')); else if (n.cierre && !NA[id].cierre) out.push('Cerró la no conformidad ' + (n.num || '')); else if (!igual_(NA[id], n)) out.push('Actualizó la no conformidad ' + (n.num || '')); });
+    Object.keys(NA).forEach(function (id) { if (!NN[id]) out.push('Borró la no conformidad ' + (NA[id].num || '')); });
+    Object.keys(PN).forEach(function (id) { if (!PA[id]) out.push('Plan de control nuevo: ' + (PN[id].pieza || '')); else if (!igual_(PA[id], PN[id])) out.push('Cambió el plan de control de ' + (PN[id].pieza || '') + ' (v' + (PN[id].version || '') + (PN[id].motivo ? ': ' + PN[id].motivo : '') + ')'); });
+    Object.keys(PA).forEach(function (id) { if (!PN[id]) out.push('Borró el plan de control de ' + (PA[id].pieza || '')); });
+    if (!out.length) out.push('Modificó instrumentos de medición');
   } else if (clave === 'mantenimiento') {
     const A = porId_(ant && ant.trabajos), N = porId_(nue && nue.trabajos), PA = porId_(ant && ant.planes), PN = porId_(nue && nue.planes);
     Object.keys(N).forEach(function (id) { if (!A[id]) { const t = N[id]; out.push('Registró ' + (t.tipo || 'trabajo') + ' en la ' + (t.maquina || '') + ': ' + (t.tarea || t.descripcion || '') + ' (' + (t.fecha || '') + ')'); } else if (!igual_(A[id], N[id])) out.push('Corrigió un trabajo de la ' + (N[id].maquina || '') + ' (' + (N[id].fecha || '') + ')'); });
@@ -2227,9 +2235,15 @@ function leerFoto_(id) {
 }
 function puedeMantSrv_(u) { return u.rol === 'admin' || ((puede(u, 'gantt', 'edit') || puede(u, 'ordenes', 'edit')) && !(u.permisos && u.permisos.detalle && u.permisos.detalle.mant_editar === false)); }
 function accionRotura(u, body) {
-  const A = ['avisarRotura', 'fotoLeer', 'roturaResolver', 'respaldoInfo'];
+  const A = ['avisarRotura', 'fotoLeer', 'fotoGuardar', 'roturaResolver', 'respaldoInfo'];
   if (A.indexOf(body.action) === -1) return null;
   if (body.action === 'fotoLeer') return { status: 'ok', foto: leerFoto_(body.id) };
+  // foto suelta (calidad: liberación de primera pieza); queda en BD_Fotos y se guarda solo el id
+  if (body.action === 'fotoGuardar') {
+    if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit'))) return { status: 'error', error: 'Tu usuario no puede subir fotos.' };
+    const idF = guardarFoto_(u, body.foto);
+    return idF ? { status: 'ok', id: idF } : { status: 'error', error: 'La foto no es válida o es muy grande.' };
+  }
   if (body.action === 'respaldoInfo') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
     const p = PropertiesService.getScriptProperties();
@@ -2326,10 +2340,12 @@ function fusionarSetup_(stored, incoming, base) {
   });
   return { datos: out, conflictos: 0 };
 }
-function fusionarMant_(stored, incoming, base) {
+function fusionarMant_(stored, incoming, base) { return fusionarListas_(stored, incoming, base, ['planes', 'trabajos', 'roturas', 'cronoParadas']); }
+// Calidad (12/11/2026): planes de control, liberaciones, no conformidades e instrumentos, todas listas por id
+function fusionarListas_(stored, incoming, base, listas) {
   const S = stored || {}, I = incoming || {}, B = base || {};
   const out = Object.assign({}, S, I);
-  ['planes', 'trabajos', 'roturas', 'cronoParadas'].forEach(function (k) {
+  listas.forEach(function (k) {
     if (!Array.isArray(S[k]) && !Array.isArray(I[k])) return;
     out[k] = fusionarLista_('x', S[k] || [], I[k] || [], B[k] || {}).datos;
   });
@@ -2714,6 +2730,7 @@ function doPost(e) {
           else if ((body.moduleKey === 'orders' || body.moduleKey === 'catalog') && Array.isArray(body.moduleData) && Array.isArray(anterior)) fusion = fusionarLista_(body.moduleKey, anterior, body.moduleData, body.base);
           else if (body.moduleKey === 'setup' && body.moduleData && body.moduleData.maquinas) fusion = fusionarSetup_(anterior, body.moduleData, body.base);
           else if (body.moduleKey === 'mantenimiento' && body.moduleData && typeof body.moduleData === 'object') fusion = fusionarMant_(anterior, body.moduleData, body.base);
+          else if (body.moduleKey === 'calidadDatos' && body.moduleData && typeof body.moduleData === 'object') fusion = fusionarListas_(anterior, body.moduleData, body.base, ['planes', 'liberaciones', 'ncs', 'instrumentos']);
           if (fusion) body.moduleData = fusion.datos;
         } catch (e) { fusion = null; }
       }

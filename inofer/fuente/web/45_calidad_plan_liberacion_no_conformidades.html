@@ -1,0 +1,824 @@
+  <script>
+    // ===== 🧪 Calidad (12/11/2026, boceto "Módulo de Calidad INOFER" aprobado) =====
+    // Pestaña con 4 partes: Tablero (indicadores del período, hoy en planta, causas, piezas que más fallan, NC abiertas),
+    // Planes de control (uno por pieza, con versión), Liberación de primera pieza + controles periódicos (pantalla de tablet)
+    // y No conformidades (registrada → contención → causa raíz con 5 por qué → acciones → verificada y cerrada, informe 8D).
+    // Datos: módulo de nube `calidadDatos` {planes, liberaciones, ncs, instrumentos} (listas por id: fusión de 3 vías en el servidor
+    // y base en la parte 20). Los rechazos en control siguen en las órdenes (parte 44). La producción NUNCA se bloquea:
+    // la calidad avisa (🔔, Mi máquina, tablero) pero no impide cargar turnos.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const n1 = v => (Number(v) || 0).toLocaleString('es-AR', { maximumFractionDigits: 1 });
+      const pad = n => String(n).padStart(2, '0');
+      const isoDe = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const hoy = () => isoDe(new Date());
+      const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const fDia = f => f ? String(f).slice(8, 10) + '/' + String(f).slice(5, 7) : '';
+      const fDiaH = iso => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${hhmm(d)}`; };
+      const masDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoDe(d); };
+      const difDias = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 86400000);
+      const nm = s => String(s || '').toUpperCase().replace(/\s+/g, '').replace(/\/1$/, '');
+      const num = v => { const s = String(v == null ? '' : v).trim().replace(/\s/g, ''); if (!s) return NaN; return Number(/,\d+$/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s.replace(',', '.')); };
+      const fmtV = v => (v == null || v === '' || !isFinite(Number(v))) ? '' : Number(v).toLocaleString('es-AR', { maximumFractionDigits: 3 });
+      const quien = () => { try { return inoferUsuarioEtiqueta() || 'equipo'; } catch (e) { return 'equipo'; } };
+      const corto = p => String(p || '').replace(/\s*\(@.*\)$/, '');
+      const nid = p => p + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const toast = t => { try { showToast(t); } catch (e) { } };
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const maqDe = o => { try { return inoferCargaRapida.maqDeOrden(o) || o.machine || ''; } catch (e) { return o.machine || ''; } };
+      const esDemo = o => { try { return typeof inoferEsDemo === 'function' && inoferEsDemo(o); } catch (e) { return false; } };
+      const abierta = o => !esDemo(o) && o.status !== 'Completada' && !/Detenida/.test(o.status || '') && (!window.inoferCargaRapida || !inoferCargaRapida.abierta || inoferCargaRapida.abierta(o));
+      const catDe = p => { try { return (window.inoferCatBuscar && inoferCatBuscar(p)) || null; } catch (e) { return null; } };
+      const okReal = o => (typeof inoferOkReal === 'function' ? inoferOkReal(o) : (o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0));
+
+      // ---------- permisos
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const esAdmin = () => !!(sesion() && sesion().rol === 'admin');
+      const can = (a, n) => typeof inoferCan !== 'function' || inoferCan(a, n);
+      const pk = k => typeof inoferPuede !== 'function' || inoferPuede(k);
+      const P = {
+        ver: () => !!sesion() && (esAdmin() || ((can('ordenes', 'view') || can('indicadores', 'view')) && pk('cal_ver'))),
+        controlar: () => !!sesion() && (esAdmin() || (can('ordenes', 'edit') && pk('cal_controlar'))),
+        nc: () => !!sesion() && (esAdmin() || (can('ordenes', 'edit') && pk('cal_nc'))),
+        plan: () => !!sesion() && (esAdmin() || (can('ordenes', 'edit') && pk('cal_plan'))),
+        precios: () => esAdmin() || pk('precios_ver')
+      };
+
+      // ---------- datos (módulo de nube calidadDatos)
+      const KEY = 'tablero_inyectoras_calidad_datos_v1', MODK = 'calidadDatos';
+      const LISTAS = ['planes', 'liberaciones', 'ncs', 'instrumentos'];
+      const DEF = () => ({ planes: [], liberaciones: [], ncs: [], instrumentos: [] });
+      const normQ = v => { const o = Object.assign(DEF(), v && typeof v === 'object' ? v : {}); LISTAS.forEach(k => { if (!Array.isArray(o[k])) o[k] = []; }); return o; };
+      let Q = DEF(); try { Q = normQ(JSON.parse(localStorage.getItem(KEY) || 'null')); } catch (e) { Q = DEF(); }
+      let cambioAt = 0;
+      const DIAS_LIB = 120; // las liberaciones se guardan 4 meses (trazabilidad de reclamos sin llenar la memoria)
+      function guardar() {
+        const lim = new Date(Date.now() - DIAS_LIB * 86400000).toISOString();
+        Q.liberaciones = Q.liberaciones.filter(x => !x || String(x.at || '') >= lim);
+        try { localStorage.setItem(KEY, JSON.stringify(Q)); } catch (e) { }
+        cambioAt = Date.now();
+        try { pushCloudModuleState(MODK, Q); } catch (e) { }
+        repintar();
+      }
+      function recibir(mods) {
+        if (!mods || !mods[MODK] || typeof mods[MODK] !== 'object') return;
+        try { if (window.inoferModsPendientes && inoferModsPendientes().includes(MODK)) return; } catch (e) { } // falta subir lo de este equipo
+        if (Date.now() - cambioAt < 20000 && !mods.__parcial) return; // recién cambiado acá: no se pisa con una copia vieja
+        const n = normQ(mods[MODK]);
+        if (JSON.stringify(n) === JSON.stringify(Q)) return;
+        Q = n; try { localStorage.setItem(KEY, JSON.stringify(Q)); } catch (e) { }
+        const a = document.activeElement;
+        if (!(a && a.closest && a.closest('#viewCalidad input, #viewCalidad textarea, #viewCalidad select, #calLib, #calNcModal'))) repintar();
+      }
+      function envolverNube() {
+        if (typeof window.applyCloudModules !== 'function' || window.applyCloudModules.__cal) return;
+        const am = window.applyCloudModules;
+        const f = function (mods) { const r = am.apply(this, arguments); try { recibir(mods); } catch (e) { } return r; };
+        Object.keys(am).forEach(k => { f[k] = am[k]; }); f.__cal = true;
+        window.applyCloudModules = f;
+      }
+      window.inoferCalidadLocal = () => Q;
+
+      // ---------- planes de control
+      const planDe = pieza => Q.planes.find(p => nm(p.pieza) === nm(pieza)) || null;
+      const QUIEN = ['Operario', 'Supervisor', 'Calidad'];
+      const CADA = [[0, 'Solo primera pieza'], [1, 'Cada 1 h'], [2, 'Cada 2 h'], [4, 'Cada 4 h'], [-1, 'Una vez por turno']];
+      const cadaTxt = c => (c.primera !== false ? 'Primera pieza' : '') + (Number(c.cadaH) > 0 ? (c.primera !== false ? ' + ' : '') + `cada ${c.cadaH} h` : (Number(c.cadaH) === -1 ? (c.primera !== false ? ' + ' : '') + 'por turno' : '')) || '—';
+      const especTxt = c => c.tipo === 'ok' ? (c.espec || 'OK / NO') : (c.min !== '' && c.min != null && c.max !== '' && c.max != null ? `${fmtV(c.min)} a ${fmtV(c.max)}` : (c.min !== '' && c.min != null ? `mín. ${fmtV(c.min)}` : (c.max !== '' && c.max != null ? `máx. ${fmtV(c.max)}` : 'sin límites'))) + (c.unidad && c.tipo !== 'ok' ? ' ' + c.unidad : '');
+      const controlNuevo = () => ({ id: nid('cc'), que: '', tipo: 'medida', min: '', max: '', unidad: '', espec: '', inst: '', primera: true, cadaH: 0, quien: 'Operario', reaccion: '' });
+      const PLANTILLA = () => [
+        Object.assign(controlNuevo(), { que: 'Peso de la pieza', unidad: 'g', inst: 'Balanza', cadaH: 2, reaccion: 'Retener y avisar al supervisor' }),
+        Object.assign(controlNuevo(), { que: 'Aspecto visual', tipo: 'ok', espec: 'Sin rechupe, sin rebaba, llenado completo', inst: 'Muestra patrón', cadaH: 1, reaccion: 'Separar las piezas y avisar' }),
+        Object.assign(controlNuevo(), { que: 'Fechador y versión del molde', tipo: 'ok', espec: 'Fechador del mes en curso', inst: 'Visual', quien: 'Supervisor', reaccion: 'No producir hasta corregir' })
+      ];
+      function evaluar(c, v) {
+        if (c.tipo === 'ok') return v === 'ok' ? true : (v === 'no' ? false : null);
+        const x = num(v); if (!isFinite(x)) return null;
+        const mi = num(c.min), ma = num(c.max);
+        return (!isFinite(mi) || x >= mi) && (!isFinite(ma) || x <= ma);
+      }
+
+      // ---------- estado de cada máquina (qué control le toca)
+      function ordenAct(m) {
+        const mont = window.inoferOpMontada ? inoferOpMontada(m) : null; if (mont) return mont;
+        const ult = o => (o.logs || []).reduce((a, l) => { const k = String(l.date || '') + String(l.startTime || ''); return k > a ? k : a; }, '');
+        const ab = ordenes().filter(o => maqDe(o) === m && abierta(o));
+        return ab.sort((a, b) => ult(b).localeCompare(ult(a)))[0] || null;
+      }
+      function turnoActual(ahora) {
+        const d = ahora || new Date(), n = d.getHours() * 60 + d.getMinutes();
+        const aMin = s => { const [h, mm] = String(s || '0:0').split(':').map(Number); return (h || 0) * 60 + (mm || 0); };
+        let T = []; try { T = inoferCargaRapida.turnos() || []; } catch (e) { }
+        for (const t of T) {
+          const a = aMin(t.ini), b = aMin(t.fin);
+          const dentro = a <= b ? (n >= a && n < b) : (n >= a || n < b);
+          if (!dentro) continue;
+          const ini = new Date(d); ini.setHours(Math.floor(a / 60), a % 60, 0, 0);
+          if (ini > d) ini.setDate(ini.getDate() - 1);
+          return { nombre: t.nombre, desde: ini.getTime() };
+        }
+        return null;
+      }
+      function inicioDe(o, m) {
+        if (o.montada && o.montada.maq === m && o.montada.desde) { const t = Date.parse(o.montada.desde); if (isFinite(t)) return t; }
+        const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
+      }
+      function estadoMaq(m) {
+        const o = ordenAct(m); if (!o) return { est: 'sinop', m };
+        const pl = planDe(o.part); if (!pl || !(pl.controles || []).length) return { est: 'sinplan', m, o };
+        const ini = inicioDe(o, m);
+        const L = Q.liberaciones.filter(x => x && x.maq === m && nm(x.pieza) === nm(o.part) && Date.parse(x.at) >= ini).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+        const ult = L[0];
+        if (ult && ult.res === 'retenida') return { est: 'retenido', m, o, pl, ult };
+        const prim = L.find(x => (x.tipo === 'primera' || x.tipo === 'concesion') && x.res === 'liberada');
+        if (!prim) return { est: 'falta', m, o, pl, desde: ini };
+        let prox = null; const toca = [];
+        const tur = turnoActual();
+        (pl.controles || []).forEach(c => {
+          let last = 0;
+          L.forEach(x => { if (x.res !== 'liberada') return; if (x.tipo === 'concesion' || (x.v || []).some(v => v[0] === c.id)) last = Math.max(last, Date.parse(x.at)); });
+          let due = null;
+          if (Number(c.cadaH) > 0) due = last + Number(c.cadaH) * 3600000;
+          else if (Number(c.cadaH) === -1 && tur && last < tur.desde) due = tur.desde + 3600000; // por turno: dentro de la primera hora
+          if (due == null) return;
+          if (prox == null || due < prox) prox = due;
+          if (due <= Date.now() + 20 * 60000) toca.push(c.id);
+        });
+        if (prox != null && Date.now() > prox) return { est: 'atrasado', m, o, pl, prim, prox, toca, min: Math.round((Date.now() - prox) / 60000) };
+        return { est: 'ok', m, o, pl, prim, prox, toca };
+      }
+      const ESTADO = {
+        ok: { c: 'emerald', t: e => `OK${e.prox ? ' · próximo control ' + hhmm(new Date(e.prox)) : ''}` },
+        atrasado: { c: 'amber', t: e => `CONTROL ATRASADO ${e.min >= 60 ? Math.floor(e.min / 60) + ' h ' + (e.min % 60) + ' min' : e.min + ' min'}` },
+        retenido: { c: 'rose', t: e => `RETENIDO · espera al supervisor` },
+        falta: { c: 'slate', t: () => 'Falta liberar la primera pieza' },
+        sinplan: { c: 'slate', t: () => 'Sin plan de control' },
+        sinop: { c: 'slate', t: () => 'Sin orden abierta' }
+      };
+
+      // ---------- datos de producción del período (para el tablero)
+      function rango(per) {
+        const h = new Date(); const y = h.getFullYear(), mo = h.getMonth();
+        if (per === 'mesant') { const a = new Date(y, mo - 1, 1), b = new Date(y, mo, 0); return { desde: isoDe(a), hasta: isoDe(b), txt: a.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }) }; }
+        if (per === '30' || per === '90') return { desde: masDias(hoy(), -Number(per) + 1), hasta: hoy(), txt: `últimos ${per} días` };
+        return { desde: isoDe(new Date(y, mo, 1)), hasta: hoy(), txt: h.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }) };
+      }
+      function produccion(desde, hasta) {
+        const R = { iny: 0, ok: 0, scrap: 0, rech: 0, costo: 0, sinPrecio: 0, porPieza: {}, causas: {}, rechazos: [] };
+        const pz = (o) => { const k = nm(o.part) + '|' + maqDe(o); return R.porPieza[k] || (R.porPieza[k] = { pieza: o.part, maq: maqDe(o), iny: 0, malas: 0, causas: {} }); };
+        ordenes().forEach(o => {
+          if (esDemo(o)) return;
+          const c = catDe(o.part), precio = Number(c && c.precio) || 0;
+          (o.logs || []).forEach(l => {
+            const f = String(l.date || ''); if (f < desde || f > hasta) return;
+            const ok = Number(l.okPcs) || 0, sc = (Number(l.scrapPcs) || 0) + (Number(l.lowStartPcs) || 0);
+            R.iny += ok + sc; R.ok += ok; R.scrap += sc;
+            const p = pz(o); p.iny += ok + sc; p.malas += sc;
+            if (precio) R.costo += sc * precio; else if (sc) R.sinPrecio += sc;
+          });
+          (typeof inoferRechazos === 'function' ? inoferRechazos(o) : (o.rechazos || []).filter(r => !r.borrado)).forEach(r => {
+            const f = String(r.fecha || ''); if (f < desde || f > hasta) return;
+            const q = Number(r.cant) || 0; R.rech += q;
+            const p = pz(o); p.malas += q; p.causas[r.causa || 'Sin causa'] = (p.causas[r.causa || 'Sin causa'] || 0) + q;
+            const k = r.causa || 'Sin causa'; const C = R.causas[k] || (R.causas[k] = { n: 0, piezas: {}, maqs: {}, origen: {} });
+            C.n += q; C.piezas[o.part] = (C.piezas[o.part] || 0) + q; C.maqs[maqDe(o)] = (C.maqs[maqDe(o)] || 0) + q; C.origen.control = (C.origen.control || 0) + q;
+            if (precio) R.costo += q * precio; else R.sinPrecio += q;
+            R.rechazos.push({ o, r });
+          });
+        });
+        // planillas SCRAP subidas en Indicadores (si este usuario las tiene)
+        try {
+          const sd = JSON.parse(localStorage.getItem('tablero_inyectoras_scrapdet_v1') || 'null');
+          const meses = (sd && sd.meses) || {};
+          Object.keys(meses).forEach(mes => {
+            if (mes + '-31' < desde || mes + '-01' > hasta) return;
+            (meses[mes].causas || []).forEach(x => {
+              const q = Number(x.n) || 0; if (!q || !x.c) return;
+              const k = String(x.c).trim(); const nk = Object.keys(R.causas).find(z => z.toLowerCase() === k.toLowerCase()) || k;
+              const C = R.causas[nk] || (R.causas[nk] = { n: 0, piezas: {}, maqs: {}, origen: {} });
+              C.n += q; if (x.p) C.piezas[x.p] = (C.piezas[x.p] || 0) + q; C.origen.planilla = (C.origen.planilla || 0) + q;
+            });
+          });
+        } catch (e) { }
+        R.real = Math.max(0, R.ok - R.rech);
+        return R;
+      }
+
+      // ---------- vista (pestaña)
+      let st = { sub: 'tablero', per: 'mes', causa: '', planPieza: '', planBorr: null, buscarPlan: '', libMaq: '', libQ: '', ncFiltro: 'abiertas' };
+      function montarVista() {
+        const ref = $('viewGantt'); if (!ref || $('viewCalidad')) return;
+        const v = document.createElement('div'); v.id = 'viewCalidad'; v.className = 'hidden space-y-4';
+        ref.parentNode.insertBefore(v, ref.nextSibling);
+        const b = document.createElement('button'); b.type = 'button'; b.id = 'tabCalidadBtn'; b.className = 'hidden'; b.textContent = '🧪 Calidad';
+        const tr = $('tabKpiBtn') || $('tabGanttBtn'); if (tr) tr.parentNode.insertBefore(b, tr.nextSibling);
+        b.addEventListener('click', () => switchTab('calidad'));
+      }
+      function instalarTab() {
+        if (typeof window.switchTab !== 'function' || window.switchTab.__cal) return;
+        const sw = window.switchTab;
+        const f = function (tab) {
+          const v = $('viewCalidad');
+          if (tab === 'calidad') {
+            if (!v || !P.ver()) return;
+            sw.call(this, 'ai');
+            Array.from(v.parentElement.children).forEach(el => { if (el !== v && /^view/.test(el.id)) el.classList.add('hidden'); });
+            const ai = $('tabAiBtn'); if (ai) ai.className = 'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition text-violet-300 hover:text-white' + (ai.classList.contains('hidden') ? ' hidden' : '');
+            v.classList.remove('hidden');
+            try { window.scrollTo(0, 0); } catch (e) { }
+            render();
+            return;
+          }
+          if (v) v.classList.add('hidden');
+          return sw.apply(this, arguments);
+        };
+        Object.keys(sw).forEach(k => { f[k] = sw[k]; }); f.__cal = true;
+        window.switchTab = f;
+      }
+      const visible = () => { const v = $('viewCalidad'); return !!v && !v.classList.contains('hidden'); };
+      function repintar() {
+        if (visible()) { try { render(); } catch (e) { console.error(e); } }
+        try { pintarMiMaq(); } catch (e) { }
+      }
+      const SUBS = [['tablero', '📊 Tablero'], ['planes', '📋 Planes de control'], ['liberaciones', '✅ Liberaciones y controles'], ['ncs', '⚠️ No conformidades']];
+      const card = (t, body, extra) => `<div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 ${extra || ''}">${t ? `<div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">${t}</div>` : ''}${body}</div>`;
+      const BTN = 'min-h-[44px] rounded-xl px-3.5 text-sm font-extrabold';
+      function render() {
+        const v = $('viewCalidad'); if (!v) return;
+        if (!P.ver()) { v.innerHTML = '<div class="p-8 text-center text-slate-400">Tu usuario no tiene permiso para ver Calidad.</div>'; return; }
+        const nNc = Q.ncs.filter(n => !n.cierre).length;
+        const head = `<div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-800/70 bg-slate-900 px-4 py-3">
+            <div><div class="text-xl font-black text-white">🧪 Calidad</div><div class="text-xs text-slate-400">Primera pieza, controles en proceso, rechazos, no conformidades y reclamos en un solo lugar.</div></div>
+            <div class="flex flex-wrap gap-2">
+              ${P.controlar() ? `<button type="button" data-cal="liberar" class="${BTN} bg-emerald-500 text-emerald-950 hover:bg-emerald-400">✅ Liberar / controlar</button>` : ''}
+              ${(window.inoferRechazosApi && inoferRechazosApi.puede()) ? `<button type="button" data-cal="rechazo" class="${BTN} bg-rose-500 text-white hover:bg-rose-400">🔍 Rechazo en control</button>` : ''}
+              ${P.nc() ? `<button type="button" data-cal="ncNueva" class="${BTN} bg-cyan-400 text-cyan-950 hover:bg-cyan-300">＋ Nueva no conformidad</button>` : ''}
+            </div></div>
+          <div class="flex flex-wrap gap-1.5">${SUBS.map(([k, t]) => `<button type="button" data-cal-sub="${k}" class="min-h-[40px] rounded-xl px-3 text-sm font-bold ${st.sub === k ? 'bg-cyan-400 text-slate-950' : 'border border-slate-700 bg-slate-900 text-slate-300 hover:text-white'}">${t}${k === 'ncs' && nNc ? ` <span class="ml-1 rounded-full bg-amber-500 px-1.5 text-[11px] text-amber-950">${nNc}</span>` : ''}</button>`).join('')}</div>`;
+        let body = '';
+        if (st.sub === 'planes') body = vistaPlanes();
+        else if (st.sub === 'liberaciones') body = vistaLiberaciones();
+        else if (st.sub === 'ncs') body = vistaNcs();
+        else body = vistaTablero();
+        v.innerHTML = `<div class="mx-auto max-w-7xl space-y-4">${head}${body}</div>`;
+      }
+
+      // ---------- 📊 Tablero
+      function vistaTablero() {
+        const R0 = rango(st.per), R = produccion(R0.desde, R0.hasta);
+        const fpy = R.iny ? (R.real / R.iny * 100) : null, scr = R.iny ? R.scrap / R.iny * 100 : null;
+        const recl = Q.ncs.filter(n => n.tipo === 'cliente' && String((n.abierta || {}).fecha || '') >= R0.desde && String((n.abierta || {}).fecha || '') <= R0.hasta);
+        const reclPz = recl.reduce((a, n) => a + (Number(n.cant) || 0), 0);
+        const abiertas = Q.ncs.filter(n => !n.cierre), venc = abiertas.filter(n => accionesVencidas(n).length);
+        const tile = (t, v, s, col, borde) => `<div class="rounded-2xl border ${borde || 'border-slate-800 bg-slate-900/80'} p-3.5"><div class="text-[11px] font-bold tracking-wider text-slate-400">${t}</div><div class="mt-0.5 text-2xl font-black ${col}">${v}</div><div class="text-xs text-slate-400">${s}</div></div>`;
+        const tiles = [
+          tile('BIEN A LA PRIMERA', fpy == null ? '—' : n1(fpy) + '%', 'buenas reales ÷ inyectadas', fpy == null ? 'text-slate-500' : (fpy >= 95 ? 'text-emerald-300' : (fpy >= 90 ? 'text-amber-300' : 'text-rose-300'))),
+          tile('SCRAP EN MÁQUINA', scr == null ? '—' : n1(scr) + '%', `${n0(R.scrap)} pz cargadas en los turnos`, 'text-white'),
+          tile('RECHAZOS EN CONTROL', n0(R.rech) + ' pz', 'tiradas después del turno', R.rech ? 'text-rose-300' : 'text-white'),
+          tile('RECLAMOS DE CLIENTES', String(recl.length), recl.length && R.real ? `${n0(reclPz / R.real * 1e6)} PPM sobre lo producido` : 'en el período', recl.length ? 'text-amber-300' : 'text-white'),
+          tile('NO CONFORMIDADES', abiertas.length + (abiertas.length === 1 ? ' abierta' : ' abiertas'), venc.length ? `${venc.length} con acción vencida` : 'ninguna acción vencida', 'text-amber-200', abiertas.length ? 'border-amber-600/70 bg-amber-950/30' : '')
+        ];
+        if (P.precios()) tiles.push(tile('COSTO DE NO CALIDAD', '$ ' + n0(R.costo), R.sinPrecio ? `${n0(R.sinPrecio)} pz sin precio cargado` : 'scrap + rechazos × precio', 'text-white'));
+        // hoy en planta
+        const E = MAQS().map(estadoMaq);
+        const filaHoy = e => { const c = ESTADO[e.est].c;
+          const cls = { emerald: 'border-emerald-700 bg-emerald-950/40', amber: 'border-amber-600 bg-amber-950/40', rose: 'border-rose-700 bg-rose-950/40', slate: 'border-slate-700 bg-slate-950/60' }[c];
+          const acc = !P.controlar() ? '' : (e.est === 'sinplan' ? (P.plan() ? `<button type="button" data-cal-planpz="${esc(e.o.part)}" class="rounded-lg border border-slate-600 px-2.5 py-1.5 text-xs font-bold text-slate-200">Armar plan</button>` : '')
+            : e.est === 'sinop' ? '' : e.est === 'retenido' ? `<button type="button" data-cal-resolver="${esc(e.m)}" class="rounded-lg bg-rose-500 px-2.5 py-1.5 text-xs font-black text-white">Resolver</button>`
+            : `<button type="button" data-cal-lib="${esc(e.m)}" class="rounded-lg ${e.est === 'ok' ? 'border border-emerald-600 text-emerald-200' : 'bg-cyan-400 text-cyan-950'} px-2.5 py-1.5 text-xs font-black">${e.est === 'falta' ? 'Liberar' : 'Controlar'}</button>`);
+          return `<div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border ${cls} px-3 py-2.5"><span class="text-sm"><b class="text-white">${esc(e.m)}</b>${e.o ? ` · <b class="text-amber-200">${esc(e.o.part)}</b> <span class="text-xs text-slate-400">OP ${esc(e.o.ordNumber || '')}</span>` : ''}${e.prim ? ` <span class="text-xs text-slate-400">· liberada ${hhmm(new Date(e.prim.at))}</span>` : ''}${e.est === 'retenido' && e.ult ? ` <span class="text-xs text-rose-200">· ${esc(motivoRetencion(e.ult))}</span>` : ''}</span><span class="flex items-center gap-2"><span class="text-xs font-black text-${c}-${c === 'slate' ? '400' : '300'}">${ESTADO[e.est].t(e)}</span>${acc}</span></div>`; };
+        // causas
+        const causas = Object.keys(R.causas).map(k => Object.assign({ k }, R.causas[k])).sort((a, b) => b.n - a.n);
+        const maxC = causas.length ? causas[0].n : 1;
+        const top = (o, n) => Object.keys(o).sort((a, b) => o[b] - o[a]).slice(0, n).map(k => `${esc(k)} (${n0(o[k])})`).join(', ');
+        const causaHtml = causas.slice(0, 8).map(c => `<button type="button" data-cal-causa="${esc(c.k)}" class="block w-full text-left"><div class="flex justify-between text-sm"><span class="${st.causa === c.k ? 'font-black text-white' : 'text-slate-200'}">${esc(c.k)}</span><span class="text-slate-400">${n0(c.n)} pz</span></div><div class="mt-1 h-2 rounded bg-slate-800"><div class="h-2 rounded bg-rose-500" style="width:${Math.max(3, Math.round(c.n / maxC * 100))}%"></div></div>
+            ${st.causa === c.k ? `<div class="mt-1.5 rounded-lg bg-slate-950/70 p-2 text-xs text-slate-300">Piezas: ${top(c.piezas, 4) || '—'}${Object.keys(c.maqs).length ? `<br>Máquinas: ${top(c.maqs, 5)}` : ''}<br><span class="text-slate-500">${c.origen.control ? n0(c.origen.control) + ' de rechazos en control' : ''}${c.origen.control && c.origen.planilla ? ' · ' : ''}${c.origen.planilla ? n0(c.origen.planilla) + ' de planillas SCRAP' : ''}</span></div>` : ''}</button>`).join('');
+        // piezas que más fallan
+        const piezas = Object.values(R.porPieza).filter(p => p.malas > 0).sort((a, b) => b.malas - a.malas).slice(0, 8);
+        const filaPz = p => { const pct = p.iny ? p.malas / p.iny * 100 : null; const cp = Object.keys(p.causas).sort((a, b) => p.causas[b] - p.causas[a])[0];
+          return `<tr class="border-t border-slate-800"><td class="px-2 py-2 font-extrabold text-amber-200">${esc(p.pieza)}</td><td class="px-2 py-2">${esc(p.maq)}</td><td class="px-2 py-2 text-right">${n0(p.malas)}</td><td class="px-2 py-2 text-right font-extrabold ${pct == null ? 'text-slate-500' : (pct >= 5 ? 'text-rose-300' : 'text-amber-300')}">${pct == null ? '—' : n1(pct) + '%'}</td><td class="px-2 py-2 text-slate-300">${cp ? esc(cp) : '<span class="text-slate-500">scrap de máquina</span>'}</td></tr>`; };
+        const ncHtml = abiertas.slice().sort((a, b) => accionesVencidas(b).length - accionesVencidas(a).length || String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 6).map(n => { const v = accionesVencidas(n); const et = etapa(n);
+          return `<button type="button" data-cal-nc="${esc(n.id)}" class="block w-full rounded-xl border ${v.length ? 'border-amber-600 bg-amber-950/40' : 'border-slate-700 bg-slate-950/60'} px-3 py-2 text-left"><b class="text-sm text-white">${esc(n.num)} · ${esc(TIPO_NC[n.tipo] || n.tipo)} · ${esc(n.pieza || n.titulo || '')}</b><span class="block text-xs ${v.length ? 'text-amber-300' : 'text-slate-400'}">${v.length ? `Acción vencida hace ${difDias(hoy(), v[0].para)} día${difDias(hoy(), v[0].para) > 1 ? 's' : ''} · responsable ${esc(v[0].resp || '—')}` : `${ETAPAS[et - 1]} · ${esc(n.titulo || '')}`}</span></button>`; }).join('');
+        return `<div class="flex flex-wrap items-center gap-2 text-sm"><span class="text-slate-400">Período:</span>${[['mes', 'Este mes'], ['mesant', 'Mes pasado'], ['30', 'Últimos 30 días'], ['90', 'Últimos 90 días']].map(([k, t]) => `<button type="button" data-cal-per="${k}" class="min-h-[36px] rounded-lg px-3 text-xs font-bold ${st.per === k ? 'bg-slate-200 text-slate-950' : 'border border-slate-700 text-slate-300'}">${t}</button>`).join('')}<span class="text-xs text-slate-500">(${esc(R0.txt)})</span></div>
+          <div id="calTiles" class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${tiles.join('')}</div>
+          <div class="grid gap-4 lg:grid-cols-5">
+            ${card(`<span class="text-base font-extrabold text-white">Hoy en planta</span><span class="text-xs text-slate-400">controles del plan · ${hhmm(new Date())}</span>`, `<div id="calHoy" class="space-y-2">${E.map(filaHoy).join('')}</div>`, 'lg:col-span-3')}
+            ${card('<span class="text-base font-extrabold text-white">Causas del período</span>', causas.length ? `<div class="space-y-2.5">${causaHtml}</div><p class="mt-3 text-xs text-slate-500">Junta los rechazos en control y las planillas SCRAP subidas en Indicadores. Tocá una causa para ver piezas y máquinas.</p>` : '<p class="text-sm text-slate-500">Todavía no hay rechazos con causa en este período.</p>', 'lg:col-span-2')}
+          </div>
+          <div class="grid gap-4 lg:grid-cols-5">
+            ${card('<span class="text-base font-extrabold text-white">Piezas que más fallan</span>', piezas.length ? `<div class="overflow-x-auto"><table class="w-full min-w-[460px] text-sm"><thead><tr class="text-left text-[11px] text-slate-400"><th class="px-2 py-1">Pieza</th><th class="px-2 py-1">Máquina</th><th class="px-2 py-1 text-right">Malas</th><th class="px-2 py-1 text-right">% de la pieza</th><th class="px-2 py-1">Causa principal</th></tr></thead><tbody>${piezas.map(filaPz).join('')}</tbody></table></div><p class="mt-2 text-xs text-slate-500">Malas = scrap y arranque cargados en los turnos + rechazos en control.</p>` : '<p class="text-sm text-slate-500">Sin piezas malas en el período.</p>', 'lg:col-span-3')}
+            ${card(`<span class="text-base font-extrabold text-white">No conformidades abiertas</span>${abiertas.length > 6 ? `<button type="button" data-cal-sub="ncs" class="text-xs text-cyan-300 underline">ver las ${abiertas.length}</button>` : ''}`, ncHtml ? `<div class="space-y-2">${ncHtml}</div>` : '<p class="text-sm text-slate-500">No hay no conformidades abiertas. 👌</p>', 'lg:col-span-2')}
+          </div>`;
+      }
+      const motivoRetencion = l => { const pl = planDe(l.pieza); const malos = (l.v || []).filter(v => v[2] === false).map(v => { const c = pl && (pl.controles || []).find(x => x.id === v[0]); return c ? c.que : '?'; }); return malos.length ? malos.join(', ') + ' fuera' : (l.nota || 'retenida'); };
+
+      // ---------- 📋 Planes de control
+      function piezasCandidatas() {
+        const out = {}; const add = (p, d) => { if (!p) return; const k = nm(p); if (!out[k]) out[k] = { p, d: d || '' }; };
+        ordenes().filter(abierta).forEach(o => add(o.part, (catDe(o.part) || {}).desc));
+        try { (typeof partsCatalog !== 'undefined' ? partsCatalog : []).forEach(c => add(c.code || c.part || c.codigo, c.desc || c.description)); } catch (e) { }
+        return Object.values(out);
+      }
+      function vistaPlanes() {
+        if (st.planPieza) return editorPlan();
+        const enProd = MAQS().map(m => ordenAct(m)).filter(Boolean);
+        const sinPlan = enProd.filter(o => !planDe(o.part));
+        const q = nm(st.buscarPlan);
+        const lista = Q.planes.slice().filter(p => !q || nm(p.pieza + ' ' + (p.desc || '')).includes(q)).sort((a, b) => String(a.pieza).localeCompare(String(b.pieza), 'es', { numeric: true }));
+        const cands = q ? piezasCandidatas().filter(x => nm(x.p + ' ' + x.d).includes(q) && !planDe(x.p)).slice(0, 8) : [];
+        const venceI = instrumentosAviso();
+        return `${sinPlan.length && P.plan() ? `<div class="rounded-2xl border border-amber-600/60 bg-amber-950/30 p-3 text-sm text-amber-100">Piezas en producción ahora <b>sin plan de control</b>: ${sinPlan.map(o => `<button type="button" data-cal-planpz="${esc(o.part)}" class="ml-1 rounded-lg bg-amber-500/20 px-2 py-1 font-bold text-amber-100 underline">${esc(o.part)} (${esc(maqDe(o))})</button>`).join('')}</div>` : ''}
+          <div class="grid gap-4 lg:grid-cols-3">
+          ${card(`<span class="text-base font-extrabold text-white">Planes de control (${Q.planes.length})</span><span class="text-xs text-slate-400">Se arma una vez por pieza. La tablet pide estos controles solos.</span>`,
+            `<input id="calPlanBuscar" value="${esc(st.buscarPlan)}" placeholder="Buscar pieza… (para armar un plan nuevo, escribí el código)" class="mb-3 min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
+            ${cands.length && P.plan() ? `<div class="mb-3 flex flex-wrap gap-1.5"><span class="self-center text-xs text-slate-400">Armar plan para:</span>${cands.map(x => `<button type="button" data-cal-planpz="${esc(x.p)}" class="rounded-lg border border-cyan-600 px-2.5 py-1.5 text-xs font-bold text-cyan-200">＋ ${esc(x.p)}</button>`).join('')}</div>` : ''}
+            ${q && P.plan() && !cands.length && !lista.length ? `<button type="button" data-cal-planpz="${esc(st.buscarPlan.trim())}" class="mb-3 rounded-lg border border-cyan-600 px-3 py-2 text-xs font-bold text-cyan-200">＋ Armar plan para "${esc(st.buscarPlan.trim())}"</button>` : ''}
+            ${lista.length ? `<div class="overflow-x-auto"><table class="w-full min-w-[520px] text-sm"><thead><tr class="text-left text-[11px] text-slate-400"><th class="px-2 py-1">Pieza</th><th class="px-2 py-1">Controles</th><th class="px-2 py-1">Versión</th><th class="px-2 py-1">Último cambio</th><th></th></tr></thead><tbody>${lista.map(p => `<tr class="border-t border-slate-800"><td class="px-2 py-2"><b class="text-amber-200">${esc(p.pieza)}</b><div class="text-[11px] text-slate-500">${esc(p.desc || '')}</div></td><td class="px-2 py-2 text-xs text-slate-300">${(p.controles || []).map(c => esc(c.que)).join(' · ')}</td><td class="px-2 py-2">v${esc(p.version || 1)}</td><td class="px-2 py-2 text-xs text-slate-400">${esc(fDia(p.fecha))} · ${esc(corto(p.por))}</td><td class="px-2 py-2 text-right"><button type="button" data-cal-planpz="${esc(p.pieza)}" class="rounded-lg border border-slate-600 px-2.5 py-1.5 text-xs font-bold text-slate-200">${P.plan() ? 'Abrir / editar' : 'Ver'}</button></td></tr>`).join('')}</tbody></table></div>`
+              : `<p class="text-sm text-slate-500">${Q.planes.length ? 'Ninguna pieza coincide.' : 'Todavía no hay planes. Buscá una pieza arriba para armar el primero (o esperá a subir la hoja de control).'}</p>`}`, 'lg:col-span-2')}
+          ${card(`<span class="text-base font-extrabold text-white">Instrumentos</span>`, `<div class="space-y-1.5">${Q.instrumentos.length ? Q.instrumentos.slice().sort((a, b) => String(a.vence || '9').localeCompare(String(b.vence || '9'))).map(i => { const d = i.vence ? difDias(i.vence, hoy()) : null;
+              return `<div class="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2 text-sm"><span><b class="text-white">${esc(i.codigo)}</b> <span class="text-slate-300">${esc(i.nombre || '')}</span><span class="block text-xs ${d == null ? 'text-slate-500' : (d < 0 ? 'text-rose-300' : (d <= 15 ? 'text-amber-300' : 'text-slate-400'))}">${d == null ? 'sin fecha de calibración' : (d < 0 ? `calibración VENCIDA hace ${-d} días` : `calibración vence el ${fDia(i.vence)}/${i.vence.slice(2, 4)}${d <= 15 ? ` (en ${d} días)` : ''}`)}</span></span>${P.plan() ? `<span class="flex gap-1"><button type="button" data-cal-instcal="${esc(i.id)}" title="Se calibró hoy" class="rounded-lg border border-slate-600 px-2 py-1 text-xs text-slate-200">Calibrado</button><button type="button" data-cal-instdel="${esc(i.id)}" class="rounded-lg px-2 py-1 text-rose-300">🗑️</button></span>` : ''}</div>`; }).join('') : '<p class="text-sm text-slate-500">Cargá balanzas, calibres y pirómetros para que la app avise antes de que venza la calibración.</p>'}</div>
+            ${P.plan() ? `<form id="calInstForm" class="mt-3 grid grid-cols-2 gap-2"><input id="calInstCod" required maxlength="20" placeholder="Código (C-01)" class="min-h-[40px] rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white" /><input id="calInstNom" maxlength="40" placeholder="Qué es (Calibre)" class="min-h-[40px] rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white" /><label class="col-span-2 text-xs text-slate-400">Vence la calibración<input id="calInstVence" type="date" class="mt-1 min-h-[40px] w-full rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white" /></label><button type="submit" class="col-span-2 min-h-[40px] rounded-lg bg-slate-200 text-sm font-bold text-slate-900">Agregar instrumento</button></form>` : ''}
+            ${venceI.length ? `<p class="mt-2 text-xs text-amber-300">${venceI.length} instrumento${venceI.length > 1 ? 's' : ''} con calibración vencida o por vencer.</p>` : ''}`)}
+          </div>`;
+      }
+      function editorPlan() {
+        const pz = st.planPieza, ex = planDe(pz), puede = P.plan();
+        if (!st.planBorr || nm(st.planBorr.pieza) !== nm(pz)) st.planBorr = ex ? JSON.parse(JSON.stringify(ex)) : { id: nid('pl'), pieza: pz, desc: (catDe(pz) || {}).desc || '', version: 0, controles: PLANTILLA(), hist: [] };
+        const B = st.planBorr;
+        const inp = (c, k, ph, w, tipo) => `<input data-cal-cf="${esc(c.id)}" data-k="${k}" value="${esc(c[k] == null ? '' : c[k])}" ${tipo ? `type="${tipo}"` : ''} placeholder="${ph}" ${puede ? '' : 'disabled'} class="min-h-[38px] ${w} rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white" />`;
+        const sel = (c, k, ops) => `<select data-cal-cf="${esc(c.id)}" data-k="${k}" ${puede ? '' : 'disabled'} class="min-h-[38px] rounded-lg border border-slate-700 bg-slate-950 px-1.5 text-sm text-white">${ops.map(([v, t]) => `<option value="${esc(v)}" ${String(c[k]) === String(v) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+        const inst = Q.instrumentos.map(i => `<option value="${esc(i.codigo + (i.nombre ? ' · ' + i.nombre : ''))}">`).join('');
+        const filas = (B.controles || []).map((c, i) => `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="w-6 text-center text-xs font-black text-slate-500">${i + 1}</span>
+              ${inp(c, 'que', 'Qué se controla (ej. Peso de la pieza)', 'min-w-[200px] flex-1')}
+              ${sel(c, 'tipo', [['medida', '📏 Se mide (número)'], ['ok', '👁️ OK / NO']])}
+              ${puede ? `<button type="button" data-cal-cmov="${esc(c.id)}" data-d="-1" class="rounded-lg px-2 py-1 text-slate-400" title="Subir">▲</button><button type="button" data-cal-cmov="${esc(c.id)}" data-d="1" class="rounded-lg px-2 py-1 text-slate-400" title="Bajar">▼</button><button type="button" data-cal-cdel="${esc(c.id)}" class="rounded-lg px-2 py-1 text-rose-300" title="Quitar">🗑️</button>` : ''}
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-2 pl-8 text-xs text-slate-400">
+              ${c.tipo === 'ok' ? `<span>Qué tiene que cumplir</span>${inp(c, 'espec', 'Sin rechupe ni rebaba en la cara A', 'min-w-[220px] flex-1')}`
+                : `<span>De</span>${inp(c, 'min', 'mín.', 'w-24', 'text')}<span>a</span>${inp(c, 'max', 'máx.', 'w-24', 'text')}${inp(c, 'unidad', 'unidad (g, mm, °C)', 'w-28')}`}
+              <span>Con</span><input data-cal-cf="${esc(c.id)}" data-k="inst" list="calInstList" value="${esc(c.inst || '')}" placeholder="Balanza, calibre…" ${puede ? '' : 'disabled'} class="min-h-[38px] w-40 rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm text-white" />
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-2 pl-8 text-xs text-slate-400">
+              <label class="flex items-center gap-1.5"><input type="checkbox" data-cal-cf="${esc(c.id)}" data-k="primera" ${c.primera !== false ? 'checked' : ''} ${puede ? '' : 'disabled'} class="h-5 w-5" />En la primera pieza</label>
+              <span>y después</span>${sel(c, 'cadaH', CADA.map(([v, t]) => [v, v === 0 ? 'nada más' : t.toLowerCase()]))}
+              <span>Quién</span>${sel(c, 'quien', QUIEN.map(x => [x, x]))}
+              <span>Si da mal</span>${inp(c, 'reaccion', 'Retener y avisar al supervisor', 'min-w-[200px] flex-1')}
+            </div></div>`).join('');
+        const otros = Q.planes.filter(p => nm(p.pieza) !== nm(pz));
+        return card(`<div><div class="text-xs font-black tracking-[2px] text-cyan-300">PLAN DE CONTROL ${ex ? '· v' + esc(ex.version || 1) : '· NUEVO'}</div><div class="text-2xl font-black text-white">${esc(pz)} ${B.desc ? `<span class="text-base font-bold text-slate-400">· ${esc(B.desc)}</span>` : ''}</div><div class="text-xs text-slate-400">Se arma una vez por pieza. La tablet pide estos controles solos, en la primera pieza y cada vez que toca.</div></div>
+            <div class="flex flex-wrap gap-2"><button type="button" data-cal="planVolver" class="${BTN} border border-slate-700 text-slate-300">← Volver</button>${puede && otros.length ? `<select id="calPlanCopiar" class="min-h-[44px] rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-slate-200"><option value="">Copiar de otra pieza…</option>${otros.map(p => `<option value="${esc(p.id)}">${esc(p.pieza)} (${(p.controles || []).length} controles)</option>`).join('')}</select>` : ''}</div>`,
+          `<datalist id="calInstList">${inst}</datalist><div id="calPlanFilas" class="space-y-2">${filas || '<p class="text-sm text-slate-500">Sin controles.</p>'}</div>
+          ${puede ? `<div class="mt-3 flex flex-wrap items-center justify-between gap-2"><button type="button" data-cal="cAdd" class="${BTN} border border-dashed border-slate-600 text-slate-200">＋ Agregar control</button>
+            <div class="flex flex-wrap items-center gap-2">${ex ? `<input id="calPlanMotivo" maxlength="120" placeholder="Motivo del cambio (queda en el historial)" class="min-h-[44px] w-72 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" />` : ''}${ex ? `<button type="button" data-cal="planBorrar" class="${BTN} text-rose-300">Borrar plan</button>` : ''}<button type="button" data-cal="planGuardar" class="${BTN} bg-emerald-500 text-emerald-950">💾 Guardar plan</button></div></div>
+            <div id="calPlanErr" class="mt-2 hidden rounded-xl border border-rose-500/50 bg-rose-500/10 p-2 text-sm font-bold text-rose-200"></div>` : '<p class="mt-3 text-xs text-slate-500">Solo lectura: modificar planes de control es un permiso aparte (Usuarios y permisos → Otros permisos).</p>'}
+          ${(B.hist || []).length ? `<div class="mt-4 rounded-xl border border-slate-800 p-3"><div class="mb-1 text-xs font-bold uppercase tracking-wider text-slate-400">Cambios</div>${B.hist.slice().reverse().map(h => `<div class="border-t border-slate-800 py-1.5 text-xs text-slate-300"><b>v${esc(h.v)}</b> · ${esc(fDia(h.fecha))}/${esc(String(h.fecha || '').slice(2, 4))} · ${esc(corto(h.por))}${h.motivo ? ' · ' + esc(h.motivo) : ''}</div>`).join('')}</div>` : ''}`);
+      }
+      function leerBorrador() {
+        const B = st.planBorr; if (!B) return;
+        document.querySelectorAll('#calPlanFilas [data-cal-cf]').forEach(el => {
+          const c = (B.controles || []).find(x => x.id === el.dataset.calCf); if (!c) return;
+          const k = el.dataset.k;
+          c[k] = el.type === 'checkbox' ? el.checked : (k === 'cadaH' ? Number(el.value) : el.value);
+        });
+      }
+      function guardarPlan() {
+        leerBorrador();
+        const B = st.planBorr, err = $('calPlanErr');
+        const mal = t => { if (err) { err.textContent = t; err.classList.remove('hidden'); } };
+        B.controles = (B.controles || []).filter(c => String(c.que || '').trim());
+        if (!B.controles.length) return mal('Agregá al menos un control con nombre.');
+        for (const c of B.controles) {
+          c.que = String(c.que).trim().slice(0, 80);
+          if (c.tipo !== 'ok') {
+            const mi = num(c.min), ma = num(c.max);
+            if (String(c.min).trim() && !isFinite(mi)) return mal(`"${c.que}": el mínimo no es un número.`);
+            if (String(c.max).trim() && !isFinite(ma)) return mal(`"${c.que}": el máximo no es un número.`);
+            if (isFinite(mi) && isFinite(ma) && mi > ma) return mal(`"${c.que}": el mínimo es mayor que el máximo.`);
+            c.min = isFinite(mi) ? mi : ''; c.max = isFinite(ma) ? ma : '';
+            if (!isFinite(mi) && !isFinite(ma)) return mal(`"${c.que}": poné al menos el mínimo o el máximo (o cambialo a OK / NO).`);
+          }
+          if (c.primera === false && !Number(c.cadaH)) return mal(`"${c.que}": elegí cuándo se controla (primera pieza o cada cierto tiempo).`);
+        }
+        const ex = planDe(B.pieza);
+        const motivo = ($('calPlanMotivo') && $('calPlanMotivo').value.trim()) || (ex ? '' : 'Plan nuevo');
+        if (ex && JSON.stringify(ex.controles) === JSON.stringify(B.controles)) { toast('No hay cambios para guardar'); return; }
+        if (ex && !motivo) return mal('Escribí el motivo del cambio (queda en el historial del plan).');
+        const v = (Number(ex && ex.version) || 0) + 1, f = hoy(), por = quien();
+        const nuevo = Object.assign({}, B, { version: v, fecha: f, por, motivo, at: new Date().toISOString(), hist: (B.hist || []).concat([{ v, fecha: f, por, motivo }]).slice(-30) });
+        Q.planes = Q.planes.filter(p => nm(p.pieza) !== nm(B.pieza)).concat([nuevo]);
+        st.planBorr = null; st.planPieza = '';
+        guardar(); toast(`✓ Plan de control de ${nuevo.pieza} guardado (versión ${v})`);
+      }
+      function instrumentosAviso() { return Q.instrumentos.filter(i => i.vence && difDias(i.vence, hoy()) <= 15); }
+
+      // ---------- ✅ Liberaciones (historial)
+      function vistaLiberaciones() {
+        const q = nm(st.libQ);
+        const L = Q.liberaciones.slice().filter(x => (!st.libMaq || x.maq === st.libMaq) && (!q || nm(x.pieza + ' ' + (x.op || '') + ' ' + (x.por || '')).includes(q))).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+        const TIPO = { primera: 'Primera pieza', periodico: 'Control en proceso', concesion: 'Liberada por el supervisor' };
+        const fila = x => { const pl = planDe(x.pieza);
+          const vals = (x.v || []).map(v => { const c = pl && (pl.controles || []).find(z => z.id === v[0]); return `<span class="${v[2] === false ? 'text-rose-300 font-bold' : 'text-slate-300'}">${esc(c ? c.que : '¿?')}: ${esc(v[1] === 'ok' ? 'OK' : v[1] === 'no' ? 'NO' : fmtV(v[1]) + (c && c.unidad ? ' ' + c.unidad : ''))}</span>`; }).join(' · ');
+          return `<div class="rounded-xl border ${x.res === 'retenida' ? 'border-rose-700 bg-rose-950/30' : 'border-slate-800 bg-slate-950/60'} px-3 py-2 text-sm"><div class="flex flex-wrap items-baseline justify-between gap-2"><span><b class="text-white">${esc(x.maq)}</b> · <b class="text-amber-200">${esc(x.pieza)}</b> <span class="text-xs text-slate-400">${x.op ? 'OP ' + esc(x.op) + ' · ' : ''}${esc(TIPO[x.tipo] || x.tipo)}${x.motivo ? ' · ' + esc(x.motivo) : ''}</span></span><span class="text-xs"><b class="${x.res === 'retenida' ? 'text-rose-300' : 'text-emerald-300'}">${x.res === 'retenida' ? '✕ RETENIDA' : '✓ ' + (x.tipo === 'periodico' ? 'OK' : 'LIBERADA')}</b> <span class="text-slate-400">${esc(fDiaH(x.at))} · ${esc(corto(x.por))}</span></span></div>${vals ? `<div class="mt-1 text-xs">${vals}</div>` : ''}${x.nota ? `<div class="mt-1 text-xs text-slate-400">📝 ${esc(x.nota)}</div>` : ''}${x.foto ? `<button type="button" data-cal-foto="${esc(x.foto)}" class="mt-1 text-xs text-cyan-300 underline">📷 ver foto</button>` : ''}</div>`; };
+        return card(`<span class="text-base font-extrabold text-white">Liberaciones y controles</span><span class="text-xs text-slate-400">Se guardan los últimos ${DIAS_LIB} días · quién, cuándo y con qué valores</span>`,
+          `<div class="mb-3 flex flex-wrap gap-2"><select id="calLibMaq" class="min-h-[44px] rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-white"><option value="">Todas las máquinas</option>${MAQS().map(m => `<option ${st.libMaq === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select><input id="calLibQ" value="${esc(st.libQ)}" placeholder="Buscar pieza, OP o persona…" class="min-h-[44px] flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" /></div>
+          <div class="space-y-2">${L.slice(0, 150).map(fila).join('') || '<p class="text-sm text-slate-500">Todavía no hay liberaciones cargadas.</p>'}</div>${L.length > 150 ? `<p class="mt-2 text-xs text-slate-500">Se muestran las 150 más nuevas de ${L.length}. Filtrá por máquina o pieza para ver otras.</p>` : ''}`);
+      }
+
+      // ---------- Pantalla de liberación / control (tablet)
+      let LB = null;
+      function cerrarLib() { const m = $('calLib'); if (m) m.remove(); LB = null; }
+      function abrirLiberacion(opc) {
+        opc = opc || {};
+        if (!P.controlar()) { toast('Tu usuario no puede hacer controles de calidad'); return; }
+        let m = opc.maq || '';
+        try { if (!m) m = localStorage.getItem('tablero_inyectoras_mimaquina_v1') || ''; } catch (e) { }
+        LB = { maq: m, ordId: opc.ordId || '', tipo: opc.tipo || '', motivo: '', vals: {}, todos: false, foto: '', nota: '' };
+        cerrarModalSolo();
+        const w = document.createElement('div'); w.id = 'calLib';
+        w.className = 'fixed inset-0 z-[9980] flex items-start justify-center overflow-auto bg-slate-950 p-2 sm:p-5';
+        w.innerHTML = '<div id="calLibCaja" class="w-full max-w-3xl space-y-4 text-slate-200"></div>';
+        document.body.appendChild(w);
+        pintarLib();
+      }
+      function cerrarModalSolo() { const m = $('calLib'); if (m) m.remove(); }
+      function controlesLib(e) {
+        const C = (e.pl.controles || []);
+        if (LB.tipo === 'primera') { const p = C.filter(c => c.primera !== false); return p.length ? p : C; }
+        if (LB.todos) return C;
+        const t = C.filter(c => (e.toca || []).includes(c.id));
+        if (t.length) return t;
+        const per = C.filter(c => Number(c.cadaH) !== 0);
+        return per.length ? per : C;
+      }
+      function pintarLib() {
+        const caja = $('calLibCaja'); if (!caja || !LB) return;
+        const cab = (t, s) => `<div class="flex items-start justify-between gap-3 rounded-3xl border border-slate-800 bg-slate-900 px-5 py-4"><div>${t}</div><button type="button" data-lb="cerrar" class="min-h-[48px] rounded-xl px-4 text-2xl text-slate-400 hover:bg-slate-800">×</button></div>${s || ''}`;
+        if (!LB.maq) {
+          caja.innerHTML = cab('<div class="text-xs font-black tracking-[2px] text-cyan-300">CONTROL DE CALIDAD</div><div class="text-2xl font-black text-white">¿En qué máquina?</div>',
+            `<div class="grid grid-cols-2 gap-3 sm:grid-cols-5">${MAQS().map(m => { const e = estadoMaq(m); return `<button type="button" data-lb-maq="${esc(m)}" class="rounded-3xl border-2 border-slate-700 bg-slate-900 px-3 py-5 text-center active:scale-[0.98]"><div class="text-3xl font-black text-amber-300">${esc(m)}</div><div class="mt-1 text-xs font-bold text-${ESTADO[e.est].c}-300">${ESTADO[e.est].t(e)}</div></button>`; }).join('')}</div>`);
+          return;
+        }
+        let e = estadoMaq(LB.maq);
+        if (LB.ordId) { const o = ordenes().find(x => x.id === LB.ordId); if (o) { const pl = planDe(o.part); e = Object.assign({}, e, { o, pl, est: pl ? (e.o && e.o.id === o.id ? e.est : 'falta') : 'sinplan' }); } }
+        if (!e.o) { caja.innerHTML = cab(`<div class="text-xs font-black tracking-[2px] text-cyan-300">CONTROL DE CALIDAD · ${esc(LB.maq)}</div><div class="text-2xl font-black text-white">No hay orden abierta en la máquina</div>`, `<div class="rounded-3xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-300">Primero elegí la OP que está puesta en la máquina.<div class="mt-4"><button type="button" data-lb="otraMaq" class="${BTN} border border-slate-600">Elegir otra máquina</button></div></div>`); return; }
+        if (!e.pl) { caja.innerHTML = cab(`<div class="text-xs font-black tracking-[2px] text-cyan-300">CONTROL DE CALIDAD · ${esc(LB.maq)}</div><div class="text-3xl font-black text-white">${esc(e.o.part)}</div>`, `<div class="rounded-3xl border border-amber-600/60 bg-amber-950/30 p-6 text-center text-amber-100">Esta pieza todavía no tiene <b>plan de control</b>, así que no hay nada que pedir.<div class="mt-1 text-sm text-amber-200/80">Avisale a calidad o al supervisor para que lo arme.</div>${P.plan() ? `<div class="mt-4"><button type="button" data-lb="armarPlan" class="${BTN} bg-amber-400 text-amber-950">Armar el plan ahora</button></div>` : ''}</div>`); return; }
+        if (!LB.tipo) LB.tipo = (e.est === 'falta' || e.est === 'retenido') ? 'primera' : 'periodico';
+        if (LB.tipo === 'primera' && !LB.motivo) LB.motivo = e.o.montada && e.o.montada.maq === LB.maq && Date.now() - Date.parse(e.o.montada.desde) < 8 * 3600000 ? 'Cambio de molde / OP nueva' : 'Arranque';
+        const C = controlesLib(e);
+        LB.cids = C.map(c => c.id); LB.pl = e.pl; LB.o = e.o;
+        const est = e.est === 'retenido' ? '<span class="rounded-2xl border border-rose-500 bg-rose-950/50 px-3 py-2 text-sm font-black text-rose-200">RETENIDA</span>' : (LB.tipo === 'primera' ? '<span class="rounded-2xl border border-amber-600 bg-amber-950/40 px-3 py-2 text-sm font-black text-amber-300">SIN LIBERAR</span>' : '<span class="rounded-2xl border border-emerald-600 bg-emerald-950/40 px-3 py-2 text-sm font-black text-emerald-300">LIBERADA</span>');
+        const fila = c => { const v = LB.vals[c.id];
+          if (c.tipo === 'ok') return `<div class="grid items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-3 sm:grid-cols-[minmax(0,1fr)_300px]"><div><b class="text-lg text-white">${esc(c.que)}</b><div class="text-sm text-slate-400">${esc(c.espec || 'OK / NO')}${c.inst ? ' · ' + esc(c.inst) : ''}</div></div><div class="grid grid-cols-2 gap-2"><button type="button" data-lb-ok="${esc(c.id)}" data-v="ok" class="min-h-[56px] rounded-xl border-2 text-lg font-black ${v === 'ok' ? 'border-emerald-400 bg-emerald-700 text-white' : 'border-slate-700 bg-slate-900 text-slate-300'}">OK</button><button type="button" data-lb-ok="${esc(c.id)}" data-v="no" class="min-h-[56px] rounded-xl border-2 text-lg font-black ${v === 'no' ? 'border-rose-400 bg-rose-800 text-white' : 'border-slate-700 bg-slate-900 text-slate-300'}">NO</button></div></div>`;
+          return `<div class="grid items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-3 sm:grid-cols-[minmax(0,1fr)_150px_140px]"><div><b class="text-lg text-white">${esc(c.que)}</b><div class="text-sm text-slate-400">${esc(especTxt(c))}${c.inst ? ' · ' + esc(c.inst) : ''}</div></div><label class="text-[11px] text-slate-400">Valor medido${c.unidad ? ' (' + esc(c.unidad) + ')' : ''}<input data-lb-num="${esc(c.id)}" value="${esc(v || '')}" inputmode="decimal" autocomplete="off" class="mt-0.5 min-h-[52px] w-full rounded-xl border-2 border-slate-600 bg-slate-900 px-2 text-center text-2xl font-black text-white" /></label><span id="calLbE_${esc(c.id)}" class="rounded-xl py-3.5 text-center text-base font-black"></span></div>`; };
+        const MOT = ['Arranque', 'Cambio de molde / OP nueva', 'Arranque de turno', 'Después de una parada o ajuste'];
+        caja.innerHTML = cab(`<div class="text-xs font-black tracking-[2px] text-cyan-300">${LB.tipo === 'primera' ? 'LIBERACIÓN DE PRIMERA PIEZA' : 'CONTROL EN PROCESO'}</div><div class="text-4xl font-black text-white">${esc(e.o.part)}</div><div class="text-sm text-slate-400">${esc(LB.maq)} · OP ${esc(e.o.ordNumber || '')} · plan v${esc(e.pl.version || 1)}${turnoActual() ? ' · turno ' + esc(turnoActual().nombre) : ''}</div>`)
+          + `<div class="flex flex-wrap items-center justify-between gap-2">${est}<div class="flex flex-wrap gap-1.5">${LB.tipo === 'primera' ? MOT.map(x => `<button type="button" data-lb-mot="${esc(x)}" class="min-h-[40px] rounded-xl px-3 text-xs font-bold ${LB.motivo === x ? 'bg-slate-200 text-slate-950' : 'border border-slate-700 text-slate-300'}">${esc(x)}</button>`).join('') : `<button type="button" data-lb="todos" class="min-h-[40px] rounded-xl border border-slate-700 px-3 text-xs font-bold text-slate-300">${LB.todos ? 'Solo los que tocan ahora' : 'Hacer todos los controles'}</button>`}${e.est !== 'falta' && e.est !== 'retenido' ? `<button type="button" data-lb="tipo" class="min-h-[40px] rounded-xl border border-slate-700 px-3 text-xs font-bold text-slate-300">${LB.tipo === 'primera' ? 'Es un control en proceso' : 'Es una primera pieza'}</button>` : ''}</div></div>
+          <div class="space-y-2.5 rounded-3xl border border-slate-800 bg-slate-900 p-4"><div class="text-base font-extrabold text-white">Lo que dice el plan de control para esta pieza</div>${C.map(fila).join('')}
+            <label class="flex min-h-[56px] cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-600 text-base font-extrabold text-slate-300">${LB.foto ? '📷 Foto lista ✓ (tocá para cambiarla)' : '📷 Sacar foto de la pieza (opcional)'}<input id="calLbFoto" type="file" accept="image/*" capture="environment" class="hidden" /></label>
+            <input id="calLbNota" maxlength="200" value="${esc(LB.nota)}" placeholder="Nota (opcional)" class="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" /></div>
+          <div id="calLbReac" class="hidden rounded-2xl border-2 border-rose-600 bg-rose-950/50 px-4 py-3"></div>
+          <div class="grid grid-cols-2 gap-3"><button type="button" data-lb="retener" class="min-h-[72px] rounded-2xl border-2 border-rose-600 bg-rose-950/50 text-xl font-black text-rose-100 active:scale-[0.98]">RETENER Y AVISAR</button><button type="button" id="calLbLiberar" data-lb="liberar" class="min-h-[72px] rounded-2xl text-xl font-black active:scale-[0.98]">${LB.tipo === 'primera' ? 'LIBERAR ARRANQUE' : 'CONTROL OK'}</button></div>
+          <p class="text-center text-xs text-slate-400">${LB.tipo === 'primera' ? 'Liberar se habilita con todo dentro.' : 'Se habilita con todo dentro.'} Queda registrado quién, a qué hora y con qué valores.</p>`;
+        actualizarLib();
+      }
+      function evaluarLib() {
+        const C = (LB.pl.controles || []).filter(c => (LB.cids || []).includes(c.id));
+        const R = C.map(c => ({ c, v: LB.vals[c.id], ok: evaluar(c, LB.vals[c.id]) }));
+        return { R, faltan: R.filter(x => x.ok == null), malos: R.filter(x => x.ok === false) };
+      }
+      function actualizarLib() {
+        if (!LB || !LB.pl) return;
+        const E = evaluarLib();
+        E.R.forEach(x => {
+          const b = $('calLbE_' + x.c.id), i = document.querySelector(`[data-lb-num="${x.c.id}"]`);
+          if (b) { b.textContent = x.ok == null ? '' : (x.ok ? '✓ DENTRO' : '✕ FUERA'); b.className = 'rounded-xl py-3.5 text-center text-base font-black ' + (x.ok == null ? 'bg-slate-900 text-slate-500' : (x.ok ? 'bg-emerald-800 text-emerald-50' : 'bg-rose-800 text-rose-50')); }
+          if (i) i.className = 'mt-0.5 min-h-[52px] w-full rounded-xl border-2 px-2 text-center text-2xl font-black text-white ' + (x.ok == null ? 'border-slate-600 bg-slate-900' : (x.ok ? 'border-emerald-500 bg-emerald-950' : 'border-rose-500 bg-rose-950'));
+        });
+        const r = $('calLbReac');
+        if (r) { if (E.malos.length) { const c = E.malos[0].c; r.classList.remove('hidden'); r.innerHTML = `<b class="text-lg text-rose-100">${E.malos.map(x => esc(x.c.que)).join(', ')} ${E.malos.length > 1 ? 'están' : 'está'} fuera de lo que pide el plan</b><div class="text-sm text-rose-200">Qué hacer: ${esc(c.reaccion || 'retener y avisar al supervisor')}. Si se corrige, medí de nuevo.</div>`; } else r.classList.add('hidden'); }
+        const lb = $('calLbLiberar'), listo = !E.faltan.length && !E.malos.length;
+        if (lb) { lb.disabled = !listo; lb.className = 'min-h-[72px] rounded-2xl text-xl font-black active:scale-[0.98] ' + (listo ? 'bg-emerald-500 text-emerald-950' : 'bg-slate-800 text-slate-500'); }
+      }
+      async function achicarFoto(file) {
+        return new Promise((res, rej) => { const url = URL.createObjectURL(file); const img = new Image();
+          img.onload = () => { const max = 1024, k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.62)); };
+          img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('No se pudo leer la foto')); }; img.src = url; });
+      }
+      async function subirFoto(dataUrl) {
+        if (!dataUrl || typeof cloudApiUrl === 'undefined' || !cloudApiUrl || typeof inoferCloudPost !== 'function') return '';
+        try { const d = await inoferCloudPost({ token: inoferAuthToken(), action: 'fotoGuardar', foto: dataUrl }); return (d && d.status === 'ok' && d.id) || ''; } catch (e) { return ''; }
+      }
+      async function guardarLib(res) {
+        if (!LB || LB.guardando) return;
+        const E = evaluarLib();
+        if (res === 'liberada' && (E.faltan.length || E.malos.length)) { toast(E.faltan.length ? 'Faltan controles por completar' : 'Hay controles fuera: no se puede liberar'); return; }
+        if (res === 'retenida' && !E.malos.length && !String(LB.nota || '').trim()) { const n = prompt('¿Por qué se retiene? (todos los controles dieron bien)'); if (!n) return; LB.nota = n; }
+        LB.guardando = true;
+        const ahora = new Date();
+        const rec = { id: nid('lb'), maq: LB.maq, pieza: LB.o.part, ordId: LB.o.id, op: LB.o.ordNumber || '', tipo: LB.tipo, motivo: LB.tipo === 'primera' ? LB.motivo : '', fecha: isoDe(ahora), hora: hhmm(ahora), at: ahora.toISOString(), por: quien(), ver: LB.pl.version || 1,
+          v: E.R.filter(x => x.ok != null).map(x => [x.c.id, x.c.tipo === 'ok' ? x.v : num(x.v), x.ok]), res, nota: String(LB.nota || '').slice(0, 200) };
+        const t = turnoActual(ahora); if (t) rec.turno = t.nombre;
+        if (LB.foto) { const id = await subirFoto(LB.foto); if (id) rec.foto = id; else toast('La foto no se pudo subir (sin internet): el control se guardó igual'); }
+        Q.liberaciones.push(rec);
+        guardar();
+        if (res === 'retenida') {
+          const txt = `${rec.maq} · ${rec.pieza} (OP ${rec.op}): ${motivoRetencion(rec)}${rec.nota ? ' · ' + rec.nota : ''}`;
+          try { if (typeof inoferCloudPost === 'function' && typeof cloudApiUrl !== 'undefined' && cloudApiUrl) inoferCloudPost({ token: inoferAuthToken(), action: 'solCrear', tipo: 'Calidad', titulo: `🧪 Pieza retenida en la ${rec.maq}: ${rec.pieza}`, detalle: txt + '. Avisó ' + corto(rec.por) + ' desde el control de calidad.' }).catch(() => { }); } catch (e) { }
+          toast('⛔ Retenida. Se avisó al supervisor. No produzcas hasta que lo resuelva.');
+        } else toast(rec.tipo === 'primera' ? `✓ Arranque liberado en la ${rec.maq}` : `✓ Control OK en la ${rec.maq}`);
+        cerrarLib();
+      }
+      function resolverRetencion(m) {
+        const e = estadoMaq(m); if (e.est !== 'retenido') return;
+        if (!(esAdmin() || pk('cal_controlar'))) return;
+        const nota = prompt(`Retenida en la ${m}: ${motivoRetencion(e.ult)}.\n\nPara volver a medir, cancelá y tocá "Liberar".\nPara liberar igual (concesión del supervisor), escribí el motivo:`);
+        if (nota === null) { abrirLiberacion({ maq: m, tipo: 'primera' }); return; }
+        if (!String(nota).trim()) { toast('Hace falta el motivo para liberar con concesión'); return; }
+        const ahora = new Date();
+        Q.liberaciones.push({ id: nid('lb'), maq: m, pieza: e.o.part, ordId: e.o.id, op: e.o.ordNumber || '', tipo: 'concesion', motivo: 'Concesión', fecha: isoDe(ahora), hora: hhmm(ahora), at: ahora.toISOString(), por: quien(), ver: e.pl.version || 1, v: [], res: 'liberada', nota: String(nota).slice(0, 200), de: e.ult.id });
+        guardar(); toast(`✓ ${m}: liberada con concesión`);
+      }
+      document.addEventListener('input', ev => {
+        const t = ev.target; if (!t || !t.closest || !t.closest('#calLib') || !LB) return;
+        if (t.dataset.lbNum) { LB.vals[t.dataset.lbNum] = t.value; actualizarLib(); }
+        if (t.id === 'calLbNota') LB.nota = t.value;
+      });
+      document.addEventListener('change', async ev => {
+        const t = ev.target; if (!t) return;
+        if (t.id === 'calLbFoto' && LB && t.files && t.files[0]) { try { LB.foto = await achicarFoto(t.files[0]); pintarLib(); } catch (e) { toast(e.message); } return; }
+        if (t.id === 'calPlanCopiar' && t.value) { const p = Q.planes.find(x => x.id === t.value); if (p && st.planBorr) { if (!confirm(`¿Reemplazar los controles por los de ${p.pieza}?`)) { t.value = ''; return; } st.planBorr.controles = JSON.parse(JSON.stringify(p.controles || [])).map(c => Object.assign(c, { id: nid('cc') })); render(); } return; }
+        if (t.dataset && t.dataset.calCf && (t.dataset.k === 'tipo')) { leerBorrador(); render(); return; }
+        if (t.id === 'calLibMaq') { st.libMaq = t.value; render(); }
+      });
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('[data-lb],[data-lb-maq],[data-lb-ok],[data-lb-mot]'); if (!b || !$('calLib') || !$('calLib').contains(b)) return;
+        if (b.dataset.lb === 'cerrar') return cerrarLib();
+        if (b.dataset.lb === 'otraMaq') { LB.maq = ''; return pintarLib(); }
+        if (b.dataset.lb === 'armarPlan') { const pz = LB.o ? LB.o.part : ''; cerrarLib(); abrirPlan(pz); return; }
+        if (b.dataset.lb === 'todos') { LB.todos = !LB.todos; return pintarLib(); }
+        if (b.dataset.lb === 'tipo') { LB.tipo = LB.tipo === 'primera' ? 'periodico' : 'primera'; return pintarLib(); }
+        if (b.dataset.lb === 'retener') return guardarLib('retenida');
+        if (b.dataset.lb === 'liberar') return guardarLib('liberada');
+        if (b.dataset.lbMaq) { LB.maq = b.dataset.lbMaq; return pintarLib(); }
+        if (b.dataset.lbMot) { LB.motivo = b.dataset.lbMot; return pintarLib(); }
+        if (b.dataset.lbOk) { LB.vals[b.dataset.lbOk] = LB.vals[b.dataset.lbOk] === b.dataset.v ? '' : b.dataset.v; return pintarLib(); }
+      });
+      function abrirPlan(pz) { st.sub = 'planes'; st.planPieza = pz; st.planBorr = null; switchTab('calidad'); }
+
+      // ---------- ⚠️ No conformidades
+      const TIPO_NC = { cliente: 'Reclamo de cliente', interna: 'Interna', proveedor: 'Proveedor' };
+      const ETAPAS = ['Registrada', 'Contención', 'Causa raíz', 'Acción correctiva', 'Verificada y cerrada'];
+      const accionesVencidas = n => (n.acciones || []).filter(a => a.estado !== 'hecha' && a.para && a.para < hoy()).sort((a, b) => String(a.para).localeCompare(String(b.para)));
+      function etapa(n) {
+        if (n.cierre) return 5;
+        const cont = (n.contencion || []); if (!cont.length || cont.some(c => !c.ok)) return 2;
+        if ((n.porques || []).filter(x => String(x || '').trim()).length < 2) return 3;
+        const ac = n.acciones || []; if (!ac.length || ac.some(a => a.estado !== 'hecha')) return 4;
+        return 5;
+      }
+      function vistaNcs() {
+        const L = Q.ncs.slice().filter(n => st.ncFiltro === 'todas' || (st.ncFiltro === 'cerradas' ? !!n.cierre : !n.cierre)).sort((a, b) => String(b.num).localeCompare(String(a.num), 'es', { numeric: true }));
+        return card(`<span class="text-base font-extrabold text-white">No conformidades</span><span class="flex gap-1.5">${[['abiertas', 'Abiertas'], ['cerradas', 'Cerradas'], ['todas', 'Todas']].map(([k, t]) => `<button type="button" data-cal-ncf="${k}" class="min-h-[36px] rounded-lg px-3 text-xs font-bold ${st.ncFiltro === k ? 'bg-slate-200 text-slate-950' : 'border border-slate-700 text-slate-300'}">${t}</button>`).join('')}</span>`,
+          L.length ? `<div class="space-y-2">${L.map(n => { const et = etapa(n), v = accionesVencidas(n);
+            return `<button type="button" data-cal-nc="${esc(n.id)}" class="block w-full rounded-xl border ${n.cierre ? 'border-slate-800 bg-slate-950/40' : (v.length ? 'border-amber-600 bg-amber-950/30' : 'border-slate-700 bg-slate-950/60')} px-3 py-2.5 text-left"><div class="flex flex-wrap items-baseline justify-between gap-2"><b class="text-white">${esc(n.num)} · ${esc(n.titulo || '')}</b><span class="text-xs text-slate-400">${esc(TIPO_NC[n.tipo] || '')} · ${esc(fDia((n.abierta || {}).fecha))}</span></div>
+              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs"><span class="text-amber-200">${esc(n.pieza || '')}</span>${n.cliente ? `<span class="text-slate-400">cliente ${esc(n.cliente)}</span>` : ''}<span class="rounded bg-slate-800 px-1.5 py-0.5 font-bold ${n.cierre ? 'text-emerald-300' : 'text-slate-200'}">${et}/5 · ${ETAPAS[et - 1]}</span>${v.length ? `<span class="font-bold text-amber-300">${v.length} acción vencida</span>` : ''}</div></button>`; }).join('')}</div>`
+            : `<p class="text-sm text-slate-500">${st.ncFiltro === 'abiertas' ? 'No hay no conformidades abiertas.' : 'No hay no conformidades.'}</p>`);
+      }
+      // buscar un lote DDMMAA-MAQ (etiqueta de lote, parte 39) → OP, turno, operario, liberación y último control
+      function buscarLote(cod, pieza) {
+        const x = /^\s*(\d{2})(\d{2})(\d{2})\s*-\s*([A-Za-z0-9]+)\s*$/.exec(String(cod || '')); if (!x) return null;
+        const fecha = `20${x[3]}-${x[2]}-${x[1]}`, maq = x[4].toUpperCase();
+        const turnos = [];
+        ordenes().forEach(o => { if (maqDe(o).toUpperCase() !== maq || (pieza && nm(o.part) !== nm(pieza))) return; (o.logs || []).forEach(l => { if (l.date === fecha) turnos.push({ o, l }); }); });
+        const libs = Q.liberaciones.filter(l => l.maq.toUpperCase() === maq && l.fecha === fecha && (!pieza || nm(l.pieza) === nm(pieza))).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+        let fardo = null; try { const s = window.inoferModLocal && inoferModLocal('stock'); Object.keys((s && s.materiales) || {}).forEach(mat => (s.materiales[mat].fardos || []).forEach(f => { if (f.retiro && f.retiro.maquina === maq && f.retiro.fecha <= fecha && (!fardo || f.retiro.fecha > fardo.retiro.fecha)) fardo = Object.assign({ mat }, f); })); } catch (e) { }
+        return { fecha, maq, turnos, libs, fardo };
+      }
+      function htmlLote(n) {
+        const L = n.lote ? buscarLote(n.lote, n.pieza) : null;
+        if (!n.lote) return '<p class="text-xs text-slate-500">Escribí el lote de la etiqueta (ej. 031126-200V) y la app busca la OP, el turno, el operario y los controles de ese día.</p>';
+        if (!L) return '<p class="text-xs text-amber-300">El lote tiene que ser fecha + máquina, como en la etiqueta: 031126-200V.</p>';
+        const ok = L.turnos.length;
+        return `<div class="space-y-1 text-sm">${ok ? L.turnos.map(x => `<div><b>Lote ${esc(n.lote)}</b> · OP ${esc(x.o.ordNumber || '')} · turno ${esc(x.l.turno || x.l.startTime + '–' + x.l.endTime)} · operario ${esc(x.l.operator || '—')} · ${n0(x.l.okPcs)} buenas</div>`).join('') : `<div class="text-amber-300">No encontré turnos de ${esc(n.pieza || 'esa pieza')} en la ${esc(L.maq)} el ${esc(fDia(L.fecha))}.</div>`}
+          ${L.fardo ? `<div>Fardo N° ${esc(L.fardo.numero)} (${esc(L.fardo.mat)}) · análisis ${esc(L.fardo.analisis || '—')}</div>` : ''}
+          ${L.libs.length ? `<div>Liberación de primera pieza: <b class="${L.libs.some(l => l.tipo !== 'periodico' && l.res === 'liberada') ? 'text-emerald-300' : 'text-amber-300'}">${L.libs.some(l => l.tipo !== 'periodico' && l.res === 'liberada') ? 'aprobada' : 'no figura'}</b> · último control ${esc(L.libs[L.libs.length - 1].hora)} (${L.libs[L.libs.length - 1].res === 'retenida' ? 'retenido' : 'OK'}) · ${L.libs.length} control${L.libs.length > 1 ? 'es' : ''} ese día</div>` : `<div class="text-slate-400">Ese día no hay controles de calidad cargados en la ${esc(L.maq)}.</div>`}
+</div>`;
+      }
+      function contextoTurno(n) {
+        const L = n.lote ? buscarLote(n.lote, n.pieza) : null; if (!L || !L.turnos.length) return '';
+        const par = []; L.turnos.forEach(x => (x.l.paradas || []).forEach(p => par.push(`${p.codigo ? 'cód ' + p.codigo : ''} ${p.min || 0} min`)));
+        const cm = L.turnos.some(x => x.l.cambioMolde || x.l.origen === 'cambio');
+        const sc = L.turnos.reduce((a, x) => a + (Number(x.l.scrapPcs) || 0), 0);
+        return `<div class="rounded-xl bg-slate-950/70 p-2.5 text-xs text-slate-300"><b class="text-slate-200">Lo que pasó ese día en la ${esc(L.maq)}:</b> ${par.length ? 'paradas ' + esc(par.slice(0, 6).join(', ')) : 'sin paradas cargadas'}${cm ? ' · hubo cambio de molde' : ''} · scrap ${n0(sc)} pz · ${L.libs.length} control${L.libs.length === 1 ? '' : 'es'} de calidad${L.libs.some(l => l.res === 'retenida') ? ' (alguno retenido)' : ''}.</div>`;
+      }
+      let NC = null;
+      function nuevaNc(base) {
+        if (!P.nc()) { toast('Tu usuario no puede abrir no conformidades'); return; }
+        const nums = Q.ncs.map(n => parseInt(String(n.num).replace(/\D/g, ''), 10) || 0);
+        const n = Object.assign({ id: nid('nc'), num: 'NC-' + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3, '0'), tipo: 'interna', titulo: '', pieza: '', cliente: '', cant: '', lote: '', abierta: { fecha: hoy(), por: quien() },
+          contencion: [{ id: nid('ct'), t: 'Separar las piezas del lote que quedan en depósito', ok: false }, { id: nid('ct'), t: 'Revisar el 100% antes de mandar', ok: false }], porques: ['', '', '', '', ''], acciones: [], cierre: null, nueva: true }, base || {});
+        abrirNc(n);
+      }
+      function abrirNc(n) {
+        NC = JSON.parse(JSON.stringify(n));
+        const w0 = $('calNcModal'); if (w0) w0.remove();
+        const w = document.createElement('div'); w.id = 'calNcModal';
+        w.className = 'fixed inset-0 z-[9970] flex items-start justify-center overflow-auto bg-slate-950/85 p-2 sm:p-6';
+        w.innerHTML = '<div id="calNcCaja" class="w-full max-w-4xl space-y-4 rounded-3xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-200 shadow-2xl sm:p-6"></div>';
+        document.body.appendChild(w);
+        pintarNc();
+      }
+      function cerrarNc() { const w = $('calNcModal'); if (w) w.remove(); NC = null; }
+      function leerNc() {
+        if (!NC) return;
+        document.querySelectorAll('#calNcCaja [data-nc]').forEach(el => { const k = el.dataset.nc; NC[k] = el.value; });
+        document.querySelectorAll('#calNcCaja [data-nc-pq]').forEach(el => { NC.porques[Number(el.dataset.ncPq)] = el.value; });
+        document.querySelectorAll('#calNcCaja [data-nc-ct]').forEach(el => { const c = NC.contencion.find(x => x.id === el.dataset.ncCt); if (c) c.t = el.value; });
+        document.querySelectorAll('#calNcCaja [data-nc-ac]').forEach(el => { const a = NC.acciones.find(x => x.id === el.dataset.ncAc); if (a) a[el.dataset.k] = el.value; });
+      }
+      function pintarNc() {
+        const caja = $('calNcCaja'); if (!caja || !NC) return;
+        const n = NC, ed = P.nc() && !n.cierre, et = etapa(n);
+        const I = (k, ph, extra, tipo) => `<input data-nc="${k}" value="${esc(n[k] || '')}" ${tipo ? `type="${tipo}"` : ''} placeholder="${ph}" ${ed ? '' : 'disabled'} class="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white ${extra || ''}" />`;
+        const pzOps = piezasCandidatas().slice(0, 400).map(x => `<option value="${esc(x.p)}">`).join('');
+        caja.innerHTML = `<div class="flex flex-wrap items-start justify-between gap-3"><div><div class="text-xs font-black tracking-[2px] text-amber-300">NO CONFORMIDAD ${esc(n.num)} · ${esc((TIPO_NC[n.tipo] || '').toUpperCase())}</div><div class="text-2xl font-black text-white">${esc(n.titulo || 'Nueva no conformidad')}</div><div class="text-xs text-slate-400">Abierta el ${esc(fDia(n.abierta.fecha))} por ${esc(corto(n.abierta.por))}${n.cliente ? ' · cliente ' + esc(n.cliente) : ''}</div></div><button type="button" data-ncb="cerrar" class="min-h-[44px] rounded-xl border border-slate-700 px-3 text-sm font-bold text-slate-300">✕ Cerrar</button></div>
+          <div class="grid grid-cols-5 gap-1.5">${ETAPAS.map((t, i) => `<div class="rounded-xl px-1 py-2.5 text-center text-[11px] font-extrabold sm:text-xs ${i + 1 < et || n.cierre ? 'bg-emerald-800 text-emerald-50' : (i + 1 === et ? 'bg-amber-600 text-amber-50' : 'bg-slate-800 text-slate-400')}">${i + 1} · ${t}</div>`).join('')}</div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-3"><div class="text-base font-extrabold text-white">Qué pasó</div>
+              <div class="flex gap-1.5">${Object.keys(TIPO_NC).map(k => `<button type="button" data-nc-tipo="${k}" ${ed ? '' : 'disabled'} class="min-h-[40px] flex-1 rounded-xl px-2 text-xs font-bold ${n.tipo === k ? 'bg-amber-400 text-amber-950' : 'border border-slate-700 text-slate-300'}">${TIPO_NC[k]}</button>`).join('')}</div>
+              ${I('titulo', 'Título corto (ej. Rechupe en la cara A)')}
+              <div class="grid grid-cols-2 gap-2"><input data-nc="pieza" list="calNcPz" value="${esc(n.pieza || '')}" placeholder="Pieza" ${ed ? '' : 'disabled'} class="min-h-[44px] rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" /><datalist id="calNcPz">${pzOps}</datalist>${I('cant', 'Piezas afectadas', '', 'number')}</div>
+              ${n.tipo === 'cliente' ? I('cliente', 'Cliente') : (n.tipo === 'proveedor' ? I('cliente', 'Proveedor (aleación, insertos…)') : '')}
+              <textarea data-nc="detalle" rows="2" placeholder="Descripción (opcional)" ${ed ? '' : 'disabled'} class="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white">${esc(n.detalle || '')}</textarea></div>
+            <div class="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-3"><div class="text-base font-extrabold text-white">Lote afectado</div>
+              <div class="flex gap-2">${I('lote', 'Lote de la etiqueta: 031126-200V')}<button type="button" data-ncb="lote" class="min-h-[44px] rounded-xl border border-slate-600 px-3 text-xs font-bold text-slate-200">Buscar</button></div>
+              <div id="calNcLote">${htmlLote(n)}</div></div>
+          </div>
+          <div class="space-y-2 rounded-2xl border border-slate-800 bg-slate-950/40 p-3"><div class="text-base font-extrabold text-white">Contención (lo urgente)</div>
+            ${n.contencion.map(c => `<div class="flex items-center gap-2"><input type="checkbox" data-nc-ctok="${esc(c.id)}" ${c.ok ? 'checked' : ''} ${ed ? '' : 'disabled'} class="h-6 w-6 shrink-0" /><input data-nc-ct="${esc(c.id)}" value="${esc(c.t)}" ${ed ? '' : 'disabled'} class="min-h-[40px] flex-1 rounded-lg border border-slate-800 bg-transparent px-2 text-sm text-white" />${ed ? `<button type="button" data-nc-ctdel="${esc(c.id)}" class="px-2 text-rose-300">🗑️</button>` : ''}</div>`).join('')}
+            ${ed ? `<div class="flex flex-wrap gap-2"><button type="button" data-ncb="ctAdd" class="rounded-lg border border-dashed border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300">＋ Agregar tarea</button>${window.inoferRechazosApi && inoferRechazosApi.puede() ? '<button type="button" data-ncb="rechazo" class="rounded-lg border border-rose-600/60 px-3 py-1.5 text-xs font-bold text-rose-200">🔍 Cargar las piezas tiradas como rechazo de la OP</button>' : ''}</div>` : ''}</div>
+          <div class="space-y-2 rounded-2xl border ${et === 3 ? 'border-amber-600' : 'border-slate-800'} bg-slate-950/40 p-3"><div class="text-base font-extrabold text-amber-100">Causa raíz: los 5 por qué</div>
+            ${[0, 1, 2, 3, 4].map(i => `<label class="grid items-center gap-2 sm:grid-cols-[110px_minmax(0,1fr)]"><span class="text-slate-400">¿Por qué ${i + 1}?</span><input data-nc-pq="${i}" value="${esc(n.porques[i] || '')}" placeholder="${i === 0 ? 'Qué se ve en la pieza' : 'escribir…'}" ${ed ? '' : 'disabled'} class="min-h-[42px] rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" /></label>`).join('')}
+            <div id="calNcCtx">${contextoTurno(n)}</div></div>
+          <div class="space-y-2 rounded-2xl border ${et === 4 ? 'border-amber-600' : 'border-slate-800'} bg-slate-950/40 p-3"><div class="text-base font-extrabold text-white">Acciones</div>
+            ${n.acciones.length ? `<div class="overflow-x-auto"><table class="w-full min-w-[560px] text-sm"><thead><tr class="text-left text-[11px] text-slate-400"><th class="px-1 py-1">Acción</th><th class="px-1 py-1">Responsable</th><th class="px-1 py-1">Para el</th><th class="px-1 py-1">Estado</th><th></th></tr></thead><tbody>${n.acciones.map(a => { const venc = a.estado !== 'hecha' && a.para && a.para < hoy();
+              return `<tr class="border-t border-slate-800"><td class="px-1 py-1.5"><input data-nc-ac="${esc(a.id)}" data-k="t" value="${esc(a.t)}" ${ed ? '' : 'disabled'} class="min-h-[40px] w-full rounded-lg border border-slate-800 bg-transparent px-2 text-white" /></td><td class="px-1 py-1.5"><input data-nc-ac="${esc(a.id)}" data-k="resp" value="${esc(a.resp || '')}" ${ed ? '' : 'disabled'} class="min-h-[40px] w-32 rounded-lg border border-slate-800 bg-transparent px-2 text-white" /></td><td class="px-1 py-1.5"><input type="date" data-nc-ac="${esc(a.id)}" data-k="para" value="${esc(a.para || '')}" ${ed ? '' : 'disabled'} class="min-h-[40px] rounded-lg border border-slate-800 bg-transparent px-1 text-white" /></td><td class="px-1 py-1.5"><button type="button" data-nc-acok="${esc(a.id)}" ${ed ? '' : 'disabled'} class="min-h-[36px] rounded-lg px-2 text-xs font-black ${a.estado === 'hecha' ? 'bg-emerald-800 text-emerald-100' : (venc ? 'bg-rose-900 text-rose-100' : 'bg-slate-800 text-slate-300')}">${a.estado === 'hecha' ? '✓ Hecha' : (venc ? 'Vencida' : 'Pendiente')}</button></td><td>${ed ? `<button type="button" data-nc-acdel="${esc(a.id)}" class="px-2 text-rose-300">🗑️</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="text-xs text-slate-500">Todavía no hay acciones. Ej.: agregar "temperatura de molde" a la liberación, precalentar el molde 20 min antes.</p>'}
+            ${ed ? `<div class="flex flex-wrap gap-2"><button type="button" data-ncb="acAdd" class="rounded-lg border border-dashed border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300">＋ Agregar acción</button>${n.pieza && P.plan() ? `<button type="button" data-ncb="plan" class="rounded-lg border border-cyan-700 px-3 py-1.5 text-xs font-bold text-cyan-200">📋 Abrir el plan de control de ${esc(n.pieza)}</button>` : ''}</div>` : ''}</div>
+          ${n.cierre ? `<div class="rounded-2xl border border-emerald-700 bg-emerald-950/40 p-3 text-sm text-emerald-100">✓ Cerrada el ${esc(fDia(n.cierre.fecha))} por ${esc(corto(n.cierre.por))} · ${n.cierre.eficaz ? 'las acciones fueron eficaces' : 'acciones NO eficaces'}${n.cierre.nota ? ' · ' + esc(n.cierre.nota) : ''}${P.nc() ? ' <button type="button" data-ncb="reabrir" class="ml-2 underline">reabrir</button>' : ''}</div>` : ''}
+          <div id="calNcErr" class="hidden rounded-xl border border-rose-500/50 bg-rose-500/10 p-2 text-sm font-bold text-rose-200"></div>
+          <div class="flex flex-wrap justify-end gap-2">${!n.nueva && P.nc() ? `<button type="button" data-ncb="borrar" class="${BTN} text-rose-300">Borrar</button>` : ''}<button type="button" data-ncb="imprimir" class="${BTN} border border-slate-600 text-slate-200">🖨️ Imprimir informe 8D</button>${ed && !n.nueva && et >= 5 ? `<button type="button" data-ncb="cerrarNc" class="${BTN} bg-emerald-700 text-white">✓ Verificar y cerrar</button>` : ''}${ed ? `<button type="button" data-ncb="guardar" class="${BTN} bg-emerald-500 text-emerald-950">💾 Guardar</button>` : ''}</div>`;
+      }
+      function guardarNc(silencio) {
+        leerNc(); const n = NC, err = $('calNcErr');
+        if (!String(n.titulo || '').trim()) { if (err) { err.textContent = 'Poné un título corto.'; err.classList.remove('hidden'); } return false; }
+        n.titulo = String(n.titulo).trim().slice(0, 120); n.cant = n.cant === '' ? '' : Math.max(0, Math.round(Number(n.cant) || 0));
+        n.lote = String(n.lote || '').trim().toUpperCase().slice(0, 20);
+        if (n.lote && !n.ordId) { const L = buscarLote(n.lote, n.pieza); if (L && L.turnos[0]) n.ordId = L.turnos[0].o.id; }
+        delete n.nueva; n.at = new Date().toISOString(); n.modPor = quien();
+        Q.ncs = Q.ncs.filter(x => x.id !== n.id).concat([JSON.parse(JSON.stringify(n))]);
+        guardar(); if (!silencio) toast(`✓ ${n.num} guardada`);
+        pintarNc(); return true;
+      }
+      function imprimir8D(n) {
+        const L = n.lote ? buscarLote(n.lote, n.pieza) : null;
+        const fila = (t, v) => `<tr><th>${t}</th><td>${v || '—'}</td></tr>`;
+        const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(n.num)}</title><style>@page{size:A4;margin:14mm}body{font:12px/1.45 Arial,sans-serif;color:#111}h1{font-size:18px;margin:0}h2{font-size:13px;margin:16px 0 6px;padding:4px 6px;background:#e5e7eb}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ca3af;padding:5px 6px;text-align:left;vertical-align:top}th{width:26%;background:#f3f4f6}.f{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:6px}.firmas{display:flex;gap:20px;margin-top:40px}.firmas div{flex:1;border-top:1px solid #111;padding-top:4px;text-align:center}</style></head><body>
+          <div class="f"><div><div style="font-size:11px;letter-spacing:2px">INOFER · INFORME 8D</div><h1>${esc(n.num)} · ${esc(n.titulo)}</h1></div><div>${esc(TIPO_NC[n.tipo] || '')}<br>Estado: ${esc(ETAPAS[etapa(n) - 1])}</div></div>
+          <h2>D1-D2 · Equipo y descripción del problema</h2><table>${fila('Abierta', `${esc(fDia(n.abierta.fecha))}/${esc(String(n.abierta.fecha).slice(2, 4))} por ${esc(corto(n.abierta.por))}`)}${fila('Pieza', esc(n.pieza))}${fila(n.tipo === 'proveedor' ? 'Proveedor' : 'Cliente', esc(n.cliente))}${fila('Piezas afectadas', n.cant === '' ? '' : n0(n.cant))}${fila('Descripción', esc(n.detalle || ''))}${fila('Lote', esc(n.lote) + (L && L.turnos.length ? '<br>' + L.turnos.map(x => `OP ${esc(x.o.ordNumber)} · turno ${esc(x.l.turno || '')} · operario ${esc(x.l.operator || '')} · ${n0(x.l.okPcs)} buenas`).join('<br>') : ''))}</table>
+          <h2>D3 · Contención</h2><table>${n.contencion.map(c => `<tr><td style="width:24px">${c.ok ? '☑' : '☐'}</td><td>${esc(c.t)}</td></tr>`).join('') || '<tr><td>—</td></tr>'}</table>
+          <h2>D4 · Causa raíz (5 por qué)</h2><table>${n.porques.map((p, i) => fila(`¿Por qué ${i + 1}?`, esc(p))).join('')}</table>
+          <h2>D5-D6 · Acciones correctivas</h2><table><tr><th>Acción</th><th>Responsable</th><th>Para el</th><th>Estado</th></tr>${n.acciones.map(a => `<tr><td>${esc(a.t)}</td><td>${esc(a.resp || '')}</td><td>${esc(fDia(a.para))}</td><td>${a.estado === 'hecha' ? 'Hecha' : (a.para && a.para < hoy() ? 'Vencida' : 'Pendiente')}</td></tr>`).join('') || '<tr><td colspan="4">—</td></tr>'}</table>
+          <h2>D7-D8 · Verificación y cierre</h2><table>${fila('Cierre', n.cierre ? `${esc(fDia(n.cierre.fecha))} por ${esc(corto(n.cierre.por))} · ${n.cierre.eficaz ? 'eficaz' : 'no eficaz'}${n.cierre.nota ? ' · ' + esc(n.cierre.nota) : ''}` : 'Abierta')}</table>
+          <div class="firmas"><div>Calidad</div><div>Producción</div><div>Gerencia</div></div></body></html>`;
+        const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(f);
+        f.contentDocument.open(); f.contentDocument.write(html); f.contentDocument.close();
+        setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { } setTimeout(() => f.remove(), 60000); }, 300);
+        return html;
+      }
+      document.addEventListener('click', e => {
+        const w = $('calNcModal'); if (!w || !NC) return;
+        if (e.target === w) return cerrarNc();
+        const b = e.target.closest && e.target.closest('[data-ncb],[data-nc-tipo],[data-nc-ctok],[data-nc-ctdel],[data-nc-acok],[data-nc-acdel]'); if (!b || !w.contains(b)) return;
+        const a = b.dataset.ncb;
+        if (a === 'cerrar') return cerrarNc();
+        leerNc();
+        if (b.dataset.ncTipo) { NC.tipo = b.dataset.ncTipo; return pintarNc(); }
+        if (b.dataset.ncCtok) { const c = NC.contencion.find(x => x.id === b.dataset.ncCtok); if (c) c.ok = b.checked; return pintarNc(); }
+        if (b.dataset.ncCtdel) { NC.contencion = NC.contencion.filter(x => x.id !== b.dataset.ncCtdel); return pintarNc(); }
+        if (b.dataset.ncAcok) { const x = NC.acciones.find(z => z.id === b.dataset.ncAcok); if (x) { x.estado = x.estado === 'hecha' ? 'pendiente' : 'hecha'; x.hechaAt = x.estado === 'hecha' ? new Date().toISOString() : ''; } return pintarNc(); }
+        if (b.dataset.ncAcdel) { NC.acciones = NC.acciones.filter(x => x.id !== b.dataset.ncAcdel); return pintarNc(); }
+        if (a === 'ctAdd') { NC.contencion.push({ id: nid('ct'), t: '', ok: false }); pintarNc(); const i = document.querySelector(`[data-nc-ct="${NC.contencion[NC.contencion.length - 1].id}"]`); if (i) i.focus(); return; }
+        if (a === 'acAdd') { NC.acciones.push({ id: nid('ac'), t: '', resp: '', para: masDias(hoy(), 7), estado: 'pendiente' }); pintarNc(); const i = document.querySelector(`[data-nc-ac="${NC.acciones[NC.acciones.length - 1].id}"]`); if (i) i.focus(); return; }
+        if (a === 'lote') { const lt = $('calNcLote'); if (lt) lt.innerHTML = htmlLote(NC); const c = $('calNcCtx'); if (c) c.innerHTML = contextoTurno(NC); return; }
+        if (a === 'rechazo') { const L = NC.lote ? buscarLote(NC.lote, NC.pieza) : null; if (guardarNc(true)) { inoferRechazo(L && L.turnos[0] ? { ordId: L.turnos[0].o.id } : {}); } return; }
+        if (a === 'plan') { const pz = NC.pieza; if (guardarNc(true)) { cerrarNc(); abrirPlan(pz); } return; }
+        if (a === 'guardar') return guardarNc();
+        if (a === 'imprimir') { imprimir8D(NC); return; }
+        if (a === 'cerrarNc') { const nota = prompt('Verificación: ¿qué se comprobó? (ej. 3 lotes sin rechupe después del cambio)'); if (nota === null) return; const eficaz = confirm('¿Las acciones fueron eficaces? (Aceptar = sí)'); NC.cierre = { fecha: hoy(), por: quien(), eficaz, nota: String(nota).slice(0, 200) }; guardarNc(true); toast(`✓ ${NC.num} cerrada`); return; }
+        if (a === 'reabrir') { NC.cierre = null; return guardarNc(); }
+        if (a === 'borrar') { if (!confirm(`¿Borrar ${NC.num}? No se puede deshacer.`)) return; Q.ncs = Q.ncs.filter(x => x.id !== NC.id); guardar(); cerrarNc(); toast('No conformidad borrada'); }
+      });
+
+      // ---------- clicks de la pestaña
+      document.addEventListener('click', e => {
+        const v = $('viewCalidad'); if (!v || !e.target.closest || !v.contains(e.target)) return;
+        const b = e.target.closest('[data-cal],[data-cal-sub],[data-cal-per],[data-cal-causa],[data-cal-lib],[data-cal-resolver],[data-cal-planpz],[data-cal-nc],[data-cal-ncf],[data-cal-cdel],[data-cal-cmov],[data-cal-instdel],[data-cal-instcal],[data-cal-foto]'); if (!b) return;
+        const a = b.dataset.cal;
+        if (a === 'liberar') return abrirLiberacion({});
+        if (a === 'rechazo') return window.inoferRechazo && inoferRechazo();
+        if (a === 'ncNueva') return nuevaNc();
+        if (a === 'planVolver') { st.planPieza = ''; st.planBorr = null; return render(); }
+        if (a === 'cAdd') { leerBorrador(); st.planBorr.controles.push(controlNuevo()); render(); const L = document.querySelectorAll('#calPlanFilas [data-k="que"]'); if (L.length) L[L.length - 1].focus(); return; }
+        if (a === 'planGuardar') return guardarPlan();
+        if (a === 'planBorrar') { if (!confirm(`¿Borrar el plan de control de ${st.planPieza}?`)) return; Q.planes = Q.planes.filter(p => nm(p.pieza) !== nm(st.planPieza)); st.planPieza = ''; st.planBorr = null; guardar(); return; }
+        if (b.dataset.calSub) { st.sub = b.dataset.calSub; st.planPieza = ''; st.planBorr = null; return render(); }
+        if (b.dataset.calPer) { st.per = b.dataset.calPer; return render(); }
+        if (b.dataset.calCausa != null) { st.causa = st.causa === b.dataset.calCausa ? '' : b.dataset.calCausa; return render(); }
+        if (b.dataset.calLib) return abrirLiberacion({ maq: b.dataset.calLib });
+        if (b.dataset.calResolver) return resolverRetencion(b.dataset.calResolver);
+        if (b.dataset.calPlanpz) { st.sub = 'planes'; st.planPieza = b.dataset.calPlanpz; st.planBorr = null; return render(); }
+        if (b.dataset.calNc) { const n = Q.ncs.find(x => x.id === b.dataset.calNc); if (n) abrirNc(n); return; }
+        if (b.dataset.calNcf) { st.ncFiltro = b.dataset.calNcf; return render(); }
+        if (b.dataset.calCdel) { leerBorrador(); st.planBorr.controles = st.planBorr.controles.filter(c => c.id !== b.dataset.calCdel); return render(); }
+        if (b.dataset.calCmov) { leerBorrador(); const C = st.planBorr.controles, i = C.findIndex(c => c.id === b.dataset.calCmov), j = i + Number(b.dataset.d); if (i >= 0 && j >= 0 && j < C.length) { const t = C[i]; C[i] = C[j]; C[j] = t; } return render(); }
+        if (b.dataset.calInstdel) { if (!confirm('¿Quitar este instrumento?')) return; Q.instrumentos = Q.instrumentos.filter(i => i.id !== b.dataset.calInstdel); return guardar(); }
+        if (b.dataset.calInstcal) { const i = Q.instrumentos.find(x => x.id === b.dataset.calInstcal); if (!i) return; const r = prompt(`${i.codigo}: ¿hasta cuándo vale la nueva calibración? (dd/mm/aaaa)`, ''); if (!r) return; const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(r.trim()); if (!m) { toast('Escribí la fecha como dd/mm/aaaa'); return; } i.vence = `${m[3]}-${pad(m[2])}-${pad(m[1])}`; i.calibrado = hoy(); return guardar(); }
+        if (b.dataset.calFoto) { verFoto(b.dataset.calFoto); }
+      });
+      document.addEventListener('input', e => {
+        const t = e.target; if (!t || !t.closest || !t.closest('#viewCalidad')) return;
+        if (t.id === 'calPlanBuscar' || t.id === 'calLibQ') {
+          if (t.id === 'calPlanBuscar') st.buscarPlan = t.value; else st.libQ = t.value;
+          const id = t.id, pos = t.selectionStart; render(); const n = $(id); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (er) { } }
+        }
+      });
+      document.addEventListener('submit', e => {
+        if (!e.target || e.target.id !== 'calInstForm') return; e.preventDefault();
+        const cod = $('calInstCod').value.trim().toUpperCase(); if (!cod) return;
+        if (Q.instrumentos.some(i => i.codigo === cod)) { toast('Ya existe un instrumento con ese código'); return; }
+        Q.instrumentos.push({ id: nid('in'), codigo: cod.slice(0, 20), nombre: $('calInstNom').value.trim().slice(0, 40), vence: $('calInstVence').value || '' });
+        guardar();
+      });
+      async function verFoto(id) {
+        const w = document.createElement('div'); w.className = 'fixed inset-0 z-[9990] flex items-center justify-center bg-black/90 p-4'; w.innerHTML = '<div class="text-slate-300">Cargando foto…</div>';
+        w.addEventListener('click', () => w.remove()); document.body.appendChild(w);
+        try { const d = await inoferCloudPost({ token: inoferAuthToken(), action: 'fotoLeer', id }); w.innerHTML = d && d.foto ? `<img src="${d.foto}" class="max-h-full max-w-full rounded-xl" />` : '<div class="text-slate-300">No se encontró la foto.</div>'; } catch (e) { w.innerHTML = '<div class="text-slate-300">No se pudo traer la foto (¿sin internet?).</div>'; }
+      }
+
+      // ---------- Mi máquina (tablet): botón grande de control de calidad
+      function bloqueMiMaq(m) {
+        const e = estadoMaq(m); if (e.est === 'sinop' || e.est === 'sinplan') return '';
+        const c = ESTADO[e.est].c;
+        const cls = { emerald: 'border-emerald-500/60 bg-emerald-500/10 text-emerald-100', amber: 'border-amber-400 bg-amber-500/15 text-amber-100', rose: 'border-rose-500 bg-rose-500/20 text-rose-100', slate: 'border-cyan-400/70 bg-cyan-500/10 text-cyan-100' }[c];
+        const t = e.est === 'falta' ? '🧪 LIBERAR PRIMERA PIEZA' : (e.est === 'retenido' ? '⛔ RETENIDA · ESPERÁ AL SUPERVISOR' : (e.est === 'atrasado' ? '🧪 HACER EL CONTROL (ATRASADO)' : '🧪 CONTROL DE CALIDAD'));
+        return `<button type="button" id="calMmBtn" data-m="${esc(m)}" class="w-full rounded-3xl border-2 ${cls} px-4 py-5 text-xl font-black active:scale-[0.98]">${t}<span class="mt-1 block text-sm font-bold opacity-80">${ESTADO[e.est].t(e)}</span></button>`;
+      }
+      function pintarMiMaq() {
+        const v = $('viewMiMaq'); if (!v || v.classList.contains('hidden')) return;
+        let m = ''; try { m = localStorage.getItem('tablero_inyectoras_mimaquina_v1') || ''; } catch (e) { }
+        const ref = $('mmCargar'); if (!m || !ref || !P.controlar()) { const x = $('calMmBox'); if (x) x.remove(); return; }
+        const html = bloqueMiMaq(m);
+        let box = $('calMmBox');
+        if (!box) { box = document.createElement('div'); box.id = 'calMmBox'; ref.parentElement.parentElement.insertBefore(box, ref.parentElement); }
+        if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
+      }
+      document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('#calMmBtn'); if (!b) return; const m = b.dataset.m; abrirLiberacion({ maq: m }); });
+
+      // ---------- avisos 🔔
+      window.inoferAvisosExtra = (window.inoferAvisosExtra || []).concat([() => {
+        if (!P.ver()) return [];
+        const L = [];
+        MAQS().forEach(m => { const e = estadoMaq(m);
+          if (e.est === 'retenido') L.push({ id: 'cal-ret-' + e.ult.id, ico: '⛔', color: 'rose', txt: `Pieza <b>retenida</b> en la <b>${esc(m)}</b>: ${esc(e.o.part)}`, sub: `${esc(motivoRetencion(e.ult))} · ${esc(corto(e.ult.por))} ${esc(e.ult.hora || '')}`, acciones: [['cal', 'Ver']] });
+          else if (e.est === 'atrasado' && e.min >= 15) L.push({ id: 'cal-atr-' + m + '-' + e.prox, ico: '🧪', color: 'amber', txt: `Control de calidad atrasado en la <b>${esc(m)}</b> (${esc(e.o.part)})`, sub: `Tocaba a las ${hhmm(new Date(e.prox))}`, acciones: [['cal', 'Ver']] });
+          else if (e.est === 'falta' && e.o.montada && e.o.montada.maq === m && Date.now() - Date.parse(e.o.montada.desde) > 30 * 60000) L.push({ id: 'cal-pp-' + m + '-' + e.o.id, ico: '🧪', color: 'amber', txt: `Falta liberar la primera pieza en la <b>${esc(m)}</b> (${esc(e.o.part)})`, sub: `OP puesta desde las ${hhmm(new Date(e.o.montada.desde))}`, acciones: [['cal', 'Ver']] });
+        });
+        Q.ncs.filter(n => !n.cierre).forEach(n => { const v = accionesVencidas(n); if (v.length) L.push({ id: 'cal-nc-' + n.id + '-' + v.length, ico: '⚠️', color: 'amber', txt: `<b>${esc(n.num)}</b>: ${v.length} acción${v.length > 1 ? 'es' : ''} vencida${v.length > 1 ? 's' : ''}`, sub: esc(v[0].t + (v[0].resp ? ' · ' + v[0].resp : '')), acciones: [['cal', 'Ver']] }); });
+        instrumentosAviso().forEach(i => { const d = difDias(i.vence, hoy()); L.push({ id: 'cal-in-' + i.id + '-' + i.vence, ico: '📏', color: d < 0 ? 'rose' : 'sky', txt: `Calibración de <b>${esc(i.codigo)}</b> ${d < 0 ? 'vencida' : 'por vencer'}`, sub: d < 0 ? `Venció hace ${-d} días` : `Vence en ${d} días`, acciones: [['cal', 'Ver']] }); });
+        return L;
+      }]);
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('#inoferAvisosPanel [data-a="cal"]'); if (!b) return;
+        e.stopImmediatePropagation(); const p = $('inoferAvisosPanel'); if (p) p.classList.add('hidden');
+        const id = b.dataset.id || ''; st.sub = /cal-nc-/.test(id) ? 'ncs' : (/cal-in-/.test(id) ? 'planes' : 'tablero'); st.planPieza = '';
+        switchTab('calidad');
+      }, true);
+
+      // ---------- arranque
+      function iniciar() {
+        try { montarVista(); instalarTab(); envolverNube(); } catch (e) { console.error(e); }
+        const mm = $('viewMiMaq');
+        if (mm && !mm.__cal) { mm.__cal = true; new MutationObserver(() => { if (!$('calMmBox') && $('mmCargar')) { try { pintarMiMaq(); } catch (e) { } } }).observe(mm, { childList: true, subtree: false }); }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 30)); else setTimeout(iniciar, 30);
+      window.addEventListener('load', () => setTimeout(iniciar, 250));
+      setInterval(() => { if (document.hidden) return; try { pintarMiMaq(); if (visible() && st.sub === 'tablero' && !(document.activeElement && document.activeElement.closest && document.activeElement.closest('#viewCalidad'))) { const h = $('calHoy'); if (h) render(); } } catch (e) { } }, 60000);
+
+      window.inoferCalidad = { abrirLiberacion, estadoMaq, planDe, guardarLib, nuevaNc, abrirNc, guardarNc, etapa, buscarLote, imprimir8D, produccion, resolverRetencion, puedeVer: () => P.ver(), datos: () => Q, guardar, evaluar, abrirPlan, guardarPlan, estado: () => st, lb: () => LB };
+    })();
+  </script>

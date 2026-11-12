@@ -62,7 +62,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.css && r.chart, 'faltan estilos o Chart.js dentro de la página'); ok(r.bg !== 'rgba(0, 0, 0, 0)', 'la página no tiene estilos aplicados');
     });
     await prueba('Todas las pestañas abren sin errores', async () => {
-      for (const t of ['dashboard', 'records', 'orders', 'gantt', 'kpi', 'mant', 'stock', 'aud', 'ai']) { await A.evaluate(t => switchTab(t), t); await A.waitForTimeout(350); }
+      for (const t of ['dashboard', 'records', 'orders', 'gantt', 'kpi', 'mant', 'stock', 'aud', 'calidad', 'ai']) { await A.evaluate(t => switchTab(t), t); await A.waitForTimeout(350); }
       ok(!A._errs.length, 'errores: ' + A._errs.slice(0, 3).join(' | '));
     });
     await prueba('Menú del encabezado: grupos visibles para el admin', async () => {
@@ -1264,6 +1264,119 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const ult = r.pop();
       ok(r.length && r.every(x => x.f >= 13 && x.rot === 0), 'tv: ' + JSON.stringify(r));
       ok(ult.gauge && ult.oee, 'velocímetro sin turnos hoy: ' + JSON.stringify(ult));
+    });
+    await prueba('Calidad: plan de control, liberación de primera pieza, retención, control en proceso, no conformidad y tablero', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(res => setTimeout(res, ms));
+        const out = {};
+        // tocar uno por uno (cada toque redibuja la pantalla)
+        const tocarTodos = (sel, falta) => { for (let i = 0; i < 20; i++) { const x = [...document.querySelectorAll(sel)].find(falta); if (!x) break; x.click(); } };
+        const okSinMarcar = b => !b.className.includes('emerald-700');
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        const d0 = new Date(), f = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
+        const lote = f.slice(8, 10) + f.slice(5, 7) + f.slice(2, 4) + '-H50';
+        productionOrders.push({ id: 'ord-cal', ordNumber: '7001', part: 'CAL-PZA', machine: nom('H50'), qtyTarget: 1000, unitsPerHour: 100, status: 'En Proceso', weightWithSprueKg: 0.3, material: 'ZAMAC',
+          logs: [{ id: 'lg-cal1', date: f, turno: 'Mañana', startTime: '06:00', endTime: '14:00', okPcs: 400, scrapPcs: 20, operator: 'Ana' }] });
+        saveProductionOrders(); inoferPonerOp('H50', 'ord-cal'); await w(300);
+        // pestaña y menú
+        switchTab('calidad'); await w(300);
+        out.tab = !document.getElementById('viewCalidad').classList.contains('hidden') && /Hoy en planta/.test(document.getElementById('viewCalidad').textContent);
+        out.sinPlan = inoferCalidad.estadoMaq('H50').est;
+        // armar el plan desde la pantalla
+        inoferCalidad.abrirPlan('CAL-PZA'); await w(200);
+        const filas = document.querySelectorAll('#calPlanFilas [data-k="que"]');
+        out.plantilla = filas.length;
+        const set = (k, v) => { const el = document.querySelector(`#calPlanFilas [data-k="${k}"]`); el.value = v; };
+        set('min', '95'); set('max', '105,5');
+        document.querySelector('[data-cal="planGuardar"]').click(); await w(300);
+        const pl = inoferCalidad.planDe('cal-pza');
+        out.plan = pl && { v: pl.version, n: pl.controles.length, min: pl.controles[0].min, max: pl.controles[0].max };
+        out.falta = inoferCalidad.estadoMaq('H50').est;
+        // liberación: peso fuera → no deja liberar, retiene
+        inoferCalidad.abrirLiberacion({ maq: 'H50' }); await w(200);
+        const C = pl.controles;
+        const inp = document.querySelector(`[data-lb-num="${C[0].id}"]`); inp.value = '90'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        tocarTodos('[data-lb-ok][data-v="ok"]', okSinMarcar); await w(100);
+        out.liberarBloqueado = document.getElementById('calLbLiberar').disabled && /fuera/.test(document.getElementById('calLbReac').textContent);
+        out.fuera = /FUERA/.test(document.getElementById('calLbE_' + C[0].id).textContent);
+        document.querySelector('[data-lb="retener"]').click(); await w(400);
+        out.retenido = inoferCalidad.estadoMaq('H50').est;
+        // de nuevo: todo dentro → liberar
+        inoferCalidad.abrirLiberacion({ maq: 'H50' }); await w(200);
+        const inp2 = document.querySelector(`[data-lb-num="${C[0].id}"]`); inp2.value = '100,2'; inp2.dispatchEvent(new Event('input', { bubbles: true }));
+        tocarTodos('[data-lb-ok][data-v="ok"]', okSinMarcar); await w(100);
+        out.dentro = /DENTRO/.test(document.getElementById('calLbE_' + C[0].id).textContent) && !document.getElementById('calLbLiberar').disabled;
+        document.getElementById('calLbLiberar').click(); await w(400);
+        const e = inoferCalidad.estadoMaq('H50');
+        out.ok = e.est; out.prox = !!e.prox;
+        const libs = inoferCalidad.datos().liberaciones.filter(x => x.maq === 'H50');
+        out.libs = libs.map(x => x.res + ':' + x.tipo).join(',');
+        out.valor = libs[libs.length - 1].v[0][1];
+        // control atrasado: hacer como si la liberación fuera de hace 3 h
+        const ult = libs[libs.length - 1], ret = libs[0]; const at0 = ult.at, atR = ret.at; ult.at = new Date(Date.now() - 3 * 3600000).toISOString(); ret.at = new Date(Date.now() - 3.2 * 3600000).toISOString();
+        const tm = inoferOpMontada('H50'); const md = tm.montada.desde; tm.montada.desde = new Date(Date.now() - 4 * 3600000).toISOString();
+        out.atrasado = inoferCalidad.estadoMaq('H50').est;
+        inoferCalidad.abrirLiberacion({ maq: 'H50' }); await w(200);
+        out.periodico = /CONTROL EN PROCESO/.test(document.getElementById('calLibCaja').textContent);
+        out.nPeriodico = document.querySelectorAll('#calLibCaja [data-lb-num], #calLibCaja [data-lb-ok][data-v="ok"]').length;
+        document.querySelector('[data-lb="cerrar"]').click();
+        ult.at = at0; ret.at = atR; tm.montada.desde = md;
+        // avisos 🔔
+        out.avisos = (window.inoferAvisosExtra || []).map(fn => { try { return fn() || []; } catch (er) { return []; } }).flat().filter(x => /^cal-/.test(x.id)).length >= 0;
+        // Mi máquina muestra el botón de calidad
+        localStorage.setItem('tablero_inyectoras_mimaquina_v1', 'H50'); switchTab('mimaq'); await w(400);
+        out.mimaq = !!document.getElementById('calMmBtn');
+        localStorage.removeItem('tablero_inyectoras_mimaquina_v1');
+        // no conformidad por reclamo con lote
+        inoferCalidad.nuevaNc(); await w(150);
+        document.querySelector('[data-nc-tipo="cliente"]').click(); await w(50);
+        const setN = (k, v) => { const el = document.querySelector(`#calNcCaja [data-nc="${k}"]`); el.value = v; };
+        setN('titulo', 'Rechupe en la cara A'); setN('pieza', 'CAL-PZA'); setN('cant', '30'); setN('lote', lote); setN('cliente', 'ACME');
+        document.querySelector('[data-ncb="lote"]').click(); await w(50);
+        out.lote = /OP 7001/.test(document.getElementById('calNcLote').textContent) && /Ana/.test(document.getElementById('calNcLote').textContent) && /aprobada/.test(document.getElementById('calNcLote').textContent);
+        tocarTodos('[data-nc-ctok]', b => !b.checked); await w(50);
+        document.querySelector('[data-nc-pq="0"]').value = 'Rechupe'; document.querySelector('[data-nc-pq="1"]').value = 'Molde frío al arrancar';
+        document.querySelector('[data-ncb="acAdd"]').click(); await w(50);
+        const ac = document.querySelectorAll('#calNcCaja [data-k="t"]'); ac[ac.length - 1].value = 'Precalentar el molde 20 min';
+        const pa = document.querySelectorAll('#calNcCaja [data-k="para"]'); pa[pa.length - 1].value = '2020-01-01';
+        document.querySelector('[data-ncb="guardar"]').click(); await w(300);
+        const nc = inoferCalidad.datos().ncs[0];
+        out.nc = nc && { num: nc.num, etapa: inoferCalidad.etapa(nc), ord: nc.ordId, tipo: nc.tipo };
+        out.html8d = /INFORME 8D/.test(inoferCalidad.imprimir8D(nc)) ;
+        document.querySelector('[data-ncb="cerrar"]').click();
+        // tablero
+        inoferRechazosApi.cargarRechazo('ord-cal', { cant: 40, causa: 'Rechupe', logId: 'lg-cal1', fecha: f });
+        const R = inoferCalidad.produccion(f, f);
+        const pp = R.porPieza['CAL-PZA|H50'] || {}; out.prod = { iny: pp.iny, malas: pp.malas, rech: R.rech, causa: R.causas.Rechupe && R.causas.Rechupe.n, real: R.real, totIny: R.iny };
+        inoferCalidad.estado().sub = 'tablero'; switchTab('calidad'); await w(300);
+        const tx = document.getElementById('viewCalidad').textContent;
+        out.tablero = /BIEN A LA PRIMERA/.test(tx) && /NC-001/.test(tx) && /Acción vencida/.test(tx) && /CAL-PZA/.test(tx);
+        out.fpy = (document.getElementById('calTiles').textContent.match(/BIEN A LA PRIMERA([\d,]+)%/) || [])[1];
+        await w(2500);
+        return out;
+      });
+      ok(r.tab && r.sinPlan === 'sinplan', 'la pestaña no abrió: ' + JSON.stringify(r));
+      ok(r.plantilla === 3 && r.plan && r.plan.v === 1 && r.plan.min === 95 && r.plan.max === 105.5 && r.falta === 'falta', 'el plan no se guardó bien: ' + JSON.stringify(r));
+      ok(r.liberarBloqueado && r.fuera && r.retenido === 'retenido', 'con un control fuera dejó liberar o no retuvo: ' + JSON.stringify(r));
+      ok(r.dentro && r.ok === 'ok' && r.prox && r.libs === 'retenida:primera,liberada:primera' && r.valor === 100.2, 'la liberación no quedó bien: ' + JSON.stringify(r));
+      ok(r.atrasado === 'atrasado' && r.periodico && r.nPeriodico >= 1, 'el control en proceso no se pidió: ' + JSON.stringify(r));
+      ok(r.mimaq, 'Mi máquina no muestra el botón de calidad');
+      ok(r.lote && r.nc && r.nc.num === 'NC-001' && r.nc.etapa === 4 && r.nc.ord === 'ord-cal' && r.nc.tipo === 'cliente' && r.html8d, 'la no conformidad no quedó bien: ' + JSON.stringify(r));
+      ok(r.prod.iny === 420 && r.prod.malas === 60 && r.prod.rech >= 40 && r.prod.causa >= 40 && r.prod.real === r.prod.totIny - (r.prod.totIny - r.prod.real) && r.tablero && !!r.fpy, 'el tablero no cuenta bien: ' + JSON.stringify(r));
+      const d = await nube(A);
+      const q = d.modules.calidadDatos;
+      ok(q && q.planes.length === 1 && q.liberaciones.length === 2 && q.ncs.length === 1, 'calidad no llegó a la nube: ' + JSON.stringify(q && { p: q.planes.length, l: q.liberaciones.length, n: q.ncs.length }));
+      // otro equipo carga una liberación al mismo tiempo: no se pisan
+      if (B) {
+        await B.evaluate(async () => { const w = ms => new Promise(res => setTimeout(res, ms)); try { fetchCloudRecords(true); } catch (e) { } await w(2500); });
+        await Promise.all([
+          A.evaluate(async () => { const Q = inoferCalidad.datos(); Q.liberaciones.push({ id: 'lb-a', maq: '200V', pieza: 'X', at: new Date().toISOString(), res: 'liberada', tipo: 'primera', v: [] }); inoferCalidad.guardar(); await new Promise(r => setTimeout(r, 2500)); }),
+          B.evaluate(async () => { const Q = inoferCalidad.datos(); Q.liberaciones.push({ id: 'lb-b', maq: '200N', pieza: 'Y', at: new Date().toISOString(), res: 'liberada', tipo: 'primera', v: [] }); inoferCalidad.guardar(); await new Promise(r => setTimeout(r, 2500)); })
+        ]);
+        const d2 = await nube(A);
+        const ids = d2.modules.calidadDatos.liberaciones.map(x => x.id);
+        ok(ids.includes('lb-a') && ids.includes('lb-b') && ids.length === 4, 'dos equipos se pisaron: ' + ids.join(','));
+      }
     });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
