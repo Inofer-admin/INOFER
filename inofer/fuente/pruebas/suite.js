@@ -122,6 +122,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
     });
     await prueba('Asistente del Gantt aplica un pedido simple', async () => {
       const r = await A.evaluate(async () => {
+        // la app ya no trae semanas de ejemplo: se crea una con el botón, como haría el usuario
+        if (!getActiveGanttWeek()) { switchTab('gantt'); await new Promise(r => setTimeout(r, 200)); document.getElementById('createNewGanttWeekBtn').click(); }
         const cat = partsCatalog.find(c => (c.machines || []).includes('200N') && !/-R$/.test(c.part));
         const t = await inoferGanttEjecutar(`poné 300 de la ${cat.part} en la 200N el miércoles`);
         const w = ganttWeeksData[activeGanttWeekCode];
@@ -348,6 +350,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
     });
     await prueba('Gráfico de facturación de la semana en el Gantt', async () => {
       const r = await A.evaluate(async () => {
+        if (!getActiveGanttWeek() && Object.keys(ganttWeeksData).length) activeGanttWeekCode = Object.keys(ganttWeeksData).find(k => Object.values(ganttWeeksData[k].machines || {}).some(m => (m.items || []).length)) || Object.keys(ganttWeeksData)[0];
         const w = getActiveGanttWeek(); const it = Object.values(w.machines).flatMap(m => m.items || []).find(i => (i.dailyQty || []).some(q => Number(q) > 0));
         const c = partsCatalog.find(x => x.part === it.part) || (partsCatalog.push({ id: 'cat-pr', part: it.part, machines: [] }), partsCatalog[partsCatalog.length - 1]); c.precio = 1000;
         switchTab('gantt'); await new Promise(r => setTimeout(r, 300)); inoferGraficoFacturacion(); await new Promise(r => setTimeout(r, 300));
@@ -355,6 +358,22 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         return { card: !!document.getElementById('ganttFactCard'), canvas: !!document.getElementById('gfCanvas'), meta: getActiveGanttWeek().metaFacturacion, txt: document.getElementById('ganttFactCard').innerText };
       });
       ok(r.card && r.canvas && r.meta === 1000000 && /% de la meta/.test(r.txt), 'el gráfico de facturación no quedó bien: ' + JSON.stringify(r).slice(0, 200));
+    });
+    await prueba('Planilla de análisis: se guarda en la nube y vuelve al abrir', async () => {
+      const tsv = await A.evaluate(async () => {
+        switchTab('gantt'); await new Promise(r => setTimeout(r, 200));
+        const ps = partsCatalog.filter(c => !/-R$/.test(c.part)).slice(0, 3);
+        const v = 'CODIGO\tDESCRIPCION\tSTOCK\tCONSUMO\n' + ps.map((c, i) => `${c.part}\tPIEZA ${i}\t${100 * (i + 1)}\t${50 * (i + 1)}`).join('\n');
+        const ta = document.getElementById('autoGanttPasteArea'); ta.blur(); ta.value = v; inoferAnalisis.revisar(); return v;
+      });
+      await A.waitForTimeout(2500);
+      const d = await nube(A);
+      ok(d.modules.analisis && d.modules.analisis.tsv === tsv && d.modules.analisis.filas === 3, 'no se subió la planilla: ' + JSON.stringify(d.modules.analisis || null).slice(0, 120));
+      await A.evaluate(() => localStorage.removeItem('tablero_inyectoras_analisis_v1'));
+      await A.reload(); await A.waitForTimeout(4000);
+      const r = await A.evaluate(() => ({ v: document.getElementById('autoGanttPasteArea').value, b: document.getElementById('uploadedExcelStatusBadge').textContent }));
+      ok(r.v === tsv, 'al abrir no volvió la planilla de la nube');
+      ok(/3 piezas/.test(r.b), 'el cartel no dice la planilla: ' + r.b);
     });
     await prueba('Importar el Gantt de Excel y que el automático lo respete', async () => {
       const r = await A.evaluate(async () => {

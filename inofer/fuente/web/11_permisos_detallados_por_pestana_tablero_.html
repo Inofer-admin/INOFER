@@ -277,8 +277,8 @@
       if (typeof window.getFilteredRecords === 'function') {
         const gf = window.getFilteredRecords;
         // Datos de ejemplo que trae la app: no cuentan en el tablero
-        const DEMO_REC = new Set((typeof INITIAL_RECORDS !== 'undefined' ? INITIAL_RECORDS : []).map(r => String(r.id)));
-        const DEMO_ORD = new Set((typeof INITIAL_ORDERS !== 'undefined' ? INITIAL_ORDERS : []).map(o => String(o.id)));
+        const DEMO_REC = new Set((typeof INOFER_DEMO_IDS !== 'undefined' ? INOFER_DEMO_IDS.rec : []).map(String));
+        const DEMO_ORD = new Set((typeof INOFER_DEMO_IDS !== 'undefined' ? INOFER_DEMO_IDS.ord : []).map(String));
         window.inoferEsDemo = r => r && (r.fromOrder ? DEMO_ORD.has(String(r.ordId)) : DEMO_REC.has(String(r.id)));
         window.getFilteredRecords = function () {
           const fuente = ($('filterFuente') || {}).value || 'ALL';

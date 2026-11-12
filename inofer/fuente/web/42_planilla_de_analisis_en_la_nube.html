@@ -1,0 +1,64 @@
+  <script>
+    // ===== Planilla de análisis del Gantt automático guardada en la nube (12/11/2026) =====
+    // Antes la app traía adentro una planilla vieja y la volvía a poner cada vez que se abría (alcances viejos).
+    // Ahora se usa la ÚLTIMA que alguien subió o pegó: se guarda en el equipo y en el módulo de nube "analisis"
+    // {tsv, at, por, filas}; la reciben todos los que ven el Gantt. Aviso si tiene más de 7 días.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const KEY = 'tablero_inyectoras_analisis_v1';
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      let dato = null; try { dato = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
+      let ultimoTsv = dato && dato.tsv || '';
+      const filasDe = tsv => String(tsv || '').split('\n').filter(l => l.trim() && /\d/.test(l)).length;
+      const puedeSubir = () => { try { return typeof inoferSession === 'undefined' || !inoferSession || inoferSession.rol === 'admin' || (inoferSession.permisos && inoferSession.permisos.gantt === 'edit'); } catch (e) { return false; } };
+      const quien = () => { try { return inoferUsuarioEtiqueta(); } catch (e) { return ''; } };
+      window.inoferAnalisisGuardada = () => ultimoTsv;
+      function guardarLocal() { try { localStorage.setItem(KEY, JSON.stringify(dato)); } catch (e) { } }
+      function pintarEstado() {
+        const badge = $('uploadedExcelStatusBadge'); if (!badge) return;
+        if (!dato || !dato.tsv) { badge.textContent = '⚠️ Todavía no hay planilla de análisis: subila o pegala abajo'; badge.className = 'rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-bold text-amber-200'; return; }
+        const f = dato.at ? new Date(dato.at) : null, dias = f ? Math.floor((Date.now() - f.getTime()) / 864e5) : 0;
+        const viejo = dias > 7;
+        badge.textContent = `${viejo ? '⚠️' : '✅'} Planilla de análisis del ${f ? f.toLocaleDateString('es-AR') : '—'}${dato.por ? ' (' + dato.por + ')' : ''} · ${dato.filas || filasDe(dato.tsv)} piezas${viejo ? ` · tiene ${dias} días: conviene subir la nueva` : ''}`;
+        badge.className = `rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${viejo ? 'border-amber-500/40 bg-amber-500/15 text-amber-200' : 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300'}`;
+      }
+      // poner una planilla en el cuadro y recalcular la vista previa
+      function poner(tsv) {
+        const ta = $('autoGanttPasteArea'); if (!ta) return;
+        if (document.activeElement === ta) return; // no pisar lo que alguien está escribiendo
+        if (ta.value !== tsv) { ta.value = tsv; try { renderStockAnalysisPreview(); } catch (e) { } }
+      }
+      // cuando cambia el cuadro (pegaron o subieron un Excel): se guarda y se sube
+      function revisar() {
+        const ta = $('autoGanttPasteArea'); if (!ta) return;
+        const v = ta.value || '';
+        if (v === ultimoTsv || document.activeElement === ta) return;
+        if (!v.trim() || filasDe(v) < 1) return; // vaciar el cuadro no borra la planilla guardada
+        ultimoTsv = v;
+        dato = { tsv: v, at: new Date().toISOString(), por: quien(), filas: filasDe(v) };
+        guardarLocal(); pintarEstado();
+        if (puedeSubir()) { try { pushCloudModuleState('analisis', dato); } catch (e) { } }
+      }
+      if (typeof window.applyCloudModules === 'function') {
+        const _am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const r = _am.apply(this, arguments);
+          try {
+            const n = mods && mods.analisis;
+            if (n && n.tsv && (!dato || !dato.at || String(n.at) > String(dato.at))) { dato = n; ultimoTsv = n.tsv; guardarLocal(); poner(n.tsv); pintarEstado(); }
+          } catch (e) { }
+          return r;
+        };
+      }
+      function iniciar() {
+        if (ultimoTsv) poner(ultimoTsv);
+        pintarEstado();
+        const ta = $('autoGanttPasteArea');
+        if (ta) { ta.addEventListener('change', revisar); ta.addEventListener('blur', revisar); }
+        setInterval(() => { revisar(); }, 3000);
+        setInterval(pintarEstado, 60000);
+      }
+      window.inoferAnalisis = { revisar, estado: () => dato, pintarEstado };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 400)); else setTimeout(iniciar, 400);
+    })();
+  </script>

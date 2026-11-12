@@ -55,7 +55,7 @@
         if (!header || $('nbBar')) return !!$('nbBar');
         const viejo = header.firstElementChild;
         const st = document.createElement('style');
-        st.textContent = `#nbRight .sm\\:inline{display:none!important}#nbRight #syncStatusText{display:none}#nbRight>button,#nbRight>div>button{padding:.45rem .6rem}#nbRight #inoferUserChipRole{display:none}@media(min-width:640px){#nbRight #inoferUserChipRole{display:inline}}#nbNav::-webkit-scrollbar{display:none}#nbNav{scrollbar-width:none}#nbBar[data-c="1"] #inoferUserChipName,#nbBar[data-c="1"] #inoferUserChipRole,#nbBar[data-c="1"] #toggleFullscreenBtn{display:none!important}#nbBar[data-c="2"] .nb-txt,#nbBar[data-c="2"] #inoferUserChipName,#nbBar[data-c="2"] #inoferUserChipRole,#nbBar[data-c="2"] #toggleFullscreenBtn{display:none!important}`;
+        st.textContent = `#nbRight .sm\\:inline{display:none!important}#nbRight #syncStatusText{display:none}#nbRight>button,#nbRight>div>button{padding:.45rem .6rem}#nbRight #inoferUserChipRole{display:none}@media(min-width:640px){#nbRight #inoferUserChipRole{display:inline}}#nbNav::-webkit-scrollbar{display:none}#nbNav{scrollbar-width:none}#nbBar[data-c="1"] #inoferUserChipName,#nbBar[data-c="1"] #inoferUserChipRole,#nbBar[data-c="1"] #toggleFullscreenBtn{display:none!important}#nbBar[data-c="2"] .nb-txt,#nbBar[data-c="2"] #inoferUserChipName,#nbBar[data-c="2"] #inoferUserChipRole,#nbBar[data-c="2"] #toggleFullscreenBtn{display:none!important}#nbHamb{display:none}@media(max-width:639px){#nbNav{display:none!important}#nbRight>*:not(.nb-keep){display:none!important}#nbHamb{display:inline-flex}#nbRight #inoferUserChipName{display:none!important}#nbBar{flex-wrap:nowrap!important}#nbLogo .leading-tight{min-width:0}}`;
         document.head.appendChild(st);
         const bar = document.createElement('div');
         bar.id = 'nbBar';
@@ -66,11 +66,13 @@
             <span class="leading-tight"><span class="block text-base font-black tracking-wider text-white">INOFER</span><span id="nbVer" class="flex items-center"></span></span>
           </button>
           <nav id="nbNav" class="order-3 flex w-full min-w-0 items-center gap-1 overflow-x-auto sm:order-none sm:w-auto sm:flex-1"></nav>
-          <div id="nbRight" class="ml-auto flex shrink-0 items-center gap-1.5"></div>`;
+          <div id="nbRight" class="ml-auto flex shrink-0 items-center gap-1.5"></div>
+          <button type="button" id="nbHamb" class="nb-keep h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-600 bg-slate-800 text-xl text-white" aria-label="Menú">☰</button>`;
         header.insertBefore(bar, viejo);
         viejo.classList.add('hidden');
         viejo.id = viejo.id || 'nbViejo';
         $('nbLogo').addEventListener('click', () => { try { switchTab(window.inoferVerHoy && inoferVerHoy() ? 'hoy' : 'orders'); } catch (e) { } });
+        $('nbHamb').addEventListener('click', e => { e.stopPropagation(); const pn = $('nbPanel'); if (pn && !pn.classList.contains('hidden')) cerrarPanel(); else abrirPanel(); });
         // menú desplegable (uno solo, flotante)
         const menu = document.createElement('div');
         menu.id = 'nbMenu';
@@ -124,6 +126,40 @@
         menu.style.top = (r.bottom + 6) + 'px';
         pintar(true);
       }
+      // ===== Celular: panel ☰ con los menús y los íconos que no entran arriba =====
+      function abrirPanel() {
+        cerrarMenu();
+        let pn = $('nbPanel');
+        if (!pn) {
+          pn = document.createElement('div'); pn.id = 'nbPanel';
+          pn.className = 'hidden fixed inset-x-0 bottom-0 z-[85] overflow-y-auto border-t border-slate-700 bg-slate-950 px-3 pb-6 pt-3 shadow-2xl';
+          document.body.appendChild(pn);
+          pn.addEventListener('click', e => {
+            const it = e.target.closest('.nb-item'); if (it) { const [gi, ii] = it.dataset.k.split('.').map(Number); cerrarPanel(); ejecutar(GRUPOS[gi].items[ii]); return; }
+            const ex = e.target.closest('[data-extra]'); if (ex) { const orig = document.getElementById(ex.dataset.extra); cerrarPanel(); if (orig) setTimeout(() => orig.click(), 30); return; }
+            if (e.target.closest('[data-cerrar]')) cerrarPanel();
+          });
+          document.addEventListener('click', e => { const p2 = $('nbPanel'); if (p2 && !p2.classList.contains('hidden') && !e.target.closest('#nbPanel') && !e.target.closest('#nbHamb')) cerrarPanel(); });
+        }
+        const act = tabActiva();
+        // íconos de arriba que en el celular quedan escondidos (instalar, sincronizar, mensajes, solicitudes, pantalla, pantalla completa…)
+        const extras = [];
+        [...$('nbRight').children].filter(c => !c.classList.contains('nb-keep')).forEach(c => {
+          const bs = c.tagName === 'BUTTON' ? [c] : [...c.querySelectorAll('button')];
+          bs.forEach(b => { if (!b.id || b.classList.contains('hidden')) return; const t = (b.title || '').replace(/\(.*\)/, '').trim(); const txt = (b.textContent || '').replace(/\s+/g, ' ').trim(); extras.push({ id: b.id, t: t || txt, ico: txt.slice(0, 2) }); });
+        });
+        pn.style.top = (($('nbBar') || {}).getBoundingClientRect ? $('nbBar').getBoundingClientRect().bottom : 60) + 'px';
+        pn.innerHTML = `<div class="mx-auto max-w-lg space-y-3">
+          ${GRUPOS.map((g, gi) => { const its = g.items.map((it, ii) => itemVisible(it) ? [it, ii] : null).filter(Boolean); if (!its.length || !sesion()) return '';
+            return `<div><div class="px-1 pb-1 text-[11px] font-black uppercase tracking-wider text-slate-400">${g.ico} ${esc(g.nombre)}</div><div class="grid grid-cols-2 gap-1.5">${its.map(([it, ii]) => { const on = it.tab && it.tab === act; const n = it.n ? it.n() : '';
+              return `<button type="button" class="nb-item flex min-h-[48px] items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-bold ${on ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-100' : 'border-slate-800 bg-slate-900 text-white'}" data-k="${gi}.${ii}"><span class="text-lg leading-none">${it.ico}</span><span class="min-w-0 flex-1 leading-tight">${esc(it.t)}</span>${n !== '' && n != null ? `<span class="rounded-full bg-slate-800 px-1.5 text-[10px]">${n}</span>` : ''}</button>`; }).join('')}</div></div>`; }).join('')}
+          ${extras.length ? `<div><div class="px-1 pb-1 text-[11px] font-black uppercase tracking-wider text-slate-400">⚙️ Más</div><div class="grid grid-cols-2 gap-1.5">${extras.map(x => `<button type="button" data-extra="${esc(x.id)}" class="flex min-h-[48px] items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-left text-sm font-bold text-white">${esc(x.t)}</button>`).join('')}</div></div>` : ''}
+          <button type="button" data-cerrar class="w-full min-h-[48px] rounded-xl border border-slate-700 text-sm font-bold text-slate-300">Cerrar</button></div>`;
+        pn.classList.remove('hidden');
+        $('nbHamb').textContent = '✕';
+      }
+      function cerrarPanel() { const pn = $('nbPanel'); if (pn) pn.classList.add('hidden'); const h = $('nbHamb'); if (h) h.textContent = '☰'; }
+      window.inoferMenuCelular = { abrir: abrirPanel, cerrar: cerrarPanel };
       function cerrarMenu() { const m = $('nbMenu'); if (m && !m.classList.contains('hidden')) { m.classList.add('hidden'); m.dataset.g = ''; pintar(true); } }
       let firma = '';
       function pintar(forzar) {
@@ -154,7 +190,7 @@
         for (const c of ['0', '1', '2']) { bar.dataset.c = c; if (nav.scrollWidth <= nav.clientWidth + 1) break; }
         nav.querySelectorAll('.nb-grupo').forEach(b => { b.title = bar.dataset.c === '2' ? b.textContent.replace(/[▾·].*$/, '').trim() : ''; });
       }
-      window.addEventListener('resize', () => setTimeout(compactar, 50));
+      window.addEventListener('resize', () => { setTimeout(compactar, 50); if (window.innerWidth >= 640) cerrarPanel(); });
       // junta a la derecha los íconos que otras partes de la app crean en el encabezado
       function juntar() {
         const right = $('nbRight'); if (!right) return;
@@ -162,6 +198,7 @@
         if (ver && nbv && ver.parentElement !== nbv) { nbv.appendChild(ver); ver.className = 'text-[9px] font-semibold text-slate-500'; }
         const pill = $('inoferOfflinePill'); if (pill && nbv && pill.parentElement !== nbv) nbv.appendChild(pill);
         const orden = [$('syncNowBtn'), $('inoferAvisosBtn'), $('inoferMsgBtn') && $('inoferMsgBtn').parentElement, $('presBtn'), $('toggleFullscreenBtn'), $('inoferUserChip') && $('inoferUserChip').parentElement].filter(Boolean);
+        [$('inoferAvisosBtn'), $('inoferUserChip') && $('inoferUserChip').parentElement].forEach(e => { if (e) e.classList.add('nb-keep'); });
         const actual = [...right.children];
         if (orden.length !== actual.length || orden.some((e, i) => actual[i] !== e)) orden.forEach(e => right.appendChild(e));
         const sync = $('syncNowBtn'), stx = $('syncStatusText');

@@ -39,6 +39,27 @@ async function generarCss(html) {
     return css;
   } finally { await b.close(); }
 }
+// (12/11/2026) Achicar el código (minificar) con esbuild si está instalado: saca espacios y comentarios y
+// acorta los nombres internos. NO cambia los nombres globales (los usan los botones y las otras partes).
+// Si esbuild no está, se arma igual sin achicar. INOFER_SIN_MINIFICAR=1 lo saltea.
+function cargarEsbuild() {
+  if (process.env.INOFER_SIN_MINIFICAR === '1') return null;
+  for (const r of ['esbuild', '/opt/npm-tools/node_modules/esbuild', '/home/claude/.inofer_herr/node_modules/esbuild']) { try { return require(r); } catch (e) { } }
+  return null;
+}
+function minificar(html, es) {
+  let n = 0, antes = 0, despues = 0;
+  const out = html.replace(/<script([^>]*)>([\s\S]*?)<\/script>/g, (todo, attrs, code) => {
+    if (/\bsrc=|type="(?!text\/javascript)/i.test(attrs) || code.length < 200 || /^\s*\/\* Chart\.js/.test(code)) return todo;
+    let r;
+    try { r = es.transformSync(code, { minify: true, keepNames: true, target: 'es2020', charset: 'utf8', legalComments: 'none' }).code; }
+    catch (e) { throw new Error('esbuild no pudo achicar un script: ' + String(e.message).slice(0, 300)); }
+    r = r.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--');
+    n++; antes += code.length; despues += r.length;
+    return '<script' + attrs + '>' + r + '</script>';
+  });
+  return { html: out, txt: n + ' scripts ' + Math.round(antes / 1024) + '→' + Math.round(despues / 1024) + ' KB' };
+}
 (async () => {
   let html = unir();
   if (!html.includes(TW_TAG) || !html.includes(CHART_TAG)) throw new Error('No encontré las etiquetas de Tailwind o Chart.js en 00_pagina.html');
@@ -46,6 +67,9 @@ async function generarCss(html) {
   const chart = fs.readFileSync(path.join(FUENTE, 'vendor', 'chart-4.4.1.umd.js'), 'utf8');
   html = html.replace(TW_TAG, () => '<style id="inoferEstilos">' + css.replace(/<\/style/gi, '<\\/style') + '</style>')
              .replace(CHART_TAG, () => '<script>/* Chart.js v4.4.1 (MIT) */\n' + chart.replace(/<\/script/gi, '<\\/script') + '\n</script>');
+  const es = cargarEsbuild(); let mini = 'sin achicar';
+  if (es) { const m = minificar(html, es); html = m.html; mini = m.txt;
+    try { const c = es.transformSync(css, { loader: 'css', minify: true }).code; html = html.replace(/(<style id="inoferEstilos">)[\s\S]*?(<\/style>)/, (t, a, b) => a + c.replace(/<\/style/gi, '<\\/style') + b); mini += ', CSS ' + Math.round(css.length / 1024) + '→' + Math.round(c.length / 1024) + ' KB'; } catch (e) { } }
   fs.writeFileSync(SALIDA, html);
-  console.log('armado: ' + path.relative(process.cwd(), SALIDA) + ' (' + Math.round(html.length / 1024) + ' KB, CSS ' + Math.round(css.length / 1024) + ' KB)');
+  console.log('armado: ' + path.relative(process.cwd(), SALIDA) + ' (' + Math.round(html.length / 1024) + ' KB, ' + mini + ')');
 })().catch(e => { console.error('ERROR armando la pantalla: ' + e.message); process.exit(1); });

@@ -44,7 +44,10 @@ const cacheStore = {};
 const ctx = {
   globalThis: null,
   UrlFetchApp: { fetchAll: reqs => reqs.map(r => ctx.UrlFetchApp.fetch(r.url, r)), fetch: (u, opts) => { if (/^https:\/\/push\.prueba\//.test(u)) { (ctx.__push = ctx.__push || []).push({ url: u, headers: (opts && opts.headers) || {} }); const code = /vencida/.test(u) ? 410 : 201; return { getResponseCode: () => code, getContentText: () => '' }; } if (/generativelanguage/.test(u)) { delete require.cache[require.resolve('' + require('path').join(__dirname, 'gemini_simulado.js') + '')]; const fn = require('' + require('path').join(__dirname, 'gemini_simulado.js') + ''); const t = fn(JSON.parse((opts && opts.payload) || '{}'), u); return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ candidates: [{ content: { parts: [{ text: t }] } }] }) }; } const f = process.env.SRV_FILE; let txt = ''; let code = 404; try { txt = fs.readFileSync(f, 'utf8'); code = 200; } catch (e) {} return { getResponseCode: () => code, getContentText: () => txt }; } },
-  CacheService: { getScriptCache: () => ({ get: k => cacheStore[k] || null, put: (k, v) => { cacheStore[k] = v; } }) },
+  CacheService: { getScriptCache: () => { const chk = (k, v) => { if (Buffer.byteLength(String(v), 'utf8') > 100 * 1024) throw new Error('Argument too large: ' + k); }; return {
+    get: k => cacheStore[k] || null, put: (k, v) => { chk(k, v); cacheStore[k] = String(v); }, remove: k => { delete cacheStore[k]; },
+    getAll: ks => { const o = {}; ks.forEach(k => { if (k in cacheStore) o[k] = cacheStore[k]; }); return o; },
+    putAll: (m) => { Object.keys(m).forEach(k => chk(k, m[k])); Object.keys(m).forEach(k => { cacheStore[k] = String(m[k]); }); ctx.__cachePuts = (ctx.__cachePuts || 0) + 1; } }; } },
   SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss },
   PropertiesService: { getScriptProperties: () => ({
     getProperty: k => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: k => { delete props[k]; }, getProperties: () => ({ ...props }) }) },
