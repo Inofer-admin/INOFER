@@ -375,6 +375,58 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.v === tsv, 'al abrir no volvió la planilla de la nube');
       ok(/3 piezas/.test(r.b), 'el cartel no dice la planilla: ' + r.b);
     });
+    await prueba('Indicadores: subir planillas (indicadores, SCRAP y control de producción) con permisos', async () => {
+      await A.addScriptTag({ path: path.join(FUENTE, 'vendor', 'xlsx-0.18.5.full.min.js') });
+      const r = await A.evaluate(async () => {
+        switchTab('kpi'); await new Promise(r => setTimeout(r, 300));
+        const archivo = (nombre, hojas) => { const wb = XLSX.utils.book_new(); hojas.forEach(([n, filas]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas, { cellDates: true }), n)); return new File([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], nombre); };
+        const yaInyOct = (inoferKpiData('inyeccion').datos.find(x => x.mes === '2025-10') || {}).valor;
+        const ind = archivo('indicadores_prueba.xlsx', [['INOFER', [[], ['Periodo', 'Eficiencia de inyeccion', '%Scrap', 'Piezas Fabricadas', 'Rendimiento por Kilo', 'Facturacion Prom. Diaria'], [new Date(2025, 9, 1), 0.5, 0.03, 1000, 5000, 100000], [new Date(2030, 0, 1), 0.81, 0.02, 2000, 6000, 200000]]]]);
+        const cab = (s) => ['CODIGO DE PLANO', '$$', s === 'i' ? 'CANT INYECTADA' : 'CANT REBABDAS ', s === 'i' ? 'COSTO INYECCION' : 'COSTO REBABADO', 'SCRAP', 'COSTO SCRAP', '%SCRAP', null, 'Nº Pieza', 'Causa', 'Total'];
+        const scrap = archivo('SCRAP_Marzo_30.xlsx', [['REBABADO', [cab('r'), ['PZ-1', 10, 100, 1000, 5, 50, 0.05, null, 'PZ-1', 'Golpes', 5]]], ['INYECCION', [cab('i'), ['PZ-1', 10, 1000, 10000, 20, 200, 0.02, null, 'PZ-1', 'Bajo peso', 20], ['PZ-2', 20, 500, 10000, '-', null, null]]]]);
+        const H = ['ORDEN DE PRODUCCION', 'CODIGO PB', 'FECHA ', 'TURNO', 'OPERARIO', 'TIEMPO DISPONIBLE', 'HORA INICIO', 'HORA FINAL', 'TIEMPO DE TRABAJO', 'TIEMPO STAND.', 'PIEZAS POR TURNO', 'PRODUCCION REAL POR TURNO', 'EFICIENCIA %', 'UTILIZACION'];
+        const ctl = archivo('CONTROL_PRUEBA.xlsx', [['CONTROL DE PRODUCCION MARZO', [H, [1, 'PZ-1', new Date(2030, 2, 3), 'MAÑANA', 'PEREZ', 420, null, null, 420, 1, 420, 336, 0.8, 1], [1, 'PZ-1', new Date(2030, 2, 3), 'TARDE', 'GOMEZ', 510, null, null, 255, 1, 255, 255, 1, 0.5], [1, 'PZ-1', new Date(1900, 4, 14), 'TARDE', 'GOMEZ', 510, null, null, 255, 1, 255, 255, 1, 0.5]]], ['BASE DE DATOS', [['CODIGO', 'DESCRP.']]]]);
+        await inoferKpiPlanillas.subir([ind, scrap, ctl]);
+        const prev = document.getElementById('kpiSubirPrev').innerText;
+        const txt = inoferKpiPlanillas.cargarPrevia({ reemplazar: false }); document.getElementById('kpiSubirPrev').remove();
+        await new Promise(r => setTimeout(r, 2500));
+        const M = inoferKpiPlanillas.estado();
+        inoferKpiActual = 'scrapDet'; inoferRenderKpi(); await new Promise(r => setTimeout(r, 300));
+        const vistaScrap = document.getElementById('kpiBody').innerText;
+        inoferKpiActual = 'rebOp'; inoferRenderKpi(); await new Promise(r => setTimeout(r, 300));
+        const vistaReb = document.getElementById('kpiBody').innerText;
+        inoferKpiActual = 'rendKilo'; inoferRenderKpi(); await new Promise(r => setTimeout(r, 300));
+        return { prev, txt, yaInyOct, inyOct: (inoferKpiData('inyeccion').datos.find(x => x.mes === '2025-10') || {}).valor, iny30: (inoferKpiData('inyeccion').datos.find(x => x.mes === '2030-01') || {}).valor, pz: (inoferKpiData('piezas').datos.find(x => x.mes === '2030-01') || {}).valor, rk: (inoferKpiData('rendKilo').datos.find(x => x.mes === '2030-01') || {}).valor,
+          sd: M.scrapDet.meses['2030-03'], sc: M.scrapCosto.meses['2030-03'], reb: (M.rebabadoOp.meses['2030-03'] || {}).f, vistaScrap, vistaReb, rkTxt: document.getElementById('kpiBody').innerText.slice(0, 400) };
+      });
+      ok(/1900/.test(r.prev) && /fecha mal escrita/.test(r.prev), 'no avisó la fecha mal escrita: ' + r.prev.slice(0, 300));
+      ok(r.inyOct === r.yaInyOct || (r.yaInyOct === undefined && r.inyOct === 50), 'pisó un mes que ya estaba sin pedirlo: ' + r.inyOct + ' vs ' + r.yaInyOct);
+      ok(r.iny30 === 81 && r.pz === 2000 && r.rk === 6000, 'no cargó los indicadores: ' + JSON.stringify([r.iny30, r.pz, r.rk]));
+      ok(r.sd && r.sd.iny.prod === 1500 && r.sd.iny.malas === 20 && r.sd.reb.malas === 5 && r.sd.causas.length === 2 && r.sc && r.sc.iny.costoScrap === 200, 'scrap mal leído: ' + JSON.stringify([r.sd, r.sc]));
+      ok(r.reb && r.reb.length === 2 && r.reb[0][4] === 'PEREZ' && r.reb[0][2] === 3 && r.reb[0][3] === 'M', 'control mal leído: ' + JSON.stringify(r.reb));
+      ok(/1,33%/.test(r.vistaScrap) && /Bajo peso/.test(r.vistaScrap), 'la vista de scrap no muestra bien: ' + r.vistaScrap.slice(0, 300));
+      ok(/PEREZ/.test(r.vistaReb) && /591/.test(r.vistaReb), 'la vista de rebabado no muestra bien: ' + r.vistaReb.slice(0, 300));
+      ok(/\$ 6\.000\/kg/.test(r.rkTxt), 'el rendimiento por kilo no se ve en $/kg: ' + r.rkTxt.slice(0, 200));
+      await A.waitForTimeout(1500);
+      // usuario que solo ve indicadores: sin plata y con los nombres ocultos; no puede guardar el rebabado por operario
+      await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'indic', nombre: 'Indicadores', clave: '5555', rol: 'usuario', permisos: { partes: 'none', ordenes: 'none', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'edit' } } }));
+      const K = await equipo(b); await ingresar(K, 'indic', '5555'); await K.waitForTimeout(1500);
+      const k = await K.evaluate(async () => {
+        const d = await (await fetch(cloudApiUrl + '?action=json&t=' + Date.now() + inoferTokenParam())).json();
+        const g = await inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'rebabadoOp', moduleData: { meses: {} } });
+        const g2 = await inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'kpisPrecio', moduleData: {} });
+        switchTab('kpi'); await new Promise(r => setTimeout(r, 400));
+        return { mods: Object.keys(d.modules), anon: d.modules.rebabadoOp && d.modules.rebabadoOp.anonimo, nom: d.modules.rebabadoOp && JSON.stringify(d.modules.rebabadoOp).includes('PEREZ'), g: g.error, g2: g2.error, tabs: document.getElementById('kpiSubtabs').innerText };
+      });
+      ok(!k.mods.includes('kpisPrecio') && !k.mods.includes('scrapCosto'), 'le llegan los indicadores de plata: ' + k.mods.join(','));
+      ok(k.anon === true && k.nom === false, 'le llegan los nombres de los operarios');
+      ok(k.g === 'permiso' && k.g2 === 'permiso', 'pudo guardar sin permiso: ' + k.g + ' / ' + k.g2);
+      ok(!/Rendimiento por kilo|Facturación/.test(k.tabs) && /Scrap en detalle/.test(k.tabs), 've pestañas que no debe: ' + k.tabs);
+      ok(!K._errs.length, 'errores: ' + K._errs.slice(0, 2).join(' | '));
+      await K.context().close();
+      const d = await nube(A);
+      ok(d.modules.rebabadoOp && JSON.stringify(d.modules.rebabadoOp).includes('PEREZ') && d.modules.kpisPrecio && d.modules.kpisPrecio.rendKilo, 'el usuario sin permiso borró datos de la nube');
+    });
     await prueba('Importar el Gantt de Excel y que el automático lo respete', async () => {
       const r = await A.evaluate(async () => {
         const H = ['Máquina', 'INYECCIÓN', 'Unid.\nTOTALES', 'Material', 'STD\n[Unid./h]', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.'];

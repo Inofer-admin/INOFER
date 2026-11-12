@@ -7,8 +7,43 @@
       { key: 'rebabado', titulo: 'EFICIENCIA DE REBABADO', corto: 'Rebabado', icono: '✂️', mayorEsMejor: true, metaDef: 95, min: 0, max: 100 },
       { key: 'scrap', titulo: '% SCRAP', corto: '% Scrap', icono: '♻️', mayorEsMejor: false, metaDef: 2, min: 0, max: 100 },
       { key: 'recuento', titulo: 'EFICIENCIA DEL RECUENTO CÍCLICO', corto: 'Recuento cíclico', icono: '📦', mayorEsMejor: true, metaDef: 98, min: 0, max: 100 },
-      { key: 'inyeccion', titulo: 'EFICIENCIA DE INYECCIÓN', corto: 'Inyección', icono: '🏭', mayorEsMejor: true, metaDef: 85, min: 0, max: 100 }
+      { key: 'inyeccion', titulo: 'EFICIENCIA DE INYECCIÓN', corto: 'Inyección', icono: '🏭', mayorEsMejor: true, metaDef: 85, min: 0, max: 100 },
+      // (12/11/2026) de la planilla de indicadores de la planta. Los de plata (precio: true) viajan en otro
+      // módulo de nube (kpisPrecio) que el servidor solo manda a quien puede ver precios.
+      { key: 'cumplimiento', titulo: '% CUMPLIMIENTO DE PROGRAMA', corto: 'Cumplimiento', icono: '📅', mayorEsMejor: true, metaDef: null, min: 0, max: 100 },
+      { key: 'piezas', titulo: 'PIEZAS FABRICADAS', corto: 'Piezas fabricadas', icono: '🔢', mayorEsMejor: true, metaDef: null, min: 0, max: Infinity, unidad: 'pz' },
+      { key: 'rendKilo', titulo: 'RENDIMIENTO POR KILO ($ PRODUCIDOS ÷ KG DE MATERIAL)', corto: 'Rendimiento por kilo', icono: '⚖️', mayorEsMejor: true, metaDef: null, min: 0, max: Infinity, unidad: '$kg', precio: true },
+      { key: 'facturacion', titulo: 'FACTURACIÓN PROMEDIO DIARIA', corto: 'Facturación prom. diaria', icono: '💲', mayorEsMejor: true, metaDef: null, min: 0, max: Infinity, unidad: '$', precio: true }
     ];
+    const INOFER_KPI_PRECIO_KEY = 'tablero_inyectoras_kpis_precio_v1';
+    function inoferKpiPuedePrecios() { try { return typeof inoferPuede !== 'function' || inoferPuede('precios_ver'); } catch (e) { return false; } }
+    // indicadores que este usuario puede ver (los de plata solo con permiso de precios)
+    function inoferKpiDefs() { return INOFER_KPI_DEF.filter(d => !d.precio || inoferKpiPuedePrecios()); }
+    window.inoferKpiDefs = inoferKpiDefs;
+    // número según la unidad del indicador
+    function inoferKpiFmt(k, v, corto) {
+      const d = INOFER_KPI_DEF.find(x => x.key === k) || {}; const n = Number(v);
+      if (v === null || v === undefined || v === '' || !isFinite(n)) return '—';
+      const u = d.unidad || '%';
+      if (u === '%') return inoferPct(n);
+      if (u === 'pz') return Math.round(n).toLocaleString('es-AR') + (corto ? '' : ' pz');
+      if (u === '$kg') return '$ ' + Math.round(n).toLocaleString('es-AR') + (corto ? '' : '/kg');
+      if (corto && Math.abs(n) >= 1e6) return '$ ' + (n / 1e6).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' M';
+      return '$ ' + Math.round(n).toLocaleString('es-AR');
+    }
+    window.inoferKpiFmt = inoferKpiFmt;
+    function inoferKpiTieneMeta(k) { const m = (inoferKpiData(k) || {}).meta; return m !== null && m !== undefined && m !== '' && isFinite(Number(m)); }
+    // true / false / null (sin meta)
+    function inoferKpiCumple(k, v) { if (!inoferKpiTieneMeta(k)) return null; const d = inoferKpiDef(k), m = Number(inoferKpiData(k).meta); return d.mayorEsMejor ? Number(v) >= m : Number(v) <= m; }
+    window.inoferKpiCumple = inoferKpiCumple;
+    // diferencia contra el mes anterior: puntos en los %, porcentaje en el resto
+    function inoferKpiDifTxt(k, a, b) {
+      const d = inoferKpiDef(k); const dif = Number(a) - Number(b);
+      if ((d.unidad || '%') === '%') return `${dif >= 0 ? '▲ +' : '▼ '}${dif.toFixed(2)} pts`;
+      if (!Number(b)) return '';
+      const p = dif / Math.abs(Number(b)) * 100; return `${p >= 0 ? '▲ +' : '▼ '}${p.toFixed(0)}%`;
+    }
+    window.inoferKpiDifTxt = inoferKpiDifTxt;
     const INOFER_KPI_KEY = 'tablero_inyectoras_kpis_v1';
     const INOFER_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
     // Datos de partida del gráfico "Eficiencia de conteo" que pasó la planta (se pueden editar)
@@ -20,6 +55,8 @@
       recuento: { meta: 98, datos: [['2025-09', 99.24], ['2025-10', 98.00], ['2025-11', 99.12], ['2025-12', 98.15], ['2026-01', 96.63], ['2026-02', 100], ['2026-03', 95.61], ['2026-04', 99.17], ['2026-05', 100], ['2026-06', 100], ['2026-07', 98.81], ['2026-08', 99.17], ['2026-09', 98.68]].map(([mes, valor]) => ({ mes, valor, nota: '' })) }
     };
     let inoferKpis = {};
+    let inoferKpisP = {};
+    try { inoferKpisP = inoferKpiPuedePrecios() ? (JSON.parse(localStorage.getItem(INOFER_KPI_PRECIO_KEY) || 'null') || {}) : {}; } catch (e) { inoferKpisP = {}; }
     try { inoferKpis = JSON.parse(localStorage.getItem(INOFER_KPI_KEY) || 'null') || JSON.parse(JSON.stringify(INOFER_KPI_INICIAL)); } catch (e) { inoferKpis = JSON.parse(JSON.stringify(INOFER_KPI_INICIAL)); }
     let inoferKpiActual = 'resumen';
     let inoferKpiRango = 'todo';
@@ -28,8 +65,9 @@
     function inoferKpiDef(k) { return INOFER_KPI_DEF.find(d => d.key === k); }
     function inoferKpiData(k) {
       const d = inoferKpiDef(k);
-      const o = inoferKpis[k] = inoferKpis[k] || { meta: d.metaDef, datos: [] };
-      if (o.meta === undefined || o.meta === null || o.meta === '') o.meta = d.metaDef;
+      const base = d && d.precio ? inoferKpisP : inoferKpis;
+      const o = base[k] = base[k] || { meta: d.metaDef, datos: [] };
+      if ((o.meta === undefined || o.meta === null || o.meta === '') && d.metaDef != null) o.meta = d.metaDef;
       o.datos = (o.datos || []).filter(x => /^\d{4}-\d{2}$/.test(x.mes)).sort((a, b) => a.mes.localeCompare(b.mes));
       return o;
     }
@@ -38,6 +76,10 @@
     function inoferGuardarKpis() {
       try { localStorage.setItem(INOFER_KPI_KEY, JSON.stringify(inoferKpis)); } catch (e) { }
       try { pushCloudModuleState('kpis', inoferKpis); } catch (e) { }
+      if (inoferKpiPuedePrecios() && Object.keys(inoferKpisP).length) {
+        try { localStorage.setItem(INOFER_KPI_PRECIO_KEY, JSON.stringify(inoferKpisP)); } catch (e) { }
+        try { pushCloudModuleState('kpisPrecio', inoferKpisP); } catch (e) { }
+      }
     }
     function inoferKpiFiltrados(k) {
       const datos = inoferKpiData(k).datos;
@@ -52,8 +94,9 @@
       const prom = vals.reduce((a, b) => a + b, 0) / vals.length;
       const mejor = def.mayorEsMejor ? Math.max(...vals) : Math.min(...vals);
       const peor = def.mayorEsMejor ? Math.min(...vals) : Math.max(...vals);
+      const conMeta = inoferKpiTieneMeta(k);
       const cumple = v => def.mayorEsMejor ? v >= Number(o.meta) : v <= Number(o.meta);
-      const enMeta = vals.filter(cumple).length;
+      const enMeta = conMeta ? vals.filter(cumple).length : 0;
       // tendencia: pendiente de la recta de los últimos 6 meses
       const ult = vals.slice(-6);
       let pend = 0;
@@ -61,14 +104,15 @@
         const n = ult.length, xs = ult.map((_, i) => i), mx = (n - 1) / 2, my = ult.reduce((a, b) => a + b, 0) / n;
         pend = xs.reduce((a, x, i) => a + (x - mx) * (ult[i] - my), 0) / xs.reduce((a, x) => a + (x - mx) ** 2, 0);
       }
-      const mejora = def.mayorEsMejor ? pend > 0.05 : pend < -0.05;
-      const empeora = def.mayorEsMejor ? pend < -0.05 : pend > 0.05;
+      const umbral = (def.unidad || '%') === '%' ? 0.05 : Math.abs(prom) * 0.005;
+      const mejora = def.mayorEsMejor ? pend > umbral : pend < -umbral;
+      const empeora = def.mayorEsMejor ? pend < -umbral : pend > umbral;
       const ultimo = datos[datos.length - 1], anterior = datos[datos.length - 2];
       return {
-        ultimo, anterior, prom, mejor, peor, enMeta, total: vals.length, meta: Number(o.meta),
+        ultimo, anterior, prom, mejor, peor, enMeta, total: vals.length, meta: conMeta ? Number(o.meta) : null, conMeta,
         mejorMes: datos.find(x => Number(x.valor) === mejor), peorMes: datos.find(x => Number(x.valor) === peor),
         tendencia: mejora ? '↗ Mejorando' : (empeora ? '↘ Empeorando' : '→ Estable'), tendClase: mejora ? 'text-emerald-300' : (empeora ? 'text-rose-300' : 'text-slate-300'),
-        cumpleUltimo: cumple(Number(ultimo.valor))
+        cumpleUltimo: conMeta ? cumple(Number(ultimo.valor)) : null
       };
     }
 
@@ -90,8 +134,8 @@
         meta.data.forEach((pt, i) => {
           const v = ds.data[i]; if (v === null || v === undefined) return;
           if (!todos && i !== ultimo) return;
-          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = inoferPct(v), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
-          const txt = inoferPct(v), w = ctx.measureText(txt).width;
+          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = (chart.$kpi ? inoferKpiFmt(chart.$kpi, v, true) : inoferPct(v)), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
+          const txt = (chart.$kpi ? inoferKpiFmt(chart.$kpi, v, true) : inoferPct(v)), w = ctx.measureText(txt).width;
           if (ds.type === 'bar') { ctx.textAlign = 'center'; ctx.fillText(txt, pt.x, pt.y - 9); return; }
           const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
           ctx.textAlign = derecha ? 'right' : 'left';
@@ -109,28 +153,31 @@
       const def = inoferKpiDef(k), o = inoferKpiData(k), datos = (opts && opts.datos) || inoferKpiFiltrados(k);
       const tipo = (opts && opts.tipo) || inoferKpiTipo(k), esBarra = tipo === 'barras' || tipo === 'semaforo';
       const vals = datos.map(x => Number(x.valor));
-      const meta = Number(o.meta);
+      const meta = inoferKpiTieneMeta(k) ? Number(o.meta) : NaN;
+      const fmt = v => inoferKpiFmt(k, v, true);
       // la meta entra en la escala solo si está cerca de los datos (si no, aplasta la curva)
       const dMin = Math.min(...vals), dMax = Math.max(...vals), rango = Math.max(dMax - dMin, 2);
       const metaVisible = isFinite(meta) && meta >= dMin - rango && meta <= dMax + rango;
       let lo = metaVisible ? Math.min(dMin, meta) : dMin, hi = metaVisible ? Math.max(dMax, meta) : dMax;
       if (!isFinite(lo)) { lo = 0; hi = 100; }
-      const margen = Math.max(1, (hi - lo) * 0.15);
+      const margen = Math.max((def.unidad || '%') === '%' ? 1 : 0, (hi - lo) * 0.15);
       lo = Math.max(def.min, Math.floor(lo - margen)); hi = Math.min(def.max, Math.ceil(hi + margen));
       if (hi - lo < 2) { hi = Math.min(def.max, lo + 2); }
+      if ((def.unidad || '%') !== '%') { const paso = Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.max(1, hi - lo))) - 0)); lo = Math.max(0, Math.floor(lo / paso) * paso); hi = Math.ceil(hi / paso) * paso; }
       if (canvas.__chart) { try { canvas.__chart.destroy(); } catch (e) { } }
       const grid = 'rgba(255,255,255,0.45)';
       // presentación en la tele: letras según el alto del gráfico, meses sin girar, menos líneas
       const tvMode = !!(opts && (opts.grande || opts.tv));
       const altoCaja = tvMode ? ((canvas.parentElement && canvas.parentElement.clientHeight) || 400) : 0;
       const F = tvMode ? Math.max(13, Math.min(30, Math.round(altoCaja / (opts.tv === 'chico' ? 13 : 20)))) : 11;
-      const cumple = v => def.mayorEsMejor ? v >= meta : v <= meta;
+      const cumple = v => !isFinite(meta) ? true : (def.mayorEsMejor ? v >= meta : v <= meta);
       const principal = { label: def.corto, data: vals, borderColor: '#000000', backgroundColor: '#000000', borderWidth: tvMode ? 4 : 2.5, pointRadius: tvMode ? Math.round(F / 3) : 2.5, pointHoverRadius: 5, tension: 0, fill: false, order: 2 };
       if (esBarra) Object.assign(principal, { type: 'bar', borderWidth: 0, borderRadius: 3, maxBarThickness: 46, backgroundColor: tipo === 'semaforo' ? vals.map(v => cumple(v) ? '#15803d' : '#b91c1c') : '#0f172a' });
       if (tipo === 'area') Object.assign(principal, { fill: 'start', backgroundColor: 'rgba(15,23,42,0.35)' });
       if (tipo === 'escalon') Object.assign(principal, { stepped: 'middle' });
       if (tipo === 'puntos') Object.assign(principal, { showLine: false, pointRadius: 5.5, pointHoverRadius: 7, pointBackgroundColor: vals.map(v => cumple(v) ? '#15803d' : '#b91c1c'), pointBorderColor: '#000000', pointBorderWidth: 1.5 });
-      const series = [principal, { type: 'line', label: 'Meta ' + inoferPct(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false, order: 1 }];
+      const series = [principal];
+      if (isFinite(meta)) series.push({ type: 'line', label: 'Meta ' + fmt(meta) + (metaVisible ? '' : ' (fuera de escala)'), data: datos.map(() => metaVisible ? meta : null), borderColor: '#fde047', borderWidth: 2, borderDash: [6, 5], pointRadius: 0, fill: false, order: 1 });
       if (tipo === 'tendencia' && vals.length >= 3) { // recta de mínimos cuadrados
         const n = vals.length, sx = (n - 1) * n / 2, sy = vals.reduce((a, b) => a + b, 0), sxy = vals.reduce((a, v, i) => a + i * v, 0), sxx = vals.reduce((a, v, i) => a + i * i, 0);
         const m = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1), b0 = (sy - m * sx) / n;
@@ -147,16 +194,17 @@
           layout: { padding: { right: tvMode ? F * 2 : 36, top: tvMode ? F : 6 } },
           plugins: {
             legend: { display: !tvMode || opts.tv !== 'chico', position: 'bottom', labels: { color: '#ffffff', boxWidth: tvMode ? F * 1.5 : 18, font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 } } },
-            title: { display: true, text: tvMode && opts.tv === 'chico' && isFinite(meta) ? def.titulo + ' · meta ' + inoferPct(meta) : def.titulo, color: '#ffffff', font: { size: tvMode ? Math.round(F * 1.35) : 16, weight: 'bold' }, padding: { bottom: tvMode ? F * 0.6 : 10 } },
-            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${inoferPct(c.parsed.y)}` } }
+            title: { display: true, text: tvMode && opts.tv === 'chico' && isFinite(meta) ? def.titulo + ' · meta ' + fmt(meta) : def.titulo, color: '#ffffff', font: { size: tvMode ? Math.round(F * 1.35) : 16, weight: 'bold' }, padding: { bottom: tvMode ? F * 0.6 : 10 } },
+            tooltip: { callbacks: { label: c => `${c.dataset.label}: ${inoferKpiFmt(k, c.parsed.y)}` } }
           },
           scales: {
             x: { grid: { color: grid, display: !tvMode }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxRotation: 0, autoSkip: true, autoSkipPadding: F, callback(v) { const t = this.getLabelForValue(v); return String(t).split(/[-\s]/)[0]; } } : {}) } },
-            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxTicksLimit: opts.tv === 'chico' ? 4 : 6 } : {}), callback: v => inoferPct(v) } }
+            y: { min: lo, max: hi, grid: { color: grid }, ticks: { color: '#ffffff', font: { weight: 'bold', size: tvMode ? Math.round(F * 0.85) : 11 }, ...(tvMode ? { maxTicksLimit: opts.tv === 'chico' ? 4 : 6 } : {}), callback: v => fmt(v) } }
           }
         },
         plugins: [...(opts && opts.sinEtiquetas ? [] : [inoferKpiEtiquetas]), { id: 'fondoAzul', beforeDraw(c) { const x = c.ctx; x.save(); x.fillStyle = '#5b9bd5'; x.fillRect(0, 0, c.width, c.height); x.restore(); } }]
       });
+      chart.$kpi = k;
       if (tvMode) { chart.$tv = { f: F }; chart.update('none'); }
       canvas.__chart = chart;
       return chart;
@@ -195,37 +243,43 @@
         <div id="kpiBody"></div>`;
       ref.parentNode.insertBefore(v, ref.nextSibling);
       v.querySelector('#kpiRango').addEventListener('change', e => { inoferKpiRango = e.target.value; inoferRenderKpi(); });
-      v.querySelector('#kpiPrintAllBtn').addEventListener('click', () => inoferImprimirKpi(INOFER_KPI_DEF.map(d => d.key)));
+      v.querySelector('#kpiPrintAllBtn').addEventListener('click', () => inoferImprimirKpi(inoferKpiDefs().map(d => d.key)));
     }
 
     function inoferRenderKpi() {
       const sub = document.getElementById('kpiSubtabs'), body = document.getElementById('kpiBody');
       if (!sub || !body) return;
-      const tabs = [{ key: 'resumen', corto: 'Resumen', icono: '🧭' }].concat(INOFER_KPI_DEF);
+      const extras = (window.inoferKpiExtras || []).filter(x => !x.visible || x.visible());
+      if (!inoferKpiDefs().some(d => d.key === inoferKpiActual) && !extras.some(x => x.key === inoferKpiActual)) inoferKpiActual = 'resumen';
+      const tabs = [{ key: 'resumen', corto: 'Resumen', icono: '🧭' }].concat(inoferKpiDefs(), extras);
       sub.innerHTML = tabs.map(t => `<button type="button" data-kpi-tab="${t.key}" class="rounded-lg px-3 py-1.5 text-xs font-bold ${inoferKpiActual === t.key ? 'bg-sky-500 text-slate-950' : 'border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'}">${t.icono} ${t.corto}</button>`).join('');
       sub.querySelectorAll('[data-kpi-tab]').forEach(b => b.addEventListener('click', () => { inoferKpiActual = b.dataset.kpiTab; inoferRenderKpi(); }));
       Object.keys(inoferKpiCharts).forEach(id => { try { inoferKpiCharts[id].destroy(); } catch (e) { } delete inoferKpiCharts[id]; });
       if (inoferKpiActual === 'resumen') return inoferRenderKpiResumen(body);
+      const ex = extras.find(x => x.key === inoferKpiActual);
+      if (ex) { ex.render(body); try { inoferLockControls(); } catch (e) { } return; }
       inoferRenderKpiDetalle(body, inoferKpiActual);
     }
 
     function inoferKpiTarjetaStats(k) {
       const st = inoferKpiStats(k), def = inoferKpiDef(k);
       if (!st) return '<p class="text-xs text-slate-400">Todavía no hay datos cargados.</p>';
+      const f = v => inoferKpiFmt(k, v);
       const dif = st.anterior ? Number(st.ultimo.valor) - Number(st.anterior.valor) : 0;
       const difBuena = def.mayorEsMejor ? dif >= 0 : dif <= 0;
+      const colUlt = st.cumpleUltimo === null ? 'text-white' : (st.cumpleUltimo ? 'text-emerald-300' : 'text-rose-300');
       return `<div class="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Último (${inoferMesTxt(st.ultimo.mes)})</div><div class="text-base font-extrabold ${st.cumpleUltimo ? 'text-emerald-300' : 'text-rose-300'}">${inoferPct(st.ultimo.valor)}</div>${st.anterior ? `<div class="text-[10px] ${difBuena ? 'text-emerald-300' : 'text-rose-300'}">${dif >= 0 ? '▲ +' : '▼ '}${dif.toFixed(2)} pts</div>` : ''}</div>
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Meta</div><div class="text-base font-extrabold text-amber-300">${inoferPct(st.meta)}</div><div class="text-[10px] text-slate-500">${def.mayorEsMejor ? 'mayor es mejor' : 'menor es mejor'}</div></div>
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Promedio</div><div class="text-base font-extrabold text-white">${inoferPct(st.prom)}</div></div>
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Mejor mes</div><div class="text-sm font-extrabold text-emerald-300">${inoferPct(st.mejor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.mejorMes.mes)}</div></div>
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Peor mes</div><div class="text-sm font-extrabold text-rose-300">${inoferPct(st.peor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.peorMes.mes)}</div></div>
-        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">En meta / tendencia</div><div class="text-sm font-extrabold text-white">${st.enMeta} de ${st.total} meses</div><div class="text-[10px] font-bold ${st.tendClase}">${st.tendencia}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Último (${inoferMesTxt(st.ultimo.mes)})</div><div class="text-base font-extrabold ${colUlt}">${f(st.ultimo.valor)}</div>${st.anterior ? `<div class="text-[10px] ${difBuena ? 'text-emerald-300' : 'text-rose-300'}">${inoferKpiDifTxt(k, st.ultimo.valor, st.anterior.valor)}</div>` : ''}</div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Meta</div><div class="text-base font-extrabold text-amber-300">${st.conMeta ? f(st.meta) : 'sin meta'}</div><div class="text-[10px] text-slate-500">${def.mayorEsMejor ? 'mayor es mejor' : 'menor es mejor'}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Promedio</div><div class="text-base font-extrabold text-white">${f(st.prom)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Mejor mes</div><div class="text-sm font-extrabold text-emerald-300">${f(st.mejor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.mejorMes.mes)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">Peor mes</div><div class="text-sm font-extrabold text-rose-300">${f(st.peor)}</div><div class="text-[10px] text-slate-500">${inoferMesTxt(st.peorMes.mes)}</div></div>
+        <div class="rounded-lg bg-slate-950/70 p-2"><div class="text-[10px] text-slate-400">${st.conMeta ? 'En meta / tendencia' : 'Tendencia'}</div><div class="text-sm font-extrabold text-white">${st.conMeta ? `${st.enMeta} de ${st.total} meses` : `${st.total} meses`}</div><div class="text-[10px] font-bold ${st.tendClase}">${st.tendencia}</div></div>
       </div>`;
     }
 
     function inoferRenderKpiResumen(body) {
-      body.innerHTML = `<div class="grid gap-4 lg:grid-cols-2">${INOFER_KPI_DEF.map(d => `
+      body.innerHTML = `<div class="grid gap-4 lg:grid-cols-2">${inoferKpiDefs().map(d => `
         <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl space-y-2">
           <div class="flex items-center justify-between"><span class="text-sm font-extrabold text-white">${d.icono} ${d.corto}</span>
             <button type="button" data-kpi-ir="${d.key}" class="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">Ver / cargar datos →</button></div>
@@ -233,7 +287,7 @@
           ${inoferKpiTarjetaStats(d.key)}
         </div>`).join('')}</div>`;
       body.querySelectorAll('[data-kpi-ir]').forEach(b => b.addEventListener('click', () => { inoferKpiActual = b.dataset.kpiIr; inoferRenderKpi(); }));
-      INOFER_KPI_DEF.forEach(d => { const c = document.getElementById('kpiMini_' + d.key); if (c) inoferKpiCharts['m' + d.key] = inoferKpiDibujar(c, d.key, { sinEtiquetas: inoferKpiFiltrados(d.key).length > 8 }); });
+      inoferKpiDefs().forEach(d => { const c = document.getElementById('kpiMini_' + d.key); if (c) inoferKpiCharts['m' + d.key] = inoferKpiDibujar(c, d.key, { sinEtiquetas: inoferKpiFiltrados(d.key).length > 8 }); });
     }
 
     function inoferRenderKpiDetalle(body, k) {
@@ -257,13 +311,13 @@
               <div class="text-sm font-extrabold text-sky-300">${def.icono} Cargar / corregir un mes</div>
               <div class="grid grid-cols-2 gap-2">
                 <label class="text-[11px] font-semibold text-slate-400">Mes<input type="month" id="kpiMes" value="${mesDef}" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white" required /></label>
-                <label class="text-[11px] font-semibold text-slate-400">Valor (%)<input type="number" id="kpiValor" step="0.01" min="0" max="100" placeholder="Ej: 98,68" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-white" required /></label>
+                <label class="text-[11px] font-semibold text-slate-400">Valor (${({ '%': '%', pz: 'piezas', '$kg': '$ por kg', '$': '$' })[def.unidad || '%']})<input type="number" id="kpiValor" step="${(def.unidad || '%') === '%' ? '0.01' : 'any'}" min="0" ${(def.unidad || '%') === '%' ? 'max="100"' : ''} placeholder="${(def.unidad || '%') === '%' ? 'Ej: 98,68' : 'Ej: 1500'}" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs font-bold text-white" required /></label>
               </div>
               <label class="block text-[11px] font-semibold text-slate-400">Nota (opcional)<input type="text" id="kpiNota" maxlength="120" placeholder="Ej: inventario de fin de año" class="kpi-edit mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white" /></label>
               <button type="submit" class="kpi-edit w-full rounded-lg bg-sky-500 py-2 text-xs font-extrabold text-slate-950 hover:bg-sky-400">Guardar mes</button>
               <div class="flex items-center gap-2 border-t border-slate-800 pt-2">
-                <span class="text-[11px] text-slate-400">Meta (%)</span>
-                <input type="number" id="kpiMeta" step="0.01" min="0" max="100" value="${o.meta}" class="kpi-edit w-24 rounded-lg border border-amber-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-amber-300" />
+                <span class="text-[11px] text-slate-400">Meta</span>
+                <input type="number" id="kpiMeta" step="any" min="0" value="${o.meta == null ? '' : o.meta}" placeholder="sin meta" class="kpi-edit w-24 rounded-lg border border-amber-500/40 bg-slate-950 px-2 py-1 text-xs font-bold text-amber-300" />
                 <span class="text-[10px] text-slate-500">${def.mayorEsMejor ? 'se cumple si el valor es igual o mayor' : 'se cumple si el valor es igual o menor'}</span>
               </div>
             </form>
@@ -273,7 +327,7 @@
                 <thead><tr class="text-[10px] uppercase text-slate-500"><th class="py-1">Mes</th><th class="py-1 text-right">Valor</th><th class="py-1 pl-2">Nota / cargó</th><th></th></tr></thead>
                 <tbody>${o.datos.slice().reverse().map(x => `<tr class="border-t border-slate-800">
                   <td class="py-1.5 font-semibold text-white">${inoferMesTxt(x.mes)}</td>
-                  <td class="py-1.5 text-right font-extrabold ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'text-emerald-300' : 'text-rose-300'}">${inoferPct(x.valor)}</td>
+                  <td class="py-1.5 text-right font-extrabold ${inoferKpiCumple(k, x.valor) === null ? 'text-white' : (inoferKpiCumple(k, x.valor) ? 'text-emerald-300' : 'text-rose-300')}">${inoferKpiFmt(k, x.valor)}</td>
                   <td class="py-1.5 pl-2 text-slate-400">${inoferEsc(x.nota || '')}${x.cargadoPor ? `<span class="block text-[10px] text-slate-500">${inoferEsc(x.cargadoPor)}${x.cargadoAt ? ' · ' + inoferEsc(new Date(x.cargadoAt).toLocaleDateString('es-AR')) : ''}</span>` : (x.nota ? '' : '<span class="text-[10px] text-slate-600">planilla histórica</span>')}</td>
                   <td class="py-1.5 text-right whitespace-nowrap"><button type="button" data-kpi-editar="${x.mes}" class="kpi-edit rounded px-1.5 text-sky-300 hover:bg-slate-800" title="Editar">✏️</button><button type="button" data-kpi-borrar="${x.mes}" class="kpi-edit rounded px-1.5 text-rose-300 hover:bg-slate-800" title="Borrar">🗑️</button></td></tr>`).join('') || '<tr><td colspan="4" class="py-3 text-center text-slate-500">Sin datos</td></tr>'}</tbody></table></div>
             </div>
@@ -302,10 +356,10 @@
         if (ex) { ex.valor = valor; ex.nota = document.getElementById('kpiNota').value || ''; ex.cargadoPor = quien; ex.cargadoAt = cuando; }
         else datos.push({ mes, valor, nota: document.getElementById('kpiNota').value || '', cargadoPor: quien, cargadoAt: cuando });
         inoferGuardarKpis(); inoferRenderKpi();
-        showToast(`${def.corto} ${inoferMesTxt(mes)}: ${inoferPct(valor)} guardado`);
+        showToast(`${def.corto} ${inoferMesTxt(mes)}: ${inoferKpiFmt(k, valor)} guardado`);
       });
       body.querySelector('#kpiTipoGraf').addEventListener('change', e => { inoferKpiData(k).grafico = e.target.value; inoferKpiData(k).graficoAt = new Date().toISOString(); inoferGuardarKpis(); inoferRenderKpi(); showToast('✓ Tipo de gráfico guardado para todos'); });
-      body.querySelector('#kpiMeta').addEventListener('change', e => { inoferKpiData(k).meta = Number(e.target.value) || 0; inoferGuardarKpis(); inoferRenderKpi(); });
+      body.querySelector('#kpiMeta').addEventListener('change', e => { const v = e.target.value; inoferKpiData(k).meta = v === '' ? (def.metaDef == null ? null : def.metaDef) : (Number(v) || 0); inoferGuardarKpis(); inoferRenderKpi(); });
       body.querySelectorAll('[data-kpi-editar]').forEach(b => b.addEventListener('click', () => {
         const x = inoferKpiData(k).datos.find(d => d.mes === b.dataset.kpiEditar); if (!x) return;
         document.getElementById('kpiMes').value = x.mes; document.getElementById('kpiValor').value = x.valor; document.getElementById('kpiNota').value = x.nota || '';
@@ -340,8 +394,9 @@
       }
       return null;
     }
-    function inoferKpiParseValor(t) {
-      if (typeof t === 'number') return t <= 1.5 && t > 0 ? Number((t * 100).toFixed(4)) : t; // Excel guarda 99,24% como 0,9924
+    function inoferKpiParseValor(t, k) {
+      const pct = !k || ((inoferKpiDef(k) || {}).unidad || '%') === '%';
+      if (typeof t === 'number') return pct && t <= 1.5 && t > 0 ? Number((t * 100).toFixed(4)) : t; // Excel guarda 99,24% como 0,9924
       let s = String(t || '').replace('%', '').trim();
       if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(',', '.');
       const v = parseFloat(s);
@@ -351,7 +406,7 @@
       const datos = inoferKpiData(k).datos; let n = 0;
       filas.forEach(([mesT, valT]) => {
         const mes = typeof mesT === 'number' ? (() => { const d = new Date(Math.round((mesT - 25569) * 86400000)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; })() : (mesT instanceof Date ? `${mesT.getFullYear()}-${String(mesT.getMonth() + 1).padStart(2, '0')}` : inoferKpiParseMes(mesT));
-        const valor = inoferKpiParseValor(valT);
+        const valor = inoferKpiParseValor(valT, k);
         if (!mes || valor === null) return;
         const ex = datos.find(x => x.mes === mes);
         const quien = inoferUsuarioEtiqueta(), cuando = new Date().toISOString();
@@ -398,15 +453,16 @@
           try { ch.resize(1100, 520); ch.update('none'); img = cv.toDataURL('image/png'); } catch (e) { }
           try { ch.destroy(); } catch (e) { } wrap.remove();
         }
-        const filas = datos.map(x => `<tr><td>${inoferMesTxt(x.mes)}</td><td class="n ${(def.mayorEsMejor ? x.valor >= o.meta : x.valor <= o.meta) ? 'ok' : 'mal'}">${inoferPct(x.valor)}</td><td>${inoferEsc(x.nota || '')}</td><td>${inoferEsc(x.cargadoPor || '')}</td></tr>`).join('');
+        const f = v => inoferKpiFmt(k, v);
+        const filas = datos.map(x => `<tr><td>${inoferMesTxt(x.mes)}</td><td class="n ${inoferKpiCumple(k, x.valor) === false ? 'mal' : 'ok'}">${f(x.valor)}</td><td>${inoferEsc(x.nota || '')}</td><td>${inoferEsc(x.cargadoPor || '')}</td></tr>`).join('');
         return `<section>
           <h2>${def.titulo}</h2>
           ${st ? `<div class="kpis">
-            <div><span>Último (${inoferMesTxt(st.ultimo.mes)})</span><b>${inoferPct(st.ultimo.valor)}</b></div>
-            <div><span>Meta</span><b>${inoferPct(st.meta)}</b></div>
-            <div><span>Promedio</span><b>${inoferPct(st.prom)}</b></div>
-            <div><span>Mejor / peor</span><b>${inoferPct(st.mejor)} / ${inoferPct(st.peor)}</b></div>
-            <div><span>Meses en meta</span><b>${st.enMeta} de ${st.total}</b></div>
+            <div><span>Último (${inoferMesTxt(st.ultimo.mes)})</span><b>${f(st.ultimo.valor)}</b></div>
+            <div><span>Meta</span><b>${st.conMeta ? f(st.meta) : 'sin meta'}</b></div>
+            <div><span>Promedio</span><b>${f(st.prom)}</b></div>
+            <div><span>Mejor / peor</span><b>${f(st.mejor)} / ${f(st.peor)}</b></div>
+            <div><span>Meses en meta</span><b>${st.conMeta ? st.enMeta + ' de ' + st.total : '—'}</b></div>
             <div><span>Tendencia</span><b>${st.tendencia}</b></div></div>` : '<p>Sin datos cargados.</p>'}
           ${img ? `<img src="${img}" alt="">` : ''}
           ${filas ? `<table><thead><tr><th>Mes</th><th>Valor</th><th>Nota</th><th>Cargó</th></tr></thead><tbody>${filas}</tbody></table>` : ''}
@@ -442,6 +498,13 @@
       window.applyCloudModules = function (mods) {
         const out = _inoferApplyModsKpi.apply(this, arguments);
         try {
+          if (mods && mods.kpisPrecio && typeof mods.kpisPrecio === 'object' && inoferKpiPuedePrecios() && JSON.stringify(mods.kpisPrecio) !== JSON.stringify(inoferKpisP)) {
+            inoferKpisP = mods.kpisPrecio;
+            try { localStorage.setItem(INOFER_KPI_PRECIO_KEY, JSON.stringify(inoferKpisP)); } catch (e) { }
+            const a = document.activeElement, v = document.getElementById('viewKpi');
+            if (v && !v.classList.contains('hidden') && !(a && a.classList && a.classList.contains('kpi-edit'))) inoferRenderKpi();
+          }
+          if (!inoferKpiPuedePrecios() && Object.keys(inoferKpisP).length) { inoferKpisP = {}; try { localStorage.removeItem(INOFER_KPI_PRECIO_KEY); } catch (e) { } }
           if (mods && mods.kpis && typeof mods.kpis === 'object' && JSON.stringify(mods.kpis) !== JSON.stringify(inoferKpis)) {
             inoferKpis = mods.kpis;
             try { localStorage.setItem(INOFER_KPI_KEY, JSON.stringify(inoferKpis)); } catch (e) { }

@@ -44,7 +44,8 @@
         indicadores: [
           { k: 'kpi_cargar', t: 'Cargar y corregir datos de los indicadores' },
           { k: 'kpi_metas', t: 'Cambiar las metas' },
-          { k: 'kpi_imprimir', t: 'Imprimir informes de indicadores', nivel: 'view' }
+          { k: 'kpi_imprimir', t: 'Imprimir informes de indicadores', nivel: 'view' },
+          { k: 'kpi_operarios', t: 'Ver los nombres de los operarios en Rebabado por operario (solo si lo habilitás)', nivel: 'view', opt: true }
         ],
         general: [
           { k: 'sol_enviar', t: 'Mandar solicitudes al administrador', nivel: 'any' },
@@ -114,7 +115,7 @@
         cat_exportar: ['#exportCatalogCsvBtn'],
         ia_consultar: ['#aiChatForm textarea', '#aiChatForm input', '#aiChatForm button', '.ai-quick-btn'],
         ia_ensenar: ['#inoferTeachInput', '#inoferTeachBtn'],
-        kpi_cargar: ['#kpiMes', '#kpiValor', '#kpiNota', '#kpiForm button[type="submit"]', '.kpi-del', '.kpi-edit-row'],
+        kpi_cargar: ['#kpiMes', '#kpiValor', '#kpiNota', '#kpiForm button[type="submit"]', '.kpi-del', '.kpi-edit-row', '#kpiSubirBtn', '#kpiSubirArchivo'],
         kpi_metas: ['#kpiMeta'],
         kpi_imprimir: ['#kpiPrintBtn', '#kpiPrintAllBtn'],
         sol_enviar: ['[data-acc="nuevaSol"]', '#solForm button', '#solForm input', '#solForm textarea'],

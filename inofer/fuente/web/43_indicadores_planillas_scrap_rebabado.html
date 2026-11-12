@@ -1,0 +1,403 @@
+  <script>
+    // ===== Indicadores: subir las planillas de la planta (12/11/2026) =====
+    // Un solo botón "📥 Subir planillas" en Indicadores que reconoce tres tipos de Excel (se pueden elegir varios juntos):
+    //  1) Planilla de indicadores (fila con "Periodo" + columnas por indicador) → historial de cada indicador (módulos kpis / kpisPrecio).
+    //     Por defecto solo AGREGA los meses que faltan (el usuario confirmó que lo que ya tiene la app es lo correcto).
+    //  2) SCRAP_<Mes>_<aa>.xlsx (hojas INYECCION y REBABADO) → módulo scrapDet {meses:{'AAAA-MM':{iny,reb,piezas,causas}}}
+    //     y los costos en scrapCosto (solo quien ve precios; el servidor no se lo manda al resto).
+    //  3) CONTROL DE PRODUCCIÓN (una hoja por mes) → módulo rebabadoOp {meses:{'AAAA-MM':{f:[[op,pieza,dia,turno,operario,disp,trab,esperado,real]]}}}.
+    //     Los nombres solo los ve quien el admin habilita (permiso kpi_operarios); al resto el servidor se los cambia por "Operario N".
+    // Nunca se guardan planillas reales en el repositorio: todo entra por la app a la nube de la planta.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const p1 = v => (Number(v) || 0).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+      const p2 = v => (Number(v) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+      const plata = v => '$ ' + Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      const mesTxt = m => { try { return inoferMesTxt(m); } catch (e) { return m; } };
+      const mesLargo = m => { const [y, mm] = String(m).split('-'); return (MESES[Number(mm) - 1] || '') + ' ' + y; };
+      const puedePrecios = () => { try { return inoferKpiPuedePrecios(); } catch (e) { return false; } };
+      const puedeOperarios = () => { try { return typeof inoferPuede !== 'function' || inoferPuede('kpi_operarios'); } catch (e) { return false; } };
+      const puedeCargar = () => { try { return inoferCan('indicadores', 'edit') && (typeof inoferPuede !== 'function' || inoferPuede('kpi_cargar')); } catch (e) { return false; } };
+      const quien = () => { try { return inoferUsuarioEtiqueta(); } catch (e) { return ''; } };
+
+      // ---------- módulos (en el equipo + nube)
+      const KEYS = { scrapDet: 'tablero_inyectoras_scrapdet_v1', scrapCosto: 'tablero_inyectoras_scrapcosto_v1', rebabadoOp: 'tablero_inyectoras_rebop_v1' };
+      const M = {};
+      Object.keys(KEYS).forEach(k => { try { M[k] = JSON.parse(localStorage.getItem(KEYS[k]) || 'null') || { meses: {} }; } catch (e) { M[k] = { meses: {} }; } if (!M[k].meses) M[k].meses = {}; });
+      function limpiarSinPermiso() {
+        if (!puedePrecios() && Object.keys(M.scrapCosto.meses).length) { M.scrapCosto = { meses: {} }; try { localStorage.removeItem(KEYS.scrapCosto); } catch (e) { } }
+        // si este equipo tenía nombres y el usuario no puede verlos, se borran del equipo hasta que llegue la versión de la nube
+        if (!puedeOperarios() && !M.rebabadoOp.anonimo && Object.keys(M.rebabadoOp.meses).length) { M.rebabadoOp = { meses: {} }; try { localStorage.removeItem(KEYS.rebabadoOp); } catch (e) { } }
+      }
+      function guardar(k) {
+        try { localStorage.setItem(KEYS[k], JSON.stringify(M[k])); } catch (e) { }
+        if (k === 'scrapCosto' && !puedePrecios()) return;
+        if (k === 'rebabadoOp' && !puedeOperarios()) return;
+        try { pushCloudModuleState(k, M[k]); } catch (e) { }
+      }
+      if (typeof window.applyCloudModules === 'function') {
+        const _am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const r = _am.apply(this, arguments);
+          try {
+            let cambio = false;
+            Object.keys(KEYS).forEach(k => {
+              const n = mods && mods[k];
+              if (!n || typeof n !== 'object') return;
+              if (JSON.stringify(n) === JSON.stringify(M[k])) return;
+              M[k] = n; if (!M[k].meses) M[k].meses = {};
+              try { localStorage.setItem(KEYS[k], JSON.stringify(M[k])); } catch (e) { }
+              cambio = true;
+            });
+            limpiarSinPermiso();
+            const v = $('viewKpi');
+            if (cambio && v && !v.classList.contains('hidden') && (inoferKpiActual === 'scrapDet' || inoferKpiActual === 'rebOp')) { const a = document.activeElement; if (!(a && a.tagName === 'SELECT')) inoferRenderKpi(); }
+          } catch (e) { }
+          return r;
+        };
+      }
+
+      // ---------- leer Excel
+      function filasDe(ws, maxCol) {
+        // hojas con formato hasta la fila 1.048.576: se recorta al último dato real
+        let maxR = 0, maxC = 0;
+        Object.keys(ws).forEach(a => { if (a[0] === '!') return; try { const c = XLSX.utils.decode_cell(a); if (ws[a] && ws[a].v !== undefined && ws[a].v !== null && ws[a].v !== '') { if (c.r > maxR) maxR = c.r; if (c.c > maxC) maxC = c.c; } } catch (e) { } });
+        ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: Math.min(maxC, maxCol || 40) } });
+        return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+      }
+      // fecha de Excel → AAAA-MM-DD (corrige el corrimiento de zona horaria)
+      function iso(v) {
+        if (v instanceof Date && !isNaN(v)) { const d = new Date(v.getTime() + 12 * 3600e3); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+        if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 86400000)); return d.toISOString().slice(0, 10); }
+        const m = String(v || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+        const m2 = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m2 ? m2[0] : '';
+      }
+      const num = v => { if (typeof v === 'number') return v; const s = String(v == null ? '' : v).replace(/[$\s]/g, ''); if (!s || s === '-') return NaN; const t = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s; return parseFloat(t); };
+      function leerArchivo(file) {
+        return new Promise((res, rej) => {
+          if (typeof XLSX === 'undefined' || !XLSX.read) { rej(new Error('No se pudo abrir Excel en este equipo (falta internet la primera vez).')); return; }
+          const r = new FileReader();
+          r.onload = () => { try { res(XLSX.read(r.result, { type: 'array', cellDates: true })); } catch (e) { rej(new Error('No se pudo leer ' + file.name)); } };
+          r.onerror = () => rej(new Error('No se pudo leer ' + file.name));
+          r.readAsArrayBuffer(file);
+        });
+      }
+
+      // ---------- 1) planilla de indicadores
+      const COLS_KPI = [[/inyecc/, 'inyeccion'], [/rebab/, 'rebabado'], [/conteo|recuento/, 'recuento'], [/scrap/, 'scrap'], [/cumplim/, 'cumplimiento'], [/piezas fabric|piezas producid/, 'piezas'], [/rendim.*kilo|por kilo/, 'rendKilo'], [/factur/, 'facturacion']];
+      function leerIndicadores(filas) {
+        const hi = filas.findIndex(f => (f || []).some(c => /^periodo|^mes$/.test(norm(c))));
+        if (hi < 0) return null;
+        const H = filas[hi].map(norm);
+        const cMes = H.findIndex(h => /^periodo|^mes$/.test(h));
+        const cols = [];
+        H.forEach((h, i) => { if (i === cMes || !h) return; const m = COLS_KPI.find(([re]) => re.test(h)); if (m && !cols.some(c => c.key === m[1])) cols.push({ i, key: m[1], titulo: filas[hi][i] }); });
+        if (cols.length < 2) return null;
+        const out = cols.map(c => Object.assign(c, { datos: [] }));
+        filas.slice(hi + 1).forEach(f => {
+          if (!f) return; const d = iso(f[cMes]); let mes = d ? d.slice(0, 7) : null;
+          if (!mes) { try { mes = inoferKpiParseMes(f[cMes]); } catch (e) { } }
+          if (!mes) return;
+          out.forEach(c => { const v = f[c.i]; if (v === null || v === '' || v === undefined) return; const val = inoferKpiParseValor(v, c.key); if (val === null || !isFinite(val)) return; c.datos.push({ mes, valor: Math.round(val * 10000) / 10000 }); });
+        });
+        return out.filter(c => c.datos.length);
+      }
+      function resumenIndicadores(cols) {
+        return cols.map(c => {
+          const def = inoferKpiDef(c.key); const bloqueado = def.precio && !puedePrecios();
+          const ya = bloqueado ? [] : inoferKpiData(c.key).datos;
+          const nuevos = c.datos.filter(x => !ya.some(y => y.mes === x.mes));
+          const distintos = c.datos.filter(x => { const y = ya.find(z => z.mes === x.mes); return y && Math.abs(Number(y.valor) - Number(x.valor)) > 0.005; });
+          return { c, def, bloqueado, nuevos, distintos };
+        });
+      }
+      function aplicarIndicadores(res, reemplazar) {
+        let n = 0; const q = quien(), at = new Date().toISOString();
+        res.forEach(r => {
+          if (r.bloqueado) return;
+          const o = inoferKpiData(r.c.key);
+          r.nuevos.forEach(x => { o.datos.push({ mes: x.mes, valor: x.valor, nota: 'planilla de indicadores', cargadoPor: q, cargadoAt: at }); n++; });
+          if (reemplazar) r.distintos.forEach(x => { const y = o.datos.find(z => z.mes === x.mes); if (y) { y.nota = 'planilla de indicadores (reemplazó ' + inoferKpiFmt(r.c.key, y.valor) + ')'; y.valor = x.valor; y.cargadoPor = q; y.cargadoAt = at; n++; } });
+          o.datos.sort((a, b) => a.mes.localeCompare(b.mes));
+        });
+        if (n) inoferGuardarKpis();
+        return n;
+      }
+
+      // ---------- 2) SCRAP del mes
+      function mesDeNombre(nombre) {
+        const t = norm(nombre).replace(/setiembre/, 'septiembre');
+        const i = MESES.findIndex(m => t.includes(m)); if (i < 0) return null;
+        const y = t.match(/(?:^|[^\d])(20\d{2}|\d{2})(?:[^\d]|$)/g); let anio = null;
+        if (y) { const ult = y[y.length - 1].replace(/\D/g, ''); anio = ult.length === 2 ? '20' + ult : ult; }
+        if (!anio) anio = String(new Date().getFullYear());
+        return `${anio}-${String(i + 1).padStart(2, '0')}`;
+      }
+      function leerHojaScrap(filas, sector) {
+        const hi = filas.findIndex(f => (f || []).some(c => /codigo de plano/.test(norm(c)))); if (hi < 0) return null;
+        const H = filas[hi].map(norm);
+        const ci = { cod: H.findIndex(h => /codigo de plano/.test(h)), pre: H.findIndex(h => h === '$$' || /precio/.test(h)), cant: H.findIndex(h => /^cant/.test(h)), costo: H.findIndex(h => /^costo/.test(h) && !/scrap/.test(h)), sc: H.findIndex(h => h === 'scrap'), csc: H.findIndex(h => /costo scrap/.test(h)), np: H.findIndex(h => /pieza/.test(h) && /n/.test(h) && !/codigo/.test(h)), causa: H.findIndex(h => h === 'causa'), tot: H.findIndex(h => h === 'total') };
+        const r = { prod: 0, malas: 0, costo: 0, costoScrap: 0, piezas: [], causas: [] };
+        filas.slice(hi + 1).forEach(f => {
+          if (!f) return;
+          const cod = f[ci.cod]; const cant = num(f[ci.cant]);
+          if (cod !== null && cod !== '' && !/total/i.test(String(cod)) && isFinite(cant)) {
+            const m = num(f[ci.sc]); r.prod += cant; if (isFinite(m) && m > 0) { r.malas += m; r.piezas.push({ p: String(cod), s: sector, q: cant, m }); }
+            const c1 = num(f[ci.costo]), c2 = num(f[ci.csc]); if (isFinite(c1)) r.costo += c1; if (isFinite(c2)) r.costoScrap += c2;
+          }
+          if (ci.causa >= 0 && f[ci.causa] && isFinite(num(f[ci.tot]))) r.causas.push({ c: String(f[ci.causa]).trim(), s: sector, n: num(f[ci.tot]), p: f[ci.np] != null ? String(f[ci.np]) : '' });
+        });
+        return r;
+      }
+      function leerScrap(wb, nombre) {
+        const hoja = re => { const n = wb.SheetNames.find(s => re.test(norm(s))); return n ? filasDe(wb.Sheets[n], 16) : null; };
+        const fi = hoja(/^inyecc/), fr = hoja(/^rebab/);
+        if (!fi && !fr) return null;
+        const iny = fi ? leerHojaScrap(fi, 'i') : null, reb = fr ? leerHojaScrap(fr, 'r') : null;
+        if (!iny && !reb) return null;
+        let mes = mesDeNombre(nombre);
+        if (!mes) { // por las fechas de la hoja de detalle
+          const f2 = hoja(/^hoja2$/) || []; const cuenta = {};
+          f2.forEach(f => (f || []).forEach(c => { const d = iso(c); if (d) cuenta[d.slice(0, 7)] = (cuenta[d.slice(0, 7)] || 0) + 1; }));
+          mes = Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a])[0] || null;
+        }
+        return { mes, iny, reb };
+      }
+      function aplicarScrap(lista) {
+        const q = quien(), at = new Date().toISOString();
+        lista.forEach(x => {
+          const sec = s => s ? { prod: s.prod, malas: s.malas } : null;
+          M.scrapDet.meses[x.mes] = { iny: sec(x.iny), reb: sec(x.reb), piezas: [].concat(x.iny ? x.iny.piezas : [], x.reb ? x.reb.piezas : []), causas: [].concat(x.iny ? x.iny.causas : [], x.reb ? x.reb.causas : []), archivo: x.archivo, por: q, at };
+          if (puedePrecios()) M.scrapCosto.meses[x.mes] = { iny: x.iny ? { costo: x.iny.costo, costoScrap: x.iny.costoScrap } : null, reb: x.reb ? { costo: x.reb.costo, costoScrap: x.reb.costoScrap } : null };
+        });
+        guardar('scrapDet'); if (puedePrecios()) guardar('scrapCosto');
+      }
+
+      // ---------- 3) CONTROL DE PRODUCCIÓN (rebabado por operario)
+      function leerControl(wb) {
+        const hojas = wb.SheetNames.filter(n => !/base de datos/i.test(n));
+        const meses = {}; let total = 0; const fechasMal = [];
+        hojas.forEach(n => {
+          const filas = filasDe(wb.Sheets[n], 20);
+          const hi = filas.findIndex(f => (f || []).some(c => norm(c) === 'operario')); if (hi < 0) return;
+          const H = filas[hi].map(norm);
+          const c = { op: H.findIndex(h => /orden/.test(h)), pz: H.findIndex(h => /codigo/.test(h)), fe: H.findIndex(h => /^fecha/.test(h)), tu: H.findIndex(h => h === 'turno'), ope: H.findIndex(h => h === 'operario'), disp: H.findIndex(h => /disponible/.test(h)), trab: H.findIndex(h => /tiempo de trabajo/.test(h)), esp: H.findIndex(h => /piezas por turno/.test(h)), real: H.findIndex(h => /produccion real/.test(h)) };
+          if (c.ope < 0 || c.real < 0 || c.fe < 0) return;
+          filas.slice(hi + 1).forEach(f => {
+            if (!f) return; const ope = String(f[c.ope] || '').trim(); const real = num(f[c.real]); const d = iso(f[c.fe]);
+            if (!ope || !isFinite(real) || !d) return;
+            if (d < '2000') { fechasMal.push(`${n.replace(/control de produccion/i, '').trim()}: ${d.split('-').reverse().join('/')} (${ope})`); return; }
+            const mes = d.slice(0, 7);
+            (meses[mes] = meses[mes] || []).push([f[c.op] == null ? '' : String(f[c.op]), String(f[c.pz] == null ? '' : f[c.pz]), Number(d.slice(8, 10)), String(f[c.tu] || '').trim().toUpperCase().slice(0, 1), ope.toUpperCase(), Math.round(num(f[c.disp]) || 0), Math.round((num(f[c.trab]) || 0) * 10) / 10, Math.round((num(f[c.esp]) || 0) * 10) / 10, real]);
+            total++;
+          });
+        });
+        return total ? { meses, total, fechasMal } : null;
+      }
+      function aplicarControl(x) {
+        const q = quien(), at = new Date().toISOString();
+        if (M.rebabadoOp.anonimo) M.rebabadoOp = { meses: {} };
+        Object.keys(x.meses).forEach(m => { M.rebabadoOp.meses[m] = { f: x.meses[m], archivo: x.archivo, por: q, at }; });
+        guardar('rebabadoOp');
+      }
+
+      // ---------- ventana de subida
+      async function subir(files) {
+        files = [...(files || [])]; if (!files.length) return;
+        if (!puedeCargar()) { showToast('No tenés permiso para cargar indicadores'); return; }
+        const res = { ind: [], scrap: [], control: [], errores: [] };
+        for (const file of files) {
+          try {
+            const wb = await leerArchivo(file);
+            const ctl = wb.SheetNames.some(n => /control de produccion/.test(norm(n))) ? leerControl(wb) : null;
+            if (ctl) { ctl.archivo = file.name; res.control.push(ctl); continue; }
+            const sc = leerScrap(wb, file.name);
+            if (sc) { if (!sc.mes) { res.errores.push(`${file.name}: no encontré de qué mes es (poné el mes en el nombre, ej. SCRAP_Octubre_26)`); continue; } sc.archivo = file.name; res.scrap.push(sc); continue; }
+            let ind = null;
+            for (const n of wb.SheetNames) { ind = leerIndicadores(filasDe(wb.Sheets[n], 40)); if (ind && ind.length) break; }
+            if (ind && ind.length) { res.ind.push({ archivo: file.name, cols: ind }); continue; }
+            res.errores.push(`${file.name}: no reconocí la planilla (indicadores, SCRAP o control de producción)`);
+          } catch (e) { res.errores.push(e.message); }
+        }
+        mostrarPrevia(res);
+        return res;
+      }
+      let previa = null;
+      function mostrarPrevia(res) {
+        previa = res;
+        let m = $('kpiSubirPrev'); if (m) m.remove();
+        m = document.createElement('div'); m.id = 'kpiSubirPrev';
+        m.className = 'fixed inset-0 z-[9990] flex items-start justify-center overflow-auto bg-slate-950/80 p-3 sm:p-6';
+        const indRes = res.ind.map(x => ({ archivo: x.archivo, r: resumenIndicadores(x.cols) }));
+        res.__indRes = indRes;
+        const hayDistintos = indRes.some(x => x.r.some(r => r.distintos.length && !r.bloqueado));
+        const sinPermOp = res.control.length && !puedeOperarios();
+        const nada = !res.ind.length && !res.scrap.length && !(res.control.length && !sinPermOp);
+        m.innerHTML = `<div class="w-full max-w-3xl space-y-3 rounded-2xl border border-sky-500/40 bg-slate-900 p-4 text-sm text-slate-200 shadow-2xl">
+          <div class="flex items-center justify-between gap-2"><div class="text-base font-extrabold text-white">📥 Subir planillas de indicadores</div><button type="button" data-x class="rounded-lg px-2 text-xl text-slate-400 hover:bg-slate-800">×</button></div>
+          ${indRes.map(x => `<div class="rounded-xl border border-slate-700 p-3"><div class="mb-2 font-bold text-sky-300">📊 ${esc(x.archivo)} · historial de indicadores</div>
+            <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1">Columna</th><th>Va a</th><th class="text-right">Meses</th><th class="text-right">Nuevos</th><th class="pl-2">Ya tiene otro valor</th></tr></thead><tbody>
+            ${x.r.map(r => `<tr class="border-t border-slate-800"><td class="py-1.5">${esc(r.c.titulo)}</td><td>${r.def.icono} ${esc(r.def.corto)}${r.bloqueado ? ' <span class="text-amber-300">🔒 se saltea (solo quien ve precios)</span>' : ''}</td><td class="text-right">${r.c.datos.length}</td><td class="text-right font-bold text-emerald-300">${r.bloqueado ? '—' : r.nuevos.length}</td><td class="pl-2 text-slate-400">${r.bloqueado ? '' : (r.distintos.length ? r.distintos.slice(0, 3).map(d => `${mesTxt(d.mes)}: ${inoferKpiFmt(r.c.key, (inoferKpiData(r.c.key).datos.find(y => y.mes === d.mes) || {}).valor)} → ${inoferKpiFmt(r.c.key, d.valor)}`).join(' · ') + (r.distintos.length > 3 ? ` y ${r.distintos.length - 3} más` : '') : '—')}</td></tr>`).join('')}
+            </tbody></table></div></div>`).join('')}
+          ${hayDistintos ? `<label class="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs"><input type="checkbox" id="kpiSubirReemplazar" class="mt-0.5 h-4 w-4"><span><b>Reemplazar también los meses que ya tienen otro valor.</b> Si no lo tildás, se dejan como están en la app y solo se agregan los meses que faltan.</span></label>` : ''}
+          ${res.scrap.length ? `<div class="rounded-xl border border-slate-700 p-3"><div class="mb-2 font-bold text-sky-300">♻️ Scrap en detalle (${res.scrap.length} planilla${res.scrap.length === 1 ? '' : 's'})</div>
+            <div class="space-y-1 text-xs">${res.scrap.slice().sort((a, b) => a.mes.localeCompare(b.mes)).map(s => `<div>${esc(mesLargo(s.mes))}: inyección ${s.iny ? `${n0(s.iny.malas)} malas de ${n0(s.iny.prod)} (${p2(s.iny.prod ? s.iny.malas / s.iny.prod * 100 : 0)})` : '—'} · rebabado ${s.reb ? `${n0(s.reb.malas)} de ${n0(s.reb.prod)} (${p2(s.reb.prod ? s.reb.malas / s.reb.prod * 100 : 0)})` : '—'}${M.scrapDet.meses[s.mes] ? ' <span class="text-amber-300">(reemplaza el que ya estaba)</span>' : ''}</div>`).join('')}</div>
+            ${puedePrecios() ? '' : '<div class="mt-1 text-[11px] text-slate-400">Los costos no se guardan porque no tenés permiso de precios.</div>'}</div>` : ''}
+          ${res.control.map(c => `<div class="rounded-xl border border-slate-700 p-3"><div class="mb-1 font-bold text-sky-300">✂️ ${esc(c.archivo)} · rebabado por operario</div>
+            <div class="text-xs">${Object.keys(c.meses).sort().map(mm => `${esc(mesTxt(mm))}: ${c.meses[mm].length} turnos`).join(' · ')}</div>
+            ${c.fechasMal && c.fechasMal.length ? `<div class="mt-1 text-[11px] text-amber-300">⚠️ ${c.fechasMal.length} fila${c.fechasMal.length === 1 ? '' : 's'} con la fecha mal escrita no se carga${c.fechasMal.length === 1 ? '' : 'n'}: ${c.fechasMal.slice(0, 3).map(esc).join(' · ')}. Corregila en la planilla y volvé a subirla.</div>` : ''}
+            ${sinPermOp ? '<div class="mt-1 text-xs font-bold text-amber-300">🔒 No tenés permiso para ver los nombres de los operarios, así que no podés cargar esta planilla. Pedíselo al administrador.</div>' : ''}</div>`).join('')}
+          ${res.errores.length ? `<div class="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-200">${res.errores.map(esc).join('<br>')}</div>` : ''}
+          <div class="flex flex-wrap justify-end gap-2"><button type="button" data-x class="min-h-[44px] rounded-xl border border-slate-700 px-4 font-bold text-slate-300">Cancelar</button>
+            ${nada ? '' : '<button type="button" id="kpiSubirOk" class="min-h-[44px] rounded-xl bg-emerald-500 px-5 font-extrabold text-slate-950">✓ Cargar</button>'}</div></div>`;
+        document.body.appendChild(m);
+        m.querySelectorAll('[data-x]').forEach(b => b.addEventListener('click', () => m.remove()));
+        const ok = $('kpiSubirOk'); if (ok) ok.addEventListener('click', () => { const t = cargarPrevia(); m.remove(); showToast(t); });
+      }
+      function cargarPrevia(opc) {
+        const res = previa; if (!res) return '';
+        const reemplazar = opc && 'reemplazar' in opc ? opc.reemplazar : !!($('kpiSubirReemplazar') && $('kpiSubirReemplazar').checked);
+        const partes = [];
+        let n = 0; (res.__indRes || []).forEach(x => { n += aplicarIndicadores(x.r, reemplazar); });
+        if (res.ind.length) partes.push(`${n} valor${n === 1 ? '' : 'es'} de indicadores`);
+        if (res.scrap.length) { aplicarScrap(res.scrap); partes.push(`scrap de ${res.scrap.length} mes${res.scrap.length === 1 ? '' : 'es'}`); }
+        if (res.control.length && puedeOperarios()) { res.control.forEach(aplicarControl); partes.push('rebabado por operario'); }
+        previa = null;
+        try { inoferRenderKpi(); } catch (e) { }
+        return partes.length ? '✓ Cargado: ' + partes.join(', ') : 'No se cargó nada';
+      }
+
+      // ---------- pestaña ♻️ Scrap en detalle
+      let mesScrap = '', mesReb = '';
+      const charts = [];
+      const limpiarCharts = () => { while (charts.length) { try { charts.pop().destroy(); } catch (e) { } } };
+      const tile = (t, v, s, cls) => `<div class="rounded-xl bg-slate-950/70 p-3"><div class="text-[10px] font-bold uppercase tracking-wider text-slate-400">${t}</div><div class="text-xl font-extrabold ${cls || 'text-white'}">${v}</div><div class="text-[11px] text-slate-400">${s || ''}</div></div>`;
+      const pct = s => s && s.prod ? s.malas / s.prod * 100 : null;
+      function renderScrap(body) {
+        limpiarCharts();
+        const meses = Object.keys(M.scrapDet.meses).sort();
+        if (!meses.length) { body.innerHTML = `<div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 text-center text-sm text-slate-300">Todavía no hay planillas SCRAP cargadas.<br><span class="text-xs text-slate-400">Tocá <b>📥 Subir planillas</b> arriba y elegí los archivos SCRAP de cada mes (podés elegir varios juntos).</span></div>`; return; }
+        if (!meses.includes(mesScrap)) mesScrap = meses[meses.length - 1];
+        const d = M.scrapDet.meses[mesScrap], c = (M.scrapCosto.meses || {})[mesScrap];
+        const pi = pct(d.iny), pr = pct(d.reb);
+        // causas agrupadas (sin distinguir mayúsculas)
+        const causas = {}; (d.causas || []).forEach(x => { const k = norm(x.c); if (!causas[k]) causas[k] = { c: x.c.charAt(0).toUpperCase() + x.c.slice(1).toLowerCase(), n: 0 }; causas[k].n += Number(x.n) || 0; });
+        const lc = Object.values(causas).sort((a, b) => b.n - a.n); const totC = lc.reduce((a, x) => a + x.n, 0) || 1;
+        // primera causa por mes
+        const primeras = meses.map(m => { const cc = {}; (M.scrapDet.meses[m].causas || []).forEach(x => { const k = norm(x.c).split('+')[0].trim(); cc[k] = (cc[k] || 0) + (Number(x.n) || 0); }); return Object.keys(cc).sort((a, b) => cc[b] - cc[a])[0]; });
+        const top = primeras[primeras.length - 1]; const vecesTop = primeras.filter(x => x === top).length;
+        const piezas = (d.piezas || []).slice().sort((a, b) => b.m - a.m).slice(0, 10);
+        const peorMes = meses.map(m => ({ m, v: pct(M.scrapDet.meses[m].iny) })).filter(x => x.v != null).sort((a, b) => b.v - a.v)[0];
+        body.innerHTML = `<div class="space-y-4">
+          <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
+            <div class="mr-auto"><div class="text-sm font-extrabold text-white">♻️ Scrap en detalle</div><div class="text-[11px] text-slate-400">De las planillas SCRAP de cada mes (${esc(mesTxt(meses[0]))} a ${esc(mesTxt(meses[meses.length - 1]))}). Cada mes subís la nueva y se suma sola.</div></div>
+            <label class="text-xs text-slate-400">Mes <select id="sdMes" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">${meses.slice().reverse().map(m => `<option value="${m}" ${m === mesScrap ? 'selected' : ''}>${esc(mesLargo(m))}</option>`).join('')}</select></label>
+          </div>
+          <div class="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            ${tile('Inyección · piezas', pi == null ? '—' : p2(pi), d.iny ? `${n0(d.iny.malas)} malas de ${n0(d.iny.prod)}` : '')}
+            ${tile('Rebabado · piezas', pr == null ? '—' : p2(pr), d.reb ? `${n0(d.reb.malas)} malas de ${n0(d.reb.prod)}` : '')}
+            ${puedePrecios() && c ? tile('Scrap sobre el costo producido', `${c.iny && c.iny.costo ? p2(c.iny.costoScrap / c.iny.costo * 100) : '—'} · ${c.reb && c.reb.costo ? p2(c.reb.costoScrap / c.reb.costo * 100) : '—'}`, 'inyección · rebabado') : tile('Scrap sobre el costo', '🔒', 'solo quien ve precios', 'text-slate-500')}
+            ${puedePrecios() && c ? tile('Costo del scrap del mes', plata((c.iny ? c.iny.costoScrap : 0) + (c.reb ? c.reb.costoScrap : 0)), `de ${plata((c.iny ? c.iny.costo : 0) + (c.reb ? c.reb.costo : 0))} producido`, 'text-rose-300') : tile('Costo del scrap', '🔒', 'solo quien ve precios', 'text-slate-500')}
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-1 text-xs font-bold text-slate-300">% de scrap por mes: inyección vs. rebabado</div><div class="relative h-64"><canvas id="sdChart"></canvas></div>
+            ${peorMes ? `<div class="mt-1 text-[11px] text-slate-400">Mes con más scrap de inyección: <b class="text-amber-300">${esc(mesLargo(peorMes.m))}</b> (${p2(peorMes.v)}).</div>` : ''}</div>
+          <div class="grid gap-4 lg:grid-cols-2">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-2 text-xs font-bold text-slate-300">Causas · ${esc(mesLargo(mesScrap))} (Pareto)</div>
+              ${lc.length ? lc.slice(0, 8).map(x => `<div class="mb-1.5"><div class="flex justify-between text-xs"><span class="text-white">${esc(x.c)}</span><span class="text-slate-400">${n0(x.n)} · ${p1(x.n / totC * 100)}</span></div><div class="h-2 rounded bg-slate-800"><div class="h-2 rounded bg-rose-500" style="width:${Math.max(2, x.n / lc[0].n * 100)}%"></div></div></div>`).join('') : '<div class="text-xs text-slate-500">La planilla no trae causas.</div>'}
+              ${top && meses.length > 1 ? `<div class="mt-2 text-[11px] text-slate-400"><b class="text-slate-200">${esc(top.charAt(0).toUpperCase() + top.slice(1))}</b> es la primera causa en ${vecesTop} de los ${meses.length} meses.</div>` : ''}</div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-2 text-xs font-bold text-slate-300">Piezas con más scrap · ${esc(mesLargo(mesScrap))}</div>
+              <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1">Pieza</th><th>Sector</th><th class="text-right">Malas</th><th class="text-right">% de la pieza</th></tr></thead><tbody>
+              ${piezas.map(x => `<tr class="border-t border-slate-800"><td class="py-1.5 font-bold text-white">${esc(x.p)}</td><td>${x.s === 'i' ? 'Inyección' : 'Rebabado'}</td><td class="text-right">${n0(x.m)}</td><td class="text-right font-bold ${x.q && x.m / x.q > 0.1 ? 'text-rose-300' : 'text-amber-200'}">${x.q ? p1(x.m / x.q * 100) : '—'}</td></tr>`).join('') || '<tr><td colspan="4" class="py-2 text-slate-500">Sin piezas con scrap</td></tr>'}
+              </tbody></table></div></div>
+          </div></div>`;
+        $('sdMes').addEventListener('change', e => { mesScrap = e.target.value; renderScrap(body); });
+        const cv = $('sdChart');
+        if (cv && typeof Chart !== 'undefined') {
+          charts.push(new Chart(cv.getContext('2d'), { type: 'bar', data: { labels: meses.map(mesTxt), datasets: [{ label: 'Inyección', data: meses.map(m => { const v = pct(M.scrapDet.meses[m].iny); return v == null ? null : Math.round(v * 100) / 100; }), backgroundColor: '#38bdf8' }, { label: 'Rebabado', data: meses.map(m => { const v = pct(M.scrapDet.meses[m].reb); return v == null ? null : Math.round(v * 100) / 100; }), backgroundColor: '#f59e0b' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#e2e8f0' } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${p2(c.parsed.y)}` } } }, scales: { x: { ticks: { color: '#cbd5e1' }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: '#cbd5e1', callback: v => v + '%' }, grid: { color: 'rgba(148,163,184,.15)' } } } } }));
+        }
+      }
+
+      // ---------- pestaña ✂️ Rebabado por operario
+      function statsReb(filas) {
+        const T = { piezas: 0, esp: 0, util: 0, n: 0, turnos: new Set(), piezasDist: new Set(), porOp: {}, porTurno: {} };
+        filas.forEach(f => {
+          const [op, pz, dia, tu, ope, disp, trab, esp, real] = f;
+          T.piezas += real; T.esp += esp; T.n++; T.turnos.add(dia + tu + ope); T.piezasDist.add(pz);
+          const u = disp ? Math.min(1.2, trab / disp) : 0; T.util += u;
+          const o = T.porOp[ope] = T.porOp[ope] || { turnos: new Set(), piezas: 0, esp: 0, util: 0, n: 0 };
+          o.turnos.add(dia + tu); o.piezas += real; o.esp += esp; o.util += u; o.n++;
+          const t = T.porTurno[tu] = T.porTurno[tu] || { util: 0, n: 0 }; t.util += u; t.n++;
+        });
+        return T;
+      }
+      function renderReb(body) {
+        limpiarCharts();
+        const meses = Object.keys(M.rebabadoOp.meses || {}).sort();
+        if (!meses.length) { body.innerHTML = `<div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 text-center text-sm text-slate-300">Todavía no está cargado el CONTROL DE PRODUCCIÓN.<br><span class="text-xs text-slate-400">Tocá <b>📥 Subir planillas</b> arriba y elegí el archivo (lee todas las hojas de los meses).${puedeOperarios() ? '' : ' Para cargarlo hace falta el permiso de ver los nombres de los operarios.'}</span></div>`; return; }
+        if (!meses.includes(mesReb)) mesReb = meses[meses.length - 1];
+        const T = statsReb(M.rebabadoOp.meses[mesReb].f || []);
+        const ops = Object.keys(T.porOp).map(k => ({ k, ...T.porOp[k] })).sort((a, b) => b.piezas - a.piezas);
+        const TN = { M: 'Mañana', T: 'Tarde', N: 'Noche' };
+        const turnos = Object.keys(T.porTurno).map(k => `${TN[k] || k} ${p1(T.porTurno[k].util / T.porTurno[k].n * 100)}`).join(' · ');
+        const planilla = (inoferKpiData('rebabado').datos.find(x => x.mes === mesReb) || {}).valor;
+        const anon = !!M.rebabadoOp.anonimo;
+        body.innerHTML = `<div class="space-y-4">
+          <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
+            <div class="mr-auto"><div class="text-sm font-extrabold text-white">✂️ Rebabado · control de producción</div><div class="text-[11px] text-slate-400">Sale de CONTROL DE PRODUCCIÓN (${esc(mesTxt(meses[0]))} a ${esc(mesTxt(meses[meses.length - 1]))}): OP, pieza, turno, operario, horario y piezas hechas.</div></div>
+            <label class="text-xs text-slate-400">Mes <select id="roMes" class="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white">${meses.slice().reverse().map(m => `<option value="${m}" ${m === mesReb ? 'selected' : ''}>${esc(mesLargo(m))}</option>`).join('')}</select></label>
+          </div>
+          ${anon ? '<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-200">🔒 Los nombres de los operarios están ocultos. El administrador puede habilitarte a verlos en Usuarios y permisos.</div>' : ''}
+          <div class="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            ${tile('Piezas rebabadas', n0(T.piezas), `${T.turnos.size} turnos · ${T.piezasDist.size} piezas distintas`)}
+            ${tile('Ritmo (hechas ÷ esperadas)', T.esp ? p1(T.piezas / T.esp * 100) : '—', 'mientras trabajan')}
+            ${tile('Utilización del tiempo', T.n ? p1(T.util / T.n * 100) : '—', `tiempo trabajado ÷ disponible${planilla != null ? ` · indicador: ${inoferKpiFmt('rebabado', planilla)}` : ''}`)}
+            ${tile('Turnos', turnos || '—', 'utilización por turno')}
+          </div>
+          <div class="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-2 text-xs font-bold text-slate-300">Por operario · ${esc(mesLargo(mesReb))}</div>
+              <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1">Operario</th><th class="text-right">Turnos</th><th class="text-right">Piezas</th><th class="text-right">Ritmo</th><th class="text-right">Utilización</th></tr></thead><tbody>
+              ${ops.map(o => `<tr class="border-t border-slate-800"><td class="py-1.5 font-bold text-white">${esc(o.k)}</td><td class="text-right">${o.turnos.size}</td><td class="text-right">${n0(o.piezas)}</td><td class="text-right">${o.esp ? p1(o.piezas / o.esp * 100) : '—'}</td><td class="text-right">${p1(o.util / o.n * 100)}</td></tr>`).join('')}
+              </tbody></table></div></div>
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3"><div class="mb-1 text-xs font-bold text-slate-300">Utilización y ritmo por mes</div><div class="relative h-64"><canvas id="roChart"></canvas></div></div>
+          </div></div>`;
+        $('roMes').addEventListener('change', e => { mesReb = e.target.value; renderReb(body); });
+        const cv = $('roChart');
+        if (cv && typeof Chart !== 'undefined') {
+          const st = meses.map(m => statsReb(M.rebabadoOp.meses[m].f || []));
+          charts.push(new Chart(cv.getContext('2d'), { type: 'line', data: { labels: meses.map(mesTxt), datasets: [{ label: 'Utilización', data: st.map(t => t.n ? Math.round(t.util / t.n * 1000) / 10 : null), borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: 0.2 }, { label: 'Ritmo', data: st.map(t => t.esp ? Math.round(t.piezas / t.esp * 1000) / 10 : null), borderColor: '#34d399', backgroundColor: '#34d399', tension: 0.2 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#e2e8f0' } }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${p1(c.parsed.y)}` } } }, scales: { x: { ticks: { color: '#cbd5e1' }, grid: { display: false } }, y: { ticks: { color: '#cbd5e1', callback: v => v + '%' }, grid: { color: 'rgba(148,163,184,.15)' } } } } }));
+        }
+      }
+
+      window.inoferKpiExtras = (window.inoferKpiExtras || []).concat([
+        { key: 'scrapDet', corto: 'Scrap en detalle', icono: '♻️', render: renderScrap },
+        { key: 'rebOp', corto: 'Rebabado por operario', icono: '✂️', render: renderReb }
+      ]);
+
+      // ---------- botón en el encabezado de Indicadores
+      function ponerBoton() {
+        const ref = $('kpiPrintAllBtn'); if (!ref || $('kpiSubirBtn')) return !!ref;
+        const lab = document.createElement('label');
+        lab.id = 'kpiSubirBtn';
+        lab.className = 'kpi-edit cursor-pointer rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-sky-400';
+        lab.title = 'Planilla de indicadores, SCRAP de cada mes o CONTROL DE PRODUCCIÓN (podés elegir varios archivos juntos)';
+        lab.innerHTML = '📥 Subir planillas<input type="file" id="kpiSubirArchivo" class="kpi-edit hidden" multiple accept=".xlsx,.xls">';
+        ref.parentNode.insertBefore(lab, ref);
+        lab.querySelector('input').addEventListener('change', e => { const f = e.target.files; subir(f).finally(() => { e.target.value = ''; }); });
+        const pintar = () => lab.classList.toggle('hidden', !puedeCargar());
+        pintar();
+        const _ap = window.inoferApplyPermissions;
+        if (typeof _ap === 'function' && !_ap.__kpiSubir) { window.inoferApplyPermissions = function () { const r = _ap.apply(this, arguments); try { pintar(); limpiarSinPermiso(); } catch (e) { } return r; }; window.inoferApplyPermissions.__kpiSubir = true; }
+        return true;
+      }
+      const espera = setInterval(() => { if (ponerBoton()) clearInterval(espera); }, 500);
+      setTimeout(() => clearInterval(espera), 30000);
+
+      window.inoferKpiPlanillas = { subir, cargarPrevia, leerIndicadores, leerScrap, leerControl, estado: () => M, previa: () => previa };
+    })();
+  </script>

@@ -137,22 +137,24 @@
           return;
         }
         if (d.tipo === 'kpis') {
-          const defs = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
-          cont.innerHTML = tit('Indicadores de planta', 'Último mes cargado vs. meta') + `<div class="grid flex-1 grid-cols-2 gap-6">${defs.map(k => {
+          // (12/11/2026) en la tele nunca van los indicadores de plata; solo los que tienen datos
+          const defs = (typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : []).filter(k => !k.precio && inoferKpiData(k.key).datos.length).slice(0, 6);
+          const fmt = (k, v) => window.inoferKpiFmt ? inoferKpiFmt(k, v) : inoferPct(v);
+          cont.innerHTML = tit('Indicadores de planta', 'Último mes cargado vs. meta') + `<div class="grid flex-1 ${defs.length > 4 ? 'grid-cols-3' : 'grid-cols-2'} gap-6">${defs.map(k => {
             const o2 = inoferKpiData(k.key); const ult = o2.datos[o2.datos.length - 1]; const ant = o2.datos[o2.datos.length - 2];
-            const v = ult ? Number(ult.valor) : null, meta = Number(o2.meta);
-            const ok = v == null ? null : (k.mayorEsMejor ? v >= meta : v <= meta);
+            const v = ult ? Number(ult.valor) : null, conMeta = o2.meta !== null && o2.meta !== undefined && o2.meta !== '' && isFinite(Number(o2.meta)), meta = Number(o2.meta);
+            const ok = v == null || !conMeta ? null : (k.mayorEsMejor ? v >= meta : v <= meta);
             const tend = v != null && ant ? (Number(ult.valor) - Number(ant.valor)) : null;
             return `<div class="flex flex-col justify-center rounded-3xl border-2 ${ok == null ? 'border-slate-700' : (ok ? 'border-emerald-500/60 bg-emerald-500/5' : 'border-rose-500/60 bg-rose-500/5')} p-6">
               <div class="text-3xl font-bold text-slate-300">${k.icono} ${esc(k.corto)}</div>
-              <div class="mt-2 text-7xl font-black ${ok == null ? 'text-slate-400' : (ok ? 'text-emerald-400' : 'text-rose-400')}">${v == null ? '—' : inoferPct(v)}</div>
-              <div class="mt-2 text-2xl text-slate-400">${ult ? inoferMesTxt(ult.mes) : 'sin datos'} · meta ${inoferPct(meta)}${tend != null ? ` · ${tend >= 0 ? '▲' : '▼'} ${Math.abs(tend).toFixed(2)} pts` : ''}</div></div>`; }).join('')}</div>`;
+              <div class="mt-2 ${defs.length > 4 ? 'text-6xl' : 'text-7xl'} font-black ${ok == null ? 'text-white' : (ok ? 'text-emerald-400' : 'text-rose-400')}">${v == null ? '—' : fmt(k.key, v)}</div>
+              <div class="mt-2 text-2xl text-slate-400">${ult ? inoferMesTxt(ult.mes) : 'sin datos'}${conMeta ? ' · meta ' + fmt(k.key, meta) : ''}${tend != null && ant ? ' · ' + (window.inoferKpiDifTxt ? inoferKpiDifTxt(k.key, ult.valor, ant.valor) : '') : ''}</div></div>`; }).join('')}</div>`;
           return;
         }
         if (d.tipo === 'kpi') {
           const k = o.kpi || 'inyeccion'; const def = (INOFER_KPI_DEF || []).find(x => x.key === k) || {};
           const o2 = inoferKpiData(k);
-          cont.innerHTML = tit(`${def.icono || ''} ${esc(def.titulo || k)}`, `Últimos 12 meses · meta ${inoferPct(o2.meta)}`) + '<div class="relative min-h-0 flex-1 rounded-3xl p-4" style="background:#5b9bd5"><canvas id="presKpiCanvas"></canvas></div>';
+          cont.innerHTML = tit(`${def.icono || ''} ${esc(def.titulo || k)}`, `Últimos 12 meses${o2.meta != null && o2.meta !== '' ? ' · meta ' + (window.inoferKpiFmt ? inoferKpiFmt(k, o2.meta) : inoferPct(o2.meta)) : ''}`) + '<div class="relative min-h-0 flex-1 rounded-3xl p-4" style="background:#5b9bd5"><canvas id="presKpiCanvas"></canvas></div>';
           const cv = cont.querySelector('#presKpiCanvas');
           if (o2.datos.length && typeof inoferKpiDibujar === 'function') { try { const g = inoferKpiDibujar(cv, k, { datos: o2.datos.slice(-12), grande: true }); if (g) graficos.push(g); } catch (e) { } }
           else cv.parentElement.innerHTML = '<div class="p-10 text-3xl text-white">Sin datos cargados.</div>';
@@ -295,7 +297,7 @@
         const c = $('presCfgCuerpo'); if (!c) return;
         const L = cfg.diapositivas || [];
         if (selCfg >= L.length) selCfg = Math.max(0, L.length - 1);
-        const kpis = typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : [];
+        const kpis = window.inoferKpiDefs ? inoferKpiDefs() : (typeof INOFER_KPI_DEF !== 'undefined' ? INOFER_KPI_DEF : []);
         const inp = 'rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white';
         const g = mmss(cfg.intervalo || 300);
         const d = L[selCfg];
