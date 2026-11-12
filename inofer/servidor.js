@@ -451,7 +451,7 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt',
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt', calidad: 'ordenes',
   kpisPrecio: 'indicadores', scrapDet: 'indicadores', scrapCosto: 'indicadores', rebabadoOp: 'indicadores' };
 // (12/11/2026) módulos de indicadores con plata: solo a quien ve precios. Rebabado por operario: los nombres solo a quien
 // el admin habilitó (permiso detallado kpi_operarios); al resto le llegan como "Operario 1, 2…" y no puede guardar ese módulo.
@@ -1387,6 +1387,13 @@ function lunesDe_(iso) { const p = iso.split('-').map(Number); const d = new Dat
 function horasEntre_(a, b) { const m = function (h) { const x = String(h || '0:0').split(':'); return (Number(x[0]) || 0) * 60 + (Number(x[1]) || 0); }; const d = ((m(b) - m(a)) + 1440) % 1440; return (d || 1440) / 60; }
 const DEMO_ORD_SRV = { 'ord-406': 1 };
 const DEMO_REC_SRV = { 'rec-1': 1, 'rec-2': 1, 'rec-3': 1, 'rec-4': 1, 'rec-5': 1, 'rec-6': 1 };
+// Rechazos en control de calidad (12/11/2026): o.rechazos [{id, fecha, cant, causa, logId, nota, por, at, borrado}].
+// Buenas reales = cargadas − rechazadas; con turno de origen pasan a scrap de ese turno.
+function rechazosOrden_(o) { return ((o && o.rechazos) || []).filter(function (r) { return r && !r.borrado && num_(r.cant) > 0; }); }
+function rechLog_(o, l) { if (!o || !o.rechazos || !l) return 0; const id = String(l.id); return rechazosOrden_(o).reduce(function (a, r) { return a + (r.logId != null && String(r.logId) === id ? num_(r.cant) : 0); }, 0); }
+function okLog_(o, l) { return Math.max(0, num_(l.okPcs) - rechLog_(o, l)); }
+function scrapLog_(o, l) { return num_(l.scrapPcs) + Math.min(num_(l.okPcs), rechLog_(o, l)); }
+function okReal_(o) { return Math.max(0, (o.logs || []).reduce(function (s, l) { return s + num_(l.okPcs); }, 0) - rechazosOrden_(o).reduce(function (s, r) { return s + num_(r.cant); }, 0)); }
 function datosSemana_(mods, registros, lunes) {
   const dom = sumarDias_(lunes, 6);
   const enSem = function (f) { return f && f >= lunes && f <= dom; };
@@ -1399,7 +1406,7 @@ function datosSemana_(mods, registros, lunes) {
     const m = maqId_(o.machine); const c = catalogo[String(o.part || '').toLowerCase()] || {};
     (o.logs || []).forEach(function (l) {
       if (!enSem(String(l.date || ''))) return;
-      const ok = num_(l.okPcs), sc = num_(l.scrapPcs), bj = num_(l.lowStartPcs), h = horasEntre_(l.startTime, l.endTime);
+      const ok = okLog_(o, l), sc = scrapLog_(o, l), bj = num_(l.lowStartPcs), h = horasEntre_(l.startTime, l.endTime);
       R.ok += ok; R.scrap += sc; R.baja += bj; R.disp += h; R.turnos++;
       if (!R.maq[m]) R.maq[m] = { ok: 0, scrap: 0, disp: 0, paradas: 0, correctivo: 0 };
       R.maq[m].ok += ok; R.maq[m].scrap += sc; R.maq[m].disp += h;
@@ -1450,13 +1457,16 @@ function datosSemana_(mods, registros, lunes) {
   // órdenes
   R.opCompletadas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status === 'Completada' && (o.logs || []).some(function (l) { return enSem(l.date); }); }).length;
   R.opAbiertas = (mods.orders || []).filter(function (o) { return !DEMO_ORD_SRV[o.id] && o.status !== 'Completada'; }).length;
-  const hecho = function (o) { return (o.logs || []).reduce(function (s, l) { return s + num_(l.okPcs); }, 0); };
+  const hecho = function (o) { return okReal_(o); };
   const ultimoLog = function (o) { return (o.logs || []).reduce(function (s, l) { return String(l.date || '') > s ? String(l.date || '') : s; }, ''); };
   const ficha = function (o) { const h = hecho(o), obj = num_(o.qtyTarget); return { num: o.ordNumber || '', pieza: o.part || '', maq: maqId_(o.machine), hecho: h, objetivo: obj, pct: obj ? Math.min(999, h / obj * 100) : 0, semana: (o.logs || []).reduce(function (s, l) { return s + (enSem(String(l.date || '')) ? num_(l.okPcs) : 0); }, 0), ultimo: ultimoLog(o) }; };
   const ords = (mods.orders || []).filter(function (o) { return o && !DEMO_ORD_SRV[o.id]; });
   R.ordCompl = ords.filter(function (o) { return o.status === 'Completada' && (o.logs || []).some(function (l) { return enSem(l.date); }); }).map(ficha);
   R.ordAbiertas = ords.filter(function (o) { return o.status !== 'Completada' && o.status !== 'Detenida por rotura'; }).map(ficha).sort(function (a, b) { return b.pct - a.pct; });
   R.ordDetenidas = ords.filter(function (o) { return o.status === 'Detenida por rotura'; }).map(function (o) { const f = ficha(o); f.motivo = (o.rotura && o.rotura.motivo) || ''; f.desde = (o.rotura && o.rotura.desde) || ''; return f; });
+  // rechazos en control cargados en la semana (por fecha del control)
+  R.rechazos = [];
+  ords.forEach(function (o) { rechazosOrden_(o).forEach(function (r) { if (enSem(String(r.fecha || ''))) R.rechazos.push({ num: o.ordNumber || '', pieza: o.part || '', maq: maqId_(o.machine), cant: num_(r.cant), causa: r.causa || '', fecha: r.fecha, conTurno: r.logId != null }); }); });
   // mantenimiento
   const mant = mods.mantenimiento || {};
   R.trabajos = (mant.trabajos || []).filter(function (t) { return enSem(t.fecha); });
@@ -1571,6 +1581,13 @@ function htmlInforme_(R, P, verPrecios, extra) {
     pzs.forEach(function (o) { const x = o.x; c += '<tr style="border-top:1px solid #e2e8f0"><td style="padding:6px 8px;font-weight:700">' + e(o.p) + '</td><td style="padding:6px 8px">' + e(x.maq || '') + '</td><td style="padding:6px 8px">' + e(x.mat || '—') + '</td><td style="padding:6px 8px;text-align:right">' + n0(x.ok) + '</td><td style="padding:6px 8px;text-align:right">' + n0(x.scrap + x.baja) + '</td><td style="padding:6px 8px;text-align:right">' + (x.kgp ? (Math.round(x.kgp * 1000) / 1000).toLocaleString('es-AR') : '—') + '</td><td style="padding:6px 8px;text-align:right;font-weight:800">' + (x.kg ? n1(x.kg) : '—') + '</td></tr>'; });
     c += '</table><div style="font-size:11px;color:#64748b;margin-top:4px">kg = (buenas + scrap + baja) × peso con colada de la pieza. Las piezas sin peso o sin aleación en la base de datos muestran "—".</div></td></tr>';
   }
+  // --- rechazos en control de calidad de la semana
+  if (R.rechazos && R.rechazos.length) {
+    const tot = R.rechazos.reduce(function (a, r) { return a + r.cant; }, 0), porCausa = {};
+    R.rechazos.forEach(function (r) { const k = r.causa || 'Sin causa'; porCausa[k] = (porCausa[k] || 0) + r.cant; });
+    c += H.titulo('Rechazos en control de calidad: ' + n0(tot) + ' piezas', Object.keys(porCausa).sort(function (a, b) { return porCausa[b] - porCausa[a]; }).map(function (k) { return '<b>' + e(k) + '</b> ' + n0(porCausa[k]); }).join(' · '));
+    c += '<tr><td style="padding:0 28px;font-size:12px;color:#334155">' + R.rechazos.map(function (r) { return 'OP ' + e(r.num) + ' · ' + e(r.pieza) + ' (' + e(r.maq) + '): ' + n0(r.cant) + ' · ' + e(r.causa || '') + ' · ' + e(H.fd(r.fecha)); }).join('<br>') + '<div style="font-size:11px;color:#64748b;margin-top:4px">Se descuentan de las piezas buenas. Si se sabe de qué turno salieron, cuentan como scrap de ese turno.</div></td></tr>';
+  }
   if (extra.stockBajo && extra.stockBajo.length) c += '<tr><td style="padding:8px 28px 0;font-size:13px;color:#b45309;font-weight:700">⚠ Stock bajo: ' + extra.stockBajo.map(e).join(' · ') + '</td></tr>';
   return H.marco('prod', R, c, 'INOFER · Hecho con los turnos de las órdenes y los partes de horas. Se compara con la semana anterior.' + (extra.generado ? ' Generado el ' + e(extra.generado) + '.' : ''));
 }
@@ -1583,6 +1600,7 @@ function textoInforme_(R, P, verPrecios) {
   t += '⚙️ Utilización: ' + n1(R.util) + '%\n';
   if (R.programado) t += '📅 Cumplimiento del plan: ' + n1(R.ok / R.programado * 100) + '%\n';
   if (verPrecios && R.facturado) t += '💰 Facturación producida: $ ' + n0(R.facturado) + '\n';
+  if (R.rechazos && R.rechazos.length) t += '🔍 Rechazos en control: ' + n0(R.rechazos.reduce(function (a, r) { return a + r.cant; }, 0)) + ' piezas\n';
   const kgs = Object.keys(R.kg); if (kgs.length) t += '🧱 Material: ' + kgs.map(function (k) { return k + ' ' + n0(R.kg[k]) + ' kg'; }).join(' · ') + '\n';
   t += '⏱️ Paradas: ' + n1(R.paradas) + ' h' + (cods.length ? ' · principales: ' + cods.map(function (c) { return (c[0].split('-').slice(1).join('-').trim() || c[0]) + ' ' + n1(c[1]) + ' h'; }).join(', ') : '');
   return t;
@@ -1907,7 +1925,7 @@ function idsArchivadas_() {
 }
 function olvidarIdsArchivo_() { try { CacheService.getScriptCache().remove('inofer_arch_ids'); } catch (e) { try { CacheService.getScriptCache().put('inofer_arch_ids', 'x', 1); } catch (er) {} } }
 function ultimaFechaOrden_(o) { let f = String(o.date || ''); (o.logs || []).forEach(function (l) { if (String(l.date || '') > f) f = String(l.date); }); return f; }
-function totalBuenas_(o) { return (o.logs || []).reduce(function (s, l) { return s + num_(l.okPcs); }, 0); }
+function totalBuenas_(o) { return okReal_(o); }
 // Turnos de las órdenes archivadas, en el mismo formato que usa el tablero
 function registrosArchivados_() {
   const out = [];
@@ -1915,7 +1933,7 @@ function registrosArchivados_() {
     const o = x.o; if (!o) return;
     (o.logs || []).forEach(function (l) {
       const r = { id: 'op-' + o.id + '-' + l.id, fromOrder: true, archivada: true, ordId: o.id, logId: l.id, date: String(l.date || ''), machine: o.machine, shift: l.turno || 'Turno',
-        available: Math.round(horasEntre_(l.startTime, l.endTime) * 100) / 100, part: o.part, ordNumber: o.ordNumber, okPcs: num_(l.okPcs), scrapPcs: num_(l.scrapPcs), operator: l.operator || '' };
+        available: Math.round(horasEntre_(l.startTime, l.endTime) * 100) / 100, part: o.part, ordNumber: o.ordNumber, okPcs: okLog_(o, l), scrapPcs: scrapLog_(o, l), operator: l.operator || '' };
       CATS_SRV.forEach(function (c) { r[c[0]] = 0; });
       const ps = (l.paradas && l.paradas.length) ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: l.stopMinutes }] : []);
       ps.forEach(function (p) { const cat = COD_CAT_SRV[parseInt(String(p.codigo || ''), 10)] || 'otros'; r[cat] = Math.round((r[cat] + num_(p.min) / 60) * 100) / 100; });
@@ -2068,6 +2086,13 @@ function fusionarOrden_(S, I, b) {
     logs.push(l);           // lo cargó otro equipo mientras tanto
   });
   out.logs = logs;
+  // rechazos de control: se unen por id (se borran marcándolos, así ninguno revive ni se pierde)
+  if ((S.rechazos && S.rechazos.length) || (I.rechazos && I.rechazos.length)) {
+    const RS = porId_(S.rechazos), RI = porId_(I.rechazos), rec = [], vr = {};
+    (I.rechazos || []).forEach(function (r) { const id = String(r.id); vr[id] = 1; const s2 = RS[id]; rec.push(s2 && (s2.borrado && !r.borrado || String(s2.at || '') > String(r.at || '')) ? s2 : r); });
+    (S.rechazos || []).forEach(function (r) { if (!vr[String(r.id)]) rec.push(r); });
+    out.rechazos = rec;
+  }
   if (S.status === 'Completada' && I.status !== 'Completada' && !I.autoCompletada && S.autoCompletada === false) out.status = S.status;
   return out;
 }
