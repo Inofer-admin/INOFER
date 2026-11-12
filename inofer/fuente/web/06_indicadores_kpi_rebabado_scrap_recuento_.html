@@ -126,6 +126,8 @@
         ctx.save();
         // en la tele (chart.$tv): letra grande y, si no entran todas, solo el último valor
         const tv = chart.$tv, fs = tv ? tv.f : 11;
+        // qué indicador es (va en las opciones: así lo sabe desde el primer dibujo, también al imprimir sin animación)
+        const kk = chart.$kpi || (chart.options && chart.options.inoferKpi) || (chart.config && chart.config.options && chart.config.options.inoferKpi);
         ctx.font = `bold ${fs}px Inter, Arial, sans-serif`;
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -134,8 +136,8 @@
         meta.data.forEach((pt, i) => {
           const v = ds.data[i]; if (v === null || v === undefined) return;
           if (!todos && i !== ultimo) return;
-          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = (chart.$kpi ? inoferKpiFmt(chart.$kpi, v, true) : inoferPct(v)), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
-          const txt = (chart.$kpi ? inoferKpiFmt(chart.$kpi, v, true) : inoferPct(v)), w = ctx.measureText(txt).width;
+          if (tv && i === ultimo) { ctx.save(); ctx.font = `900 ${Math.round(fs * 1.5)}px Inter, Arial, sans-serif`; const t2 = (kk ? inoferKpiFmt(kk, v, true) : inoferPct(v)), w2 = ctx.measureText(t2).width; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(15,23,42,0.85)'; const bx = Math.min(chart.width - 4, pt.x + w2 / 2 + 10), top0 = (chart.chartArea ? chart.chartArea.top : 0) + fs * 1.05, by = pt.y - fs * 1.6 >= top0 ? pt.y - fs * 1.6 : pt.y + fs * 1.6; ctx.fillRect(bx - w2 - 14, by - fs, w2 + 14, fs * 2); ctx.fillStyle = '#ffffff'; ctx.fillText(t2, bx - 7, by); ctx.restore(); return; }
+          const txt = (kk ? inoferKpiFmt(kk, v, true) : inoferPct(v)), w = ctx.measureText(txt).width;
           if (ds.type === 'bar') { ctx.textAlign = 'center'; ctx.fillText(txt, pt.x, pt.y - 9); return; }
           const derecha = pt.x + 7 + w > chart.width - 4; // si no entra a la derecha, va a la izquierda del punto
           ctx.textAlign = derecha ? 'right' : 'left';
@@ -190,6 +192,7 @@
           datasets: series
         },
         options: {
+          inoferKpi: k,
           responsive: true, maintainAspectRatio: false, animation: !(opts && opts.sinAnimacion),
           layout: { padding: { right: tvMode ? F * 2 : 36, top: tvMode ? F : 6 } },
           plugins: {
@@ -334,8 +337,8 @@
             <details class="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-xl text-xs">
               <summary class="cursor-pointer font-bold text-slate-300">📋 Cargar varios meses de una vez (pegar desde Excel o subir archivo)</summary>
               <div class="mt-2 space-y-2">
-                <p class="text-[11px] text-slate-400">Copiá de Excel dos columnas (mes y valor) y pegalas acá. Sirven formatos como <b>sept-25 99,24%</b>, <b>2025-09 99.24</b> o <b>09/2025 99,24</b>.</p>
-                <textarea id="kpiPegar" rows="5" class="kpi-edit w-full rounded-lg border border-slate-700 bg-slate-950 p-2 font-mono text-[11px] text-white" placeholder="sept-25	99,24%&#10;oct-25	98,00%"></textarea>
+                <p class="text-[11px] text-slate-400">Copiá de Excel dos columnas (mes y valor) y pegalas acá. Sirven formatos como ${(def.unidad || '%') === '%' ? '<b>sept-25 99,24%</b>, <b>2025-09 99.24</b> o <b>09/2025 99,24</b>' : '<b>sept-25 5.826</b> o <b>2025-09 5826</b> (en ' + (def.unidad === 'pz' ? 'piezas' : '$') + ', sin el signo)'}.</p>
+                <textarea id="kpiPegar" rows="5" class="kpi-edit w-full rounded-lg border border-slate-700 bg-slate-950 p-2 font-mono text-[11px] text-white" placeholder="${(def.unidad || '%') === '%' ? 'sept-25	99,24%&#10;oct-25	98,00%' : 'sept-25	5826&#10;oct-25	6100'}"></textarea>
                 <div class="flex flex-wrap gap-2">
                   <button type="button" id="kpiPegarBtn" class="kpi-edit rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-sky-400">Cargar lo pegado</button>
                   <label class="kpi-edit cursor-pointer rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">📎 Subir Excel / CSV<input type="file" id="kpiArchivo" accept=".xlsx,.xls,.csv,.txt" class="kpi-edit hidden" /></label>
@@ -398,6 +401,8 @@
       const pct = !k || ((inoferKpiDef(k) || {}).unidad || '%') === '%';
       if (typeof t === 'number') return pct && t <= 1.5 && t > 0 ? Number((t * 100).toFixed(4)) : t; // Excel guarda 99,24% como 0,9924
       let s = String(t || '').replace('%', '').trim();
+      // en pesos y piezas el punto solo separa miles: "$ 5.826" = 5826
+      if (!pct) { s = s.replace(/[$\s]|\/kg|pz/gi, ''); if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, ''); }
       if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.'); else s = s.replace(',', '.');
       const v = parseFloat(s);
       return isFinite(v) ? v : null;

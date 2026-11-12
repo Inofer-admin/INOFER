@@ -407,6 +407,19 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(/1,33%/.test(r.vistaScrap) && /Bajo peso/.test(r.vistaScrap), 'la vista de scrap no muestra bien: ' + r.vistaScrap.slice(0, 300));
       ok(/PEREZ/.test(r.vistaReb) && /591/.test(r.vistaReb), 'la vista de rebabado no muestra bien: ' + r.vistaReb.slice(0, 300));
       ok(/\$ 6\.000\/kg/.test(r.rkTxt), 'el rendimiento por kilo no se ve en $/kg: ' + r.rkTxt.slice(0, 200));
+      const r2 = await A.evaluate(async () => {
+        // pegar a mano "$ 5.826" = 5826 (no 5,8) y el informe imprimible con $ en las etiquetas del gráfico
+        inoferKpiActual = 'rendKilo'; inoferRenderKpi(); await new Promise(r => setTimeout(r, 200));
+        inoferKpiImportarTexto('rendKilo', '2030-02\t$ 5.826'); await new Promise(r => setTimeout(r, 200));
+        const v = (inoferKpiData('rendKilo').datos.find(x => x.mes === '2030-02') || {}).valor;
+        const cv = document.createElement('canvas'); const w = document.createElement('div'); w.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;height:400px'; w.appendChild(cv); document.body.appendChild(w);
+        const textos = []; const ctx = cv.getContext('2d'); const ft = ctx.fillText; ctx.fillText = function (t) { textos.push(String(t)); return ft.apply(this, arguments); };
+        const ch = inoferKpiDibujar(cv, 'facturacion', { sinAnimacion: true }); try { ch.destroy(); } catch (e) { } w.remove();
+        inoferKpiData('rendKilo').datos = inoferKpiData('rendKilo').datos.filter(x => x.mes !== '2030-02');
+        return { v, conPct: textos.filter(t => /%/.test(t)), conPesos: textos.filter(t => /\$/.test(t)).length };
+      });
+      ok(r2.v === 5826, 'pegar "$ 5.826" no dio 5826: ' + r2.v);
+      ok(!r2.conPct.length && r2.conPesos > 2, 'el gráfico de facturación sin animación muestra %: ' + JSON.stringify(r2));
       await A.waitForTimeout(1500);
       // usuario que solo ve indicadores: sin plata y con los nombres ocultos; no puede guardar el rebabado por operario
       await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'indic', nombre: 'Indicadores', clave: '5555', rol: 'usuario', permisos: { partes: 'none', ordenes: 'none', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'edit' } } }));
