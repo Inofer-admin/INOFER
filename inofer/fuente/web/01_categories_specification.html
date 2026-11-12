@@ -2336,8 +2336,21 @@ ${lines}${trendNote}`;
       '32-Actualizar fechador',
       '33-Cambio de cuchara',
       '34-Carga de aceites / desmoldantes',
-      '35-Pulido de noyos'
+      '35-Pulido de noyos',
+      '36-Cambio de pico',
+      '37-Calentando + colocando pistón'
     ];
+    // Paradas que solo existen en algunas máquinas (12/11/2026: cambio de pico y pistón, solo cámara caliente Z30 y H50)
+    window.INOFER_CODIGO_SOLO_MAQ = { 36: ['Z30', 'H50'], 37: ['Z30', 'H50'] };
+    // lista de códigos para una máquina (id '200V' o su nombre largo); sin máquina = todos
+    window.inoferCodigosDe = function (maq) {
+      const todos = INOFER_28_CODES;
+      if (!maq) return todos;
+      const n = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const cfg = (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : []).find(x => n(x.id) === n(maq) || n(x.name) === n(maq));
+      const id = n(cfg ? cfg.id : maq);
+      return todos.filter(c => { const lim = window.INOFER_CODIGO_SOLO_MAQ[parseInt(c, 10)]; return !lim || lim.some(m => n(m) === id || id.endsWith(n(m))); });
+    };
 
     const INITIAL_ORDERS = [
       {

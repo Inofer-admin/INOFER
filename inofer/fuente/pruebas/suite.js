@@ -1015,6 +1015,10 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.cod === '32-Actualizar fechador' && r.cat === 'puesta_punto', 'código 32: ' + JSON.stringify(r));
       const r2 = await A.evaluate(() => ['33-Cambio de cuchara', '34-Carga de aceites / desmoldantes', '35-Pulido de noyos'].map(c => INOFER_28_CODES.includes(c) && window.INOFER_CODIGO_CATEGORIA[parseInt(c)] === 'mant_preventivo'));
       ok(r2.every(Boolean), 'códigos 33-35: ' + JSON.stringify(r2));
+      const r3 = await A.evaluate(() => { const t = l => l.filter(c => /^3[67]-/.test(c)).length;
+        inoferCargaRapida.abrir({ maq: 'H50' }); const sel = () => { const f = document.querySelector('#crParadasList .cr-pcod'); return f ? [...f.options].map(o => o.value) : null; };
+        return { v200: t(inoferCodigosDe('200V')), z30: t(inoferCodigosDe('Z30')), h50: t(inoferCodigosDe('H50')), todos: t(INOFER_28_CODES), cat: [window.INOFER_CODIGO_CATEGORIA[36], window.INOFER_CODIGO_CATEGORIA[37]] }; });
+      ok(r3.v200 === 0 && r3.z30 === 2 && r3.h50 === 2 && r3.todos === 2 && r3.cat.join() === 'puesta_punto,puesta_punto', 'códigos 36-37 solo Z30/H50: ' + JSON.stringify(r3));
       const V = await equipo(b); await ingresar(V, 'vesol', '3333'); await V.waitForTimeout(1200);
       const v = await V.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); const e = await inoferCloudPost({ action: 'msgEstado', token: inoferAuthToken() }); const u = await inoferCloudPost({ action: 'solActualizar', token: inoferAuthToken(), id: (d.solicitudes[0] || {}).id, estado: 'resuelta' }); return { ve: (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'), flag: e.solVerTodas, responde: u.status }; });
       await V.context().close();

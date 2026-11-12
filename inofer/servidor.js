@@ -1317,7 +1317,7 @@ function accionAuditoria(u, body) {
 // =====================================================================
 const COD_CAT_SRV = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
   2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 16: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
-  4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 32: 'puesta_punto', 33: 'mant_preventivo', 34: 'mant_preventivo', 35: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+  4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 32: 'puesta_punto', 33: 'mant_preventivo', 34: 'mant_preventivo', 35: 'mant_preventivo', 36: 'puesta_punto', 37: 'puesta_punto', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
 const CATS_SRV = [['parada_maquina', 'Parada de máquina'], ['setup_molde', 'Cambio de molde'], ['puesta_punto', 'Puesta a punto'], ['mant_preventivo', 'Mant. preventivo'], ['mant_correctivo', 'Mant. correctivo'], ['falta_material', 'Falta de material'], ['falta_operario', 'Falta de operario'], ['otros', 'Otros']];
 const MAQ_SRV = [['200V', 'Italpresse 200 Tn (V)'], ['200N', 'Italpresse 200 Tn (N)'], ['180', 'Italpresse 180 Tn'], ['H50', 'H-50'], ['Z30', 'Italpresse 30 Tn (Z-30)']];
 function maqId_(txt) {

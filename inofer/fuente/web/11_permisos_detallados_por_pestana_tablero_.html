@@ -252,7 +252,7 @@
       // Código de parada INOFER (1 a 28) -> categoría del tablero
       const COD_CAT = { 1: 'setup_molde', 23: 'setup_molde', 24: 'setup_molde', 20: 'puesta_punto', 21: 'puesta_punto', 28: 'puesta_punto',
         16: 'parada_maquina', 2: 'parada_maquina', 3: 'parada_maquina', 5: 'parada_maquina', 6: 'parada_maquina', 7: 'parada_maquina', 8: 'parada_maquina', 9: 'parada_maquina', 12: 'parada_maquina', 13: 'parada_maquina', 25: 'parada_maquina', 26: 'parada_maquina', 27: 'parada_maquina',
-        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 32: 'puesta_punto', 33: 'mant_preventivo', 34: 'mant_preventivo', 35: 'mant_preventivo', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
+        4: 'mant_correctivo', 10: 'mant_correctivo', 11: 'mant_correctivo', 14: 'mant_correctivo', 17: 'mant_correctivo', 18: 'mant_preventivo', 29: 'mant_preventivo', 31: 'mant_preventivo', 32: 'puesta_punto', 33: 'mant_preventivo', 34: 'mant_preventivo', 35: 'mant_preventivo', 36: 'puesta_punto', 37: 'puesta_punto', 30: 'falta_material', 19: 'falta_operario', 15: 'otros', 22: 'otros' };
       window.INOFER_CODIGO_CATEGORIA = COD_CAT;
       const horas = (a, b) => (typeof calcHoursDiff === 'function' ? calcHoursDiff(a, b) : 0);
       function registrosDeOrdenes() {

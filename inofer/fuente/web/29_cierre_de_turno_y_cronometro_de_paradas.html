@@ -56,7 +56,7 @@
       const maqDe = o => (CR() && CR().maqDeOrden) ? CR().maqDeOrden(o) : '';
       const turnos = () => (CR() && CR().turnos ? CR().turnos() : []);
       const durMin = t => (((aMin(t.fin) - aMin(t.ini)) + 1440) % 1440) || 1440;
-      const codigos = () => (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []);
+      const codigos = m => (window.inoferCodigosDe ? inoferCodigosDe(m) : (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []));
       const corto = c => String(c || '').replace(/^\d+\s*-\s*/, '');
       const yo = () => (typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '') || 'equipo';
       const puede = () => typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit');
@@ -147,7 +147,7 @@
         w.innerHTML = `<div class="w-full max-w-lg space-y-3 rounded-3xl border border-slate-700 bg-slate-900 p-5">
           <div class="flex items-center justify-between"><div class="text-lg font-black text-white">¿Por qué paró la ${esc(maq)}?</div><button type="button" class="cro-x rounded-lg border border-slate-700 px-2 py-1 text-xs text-slate-300">✕</button></div>
           <div class="grid grid-cols-2 gap-2">${frec.map(c => `<button type="button" class="cro-cod rounded-2xl border-2 border-rose-500/40 bg-rose-500/10 px-3 py-4 text-sm font-black text-rose-100" data-c="${esc(c)}">${esc(corto(c))}</button>`).join('')}</div>
-          <select class="cro-otro w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"><option value="">Otro motivo…</option>${codigos().map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
+          <select class="cro-otro w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"><option value="">Otro motivo…</option>${codigos(maq).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>`;
         document.body.appendChild(w);
         const fin = c => { w.remove(); if (c) alElegir(c); };
         w.addEventListener('click', e => { const b = e.target.closest('.cro-cod'); if (b) fin(b.dataset.c); if (e.target === w || e.target.closest('.cro-x')) fin(''); });
@@ -243,7 +243,7 @@
         if (f.estado === 'listo') return `<div class="ct-row listo" data-m="${esc(f.m)}"><div class="ct-maq">${esc(f.m)}</div><div class="ct-wide text-xs text-emerald-200" style="grid-column: span 5">✓ Ya cargado: ${f.cargados.map(x => `OP ${esc(x.o.ordNumber || '')} · ${esc(x.o.part)} · <b>${n0(x.l.okPcs)}</b> buenas${x.l.scrapPcs ? ` · ${n0(x.l.scrapPcs)} scrap` : ''}${x.l.stopMinutes ? ` · paradas ${fmtMin(x.l.stopMinutes)}` : ''} · ${esc(x.l.operator || '')} <button type="button" class="ct-editar ml-1 text-cyan-300 underline" data-o="${esc(x.o.id)}" data-l="${esc(x.l.id)}">editar</button>`).join('<br>')}</div><div class="text-lg text-emerald-300">✓</div></div>`;
         if (f.estado === 'fuera') return `<div class="ct-row off" data-m="${esc(f.m)}"><div class="ct-maq">${esc(f.m)}</div><div class="ct-wide text-xs text-rose-200" style="grid-column: span 5">⛔ Fuera de servicio ese día (no se carga)</div><div></div></div>`;
         if (f.estado === 'no') return `<div class="ct-row off" data-m="${esc(f.m)}"><div class="ct-maq">${esc(f.m)}</div><div class="ct-wide"><b class="text-rose-200">⛔ No trabajó</b><button type="button" class="ct-deshacer ml-2 text-[11px] text-slate-400 underline">deshacer</button></div><div class="text-xs text-slate-500">${f.prog ? n0(f.prog) : '—'}</div>
-          <div class="ct-wide" style="grid-column: span 3"><select class="ct-sel ct-motivo-no"><option value="">¿Por qué? (elegí el motivo)</option>${codigos().map(c => `<option value="${esc(c)}" ${c === f.motivoNo ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div><div class="text-lg ${f.motivoNo ? 'text-emerald-300' : 'text-slate-600'}">✓</div></div>`;
+          <div class="ct-wide" style="grid-column: span 3"><select class="ct-sel ct-motivo-no"><option value="">¿Por qué? (elegí el motivo)</option>${codigos(f.m).map(c => `<option value="${esc(c)}" ${c === f.motivoNo ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div><div class="text-lg ${f.motivoNo ? 'text-emerald-300' : 'text-slate-600'}">✓</div></div>`;
         if (f.estado === 'vacia') return `<div class="ct-row vacia" data-m="${esc(f.m)}"><div class="ct-maq">${esc(f.m)}</div><div class="ct-wide text-xs text-slate-400" style="grid-column: span 4">Sin programa en el Gantt para este turno.</div><div class="ct-wide flex flex-wrap gap-1.5"><button type="button" class="ct-b ct-cargar">+ Cargar igual</button></div><div></div></div>`;
         const ps = f.paradas, totP = ps.reduce((a, p) => a + (Number(p.min) || 0), 0);
         const avisos = [];
@@ -296,7 +296,7 @@
           w.innerHTML = `<div class="w-full max-w-md space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 text-sm">
             <div class="font-black text-white">Parada en la ${esc(m)}</div>
             <div class="flex flex-wrap gap-1.5">${frec.map(c => `<button type="button" class="ct-chip pp-cod ${c === cod ? 'on' : ''}" data-c="${esc(c)}">${esc(corto(c).slice(0, 22))}</button>`).join('')}</div>
-            <select class="ct-sel pp-otro"><option value="">Otro motivo…</option>${codigos().map(c => `<option value="${esc(c)}" ${c === cod && !frec.includes(c) ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+            <select class="ct-sel pp-otro"><option value="">Otro motivo…</option>${codigos(m).map(c => `<option value="${esc(c)}" ${c === cod && !frec.includes(c) ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
             <div class="flex flex-wrap items-center gap-1.5"><span class="text-xs text-slate-400">Tiempo:</span>${[10, 15, 30, 60].map(x => `<button type="button" class="ct-chip pp-add" data-m="${x}">+${x >= 60 ? '1 h' : x + '′'}</button>`).join('')}<span class="ml-auto text-lg font-black text-white">${fmtMin(min)}</span><button type="button" class="ct-chip pp-cero">0</button></div>
             ${window.inoferEsRotura && inoferEsRotura(cod) ? `<div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2"><div class="mb-1.5 text-xs font-bold text-amber-100">🔧 ¿Se bajó el molde o se paró la máquina para repararlo?</div><div class="flex gap-2"><button type="button" class="ct-chip pp-mant ${mant ? '' : 'on'}" data-v="">No, siguió trabajando</button><button type="button" class="ct-chip pp-mant ${mant ? 'on' : ''}" data-v="1">Sí → va a Mantenimiento</button></div></div>` : ''}
             <div class="flex justify-end gap-2"><button type="button" class="ct-b pp-x">Cancelar</button><button type="button" class="ct-b p pp-ok" ${cod && min ? '' : 'disabled'}>Agregar</button></div></div>`;

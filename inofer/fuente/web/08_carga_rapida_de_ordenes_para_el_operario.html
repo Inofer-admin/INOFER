@@ -513,7 +513,7 @@
         return `<div class="cr-prow rounded-xl border border-rose-500/30 bg-rose-500/5 p-2 space-y-2" data-mant="${p.mant ? '1' : ''}">
           <div class="flex gap-2">
             <select class="cr-pcod flex-1 rounded-lg border-2 border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-white">
-              <option value="">Elegí el motivo…</option>${(typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+              <option value="">Elegí el motivo…</option>${(window.inoferCodigosDe ? inoferCodigosDe(st.maq) : INOFER_28_CODES).map(c => `<option value="${esc(c)}" ${p.codigo === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
             </select>
             <button type="button" class="cr-pdel rounded-lg border border-slate-700 px-3 text-sm text-rose-300" title="Quitar">✕</button>
           </div>
