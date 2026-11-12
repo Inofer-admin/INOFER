@@ -1,0 +1,197 @@
+  <script>
+    // ===== Rechazos en control de calidad (12/11/2026) =====
+    // Ej.: el turno cargó 500 buenas, al otro día control tira 200 → buenas reales 300. Se carga en la ORDEN (o.rechazos,
+    // ver helpers en la parte 01). El turno de origen es opcional. La orden NUNCA se reabre sola: si estaba Completada y
+    // queda debajo de lo pedido, el usuario elige: dejarla completa, reabrirla o crear una orden nueva por lo que falta
+    // (se sugiere reabrir si la OP está puesta en la máquina). Causas: módulo de nube `calidad` {causas:[...]} (se pueden agregar).
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+      const hoy = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      const fDia = f => f ? String(f).slice(8, 10) + '/' + String(f).slice(5, 7) : '';
+      const quien = () => { try { return inoferUsuarioEtiqueta(); } catch (e) { return ''; } };
+      const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
+      const puede = () => { try { return inoferCan('ordenes', 'edit') && (typeof inoferPuede !== 'function' || inoferPuede('ord_rechazos')); } catch (e) { return false; } };
+      const puedeCrear = () => { try { return typeof inoferPuede !== 'function' || inoferPuede('ord_crear'); } catch (e) { return false; } };
+      const maqDe = o => { try { return inoferCargaRapida.maqDeOrden(o) || o.machine || ''; } catch (e) { return o.machine || ''; } };
+      const cargadas = o => (o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0);
+
+      // ---------- causas (se pueden agregar)
+      const CAUSAS_BASE = ['Bajo peso', 'Rechupe', 'Golpes', 'Marcas', 'Arrastre', 'Rotas', 'Malas'];
+      const KEY = 'tablero_inyectoras_calidad_v1';
+      let CAL = { causas: [] }; try { CAL = JSON.parse(localStorage.getItem(KEY) || 'null') || CAL; } catch (e) { }
+      const causas = () => { const out = CAUSAS_BASE.slice(); (CAL.causas || []).forEach(c => { if (c && !out.some(x => norm(x) === norm(c))) out.push(c); }); return out; };
+      function agregarCausa(c) {
+        c = String(c || '').trim().replace(/\s+/g, ' ').slice(0, 40); if (!c) return '';
+        c = c.charAt(0).toUpperCase() + c.slice(1);
+        if (causas().some(x => norm(x) === norm(c))) return causas().find(x => norm(x) === norm(c));
+        CAL = { causas: (CAL.causas || []).concat([c]), at: new Date().toISOString(), por: quien() };
+        try { localStorage.setItem(KEY, JSON.stringify(CAL)); } catch (e) { }
+        try { pushCloudModuleState('calidad', CAL); } catch (e) { }
+        return c;
+      }
+      if (typeof window.applyCloudModules === 'function') {
+        const _am = window.applyCloudModules;
+        window.applyCloudModules = function (mods) {
+          const r = _am.apply(this, arguments);
+          try { if (mods && mods.calidad && typeof mods.calidad === 'object' && JSON.stringify(mods.calidad) !== JSON.stringify(CAL)) { CAL = mods.calidad; try { localStorage.setItem(KEY, JSON.stringify(CAL)); } catch (e) { } } } catch (e) { }
+          return r;
+        };
+      }
+
+      // ---------- guardar
+      function guardar() { try { saveProductionOrders(); } catch (e) { } try { renderProductionOrdersView(); } catch (e) { } try { window.inoferPintarHoy && inoferPintarHoy(); } catch (e) { } }
+      function cargarRechazo(ordId, d) {
+        const o = ordenes().find(x => x.id === ordId); if (!o) return { error: 'No encontré la orden' };
+        const cant = Math.round(Number(d.cant) || 0);
+        if (cant <= 0) return { error: 'Poné cuántas piezas se rechazaron' };
+        const real = inoferOkReal(o);
+        if (cant > real) return { error: `La orden tiene ${n0(real)} piezas buenas: no se pueden rechazar ${n0(cant)}` };
+        let logId = d.logId || null;
+        if (logId) { const l = (o.logs || []).find(x => String(x.id) === String(logId)); if (!l) logId = null; else if (cant > inoferOkLog(o, l)) return { error: `Ese turno tiene ${n0(inoferOkLog(o, l))} buenas: no se pueden rechazar ${n0(cant)} de ese turno` }; }
+        const causa = agregarCausa(d.causa) || 'Sin causa';
+        const estabaCompleta = o.status === 'Completada';
+        const r = { id: 'rc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), fecha: d.fecha || hoy(), cant, causa, logId, nota: String(d.nota || '').slice(0, 200), por: quien(), at: new Date().toISOString() };
+        o.rechazos = (o.rechazos || []).concat([r]);
+        o.modificadoAt = r.at; o.modificadoPor = r.por;
+        guardar();
+        const realDespues = inoferOkReal(o), t = Number(o.qtyTarget) || 0;
+        return { ok: true, r, o, estabaCompleta, falta: Math.max(0, t - realDespues), real: realDespues, decidir: estabaCompleta && t > 0 && realDespues < t };
+      }
+      function borrarRechazo(ordId, rid) {
+        const o = ordenes().find(x => x.id === ordId); if (!o) return;
+        const r = (o.rechazos || []).find(x => x.id === rid); if (!r) return;
+        r.borrado = true; r.at = new Date().toISOString(); r.borradoPor = quien();
+        o.modificadoAt = r.at; guardar();
+      }
+      function siguienteNumero() {
+        const n = ordenes().map(o => parseInt(String(o.ordNumber).replace(/\D/g, ''), 10) || 0);
+        return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0');
+      }
+      // qué hacer con una orden completa que quedó corta por un rechazo
+      function decidir(ordId, que) {
+        const o = ordenes().find(x => x.id === ordId); if (!o) return null;
+        const falta = Math.max(0, (Number(o.qtyTarget) || 0) - inoferOkReal(o)), at = new Date().toISOString(), por = quien();
+        let nueva = null;
+        if (que === 'reabrir') { o.status = 'En Proceso'; o.autoCompletada = false; o.reabiertaPorRechazo = { at, por, falta }; }
+        else {
+          o.status = 'Completada'; o.autoCompletada = false; o.completaConRechazo = { at, por, falta };
+          if (que === 'nueva' && falta > 0) {
+            const rate = Number(o.unitsPerHour) || 180, w = Number(o.weightWithSprueKg) || 0;
+            nueva = { id: 'ord-' + Date.now(), ordNumber: siguienteNumero(), date: hoy(), machine: o.machine, mold: o.mold || '', part: o.part, cavities: o.cavities || 1, unitsPerHour: rate,
+              material: o.material, weightWithSprueKg: w, weightOkGrs: o.weightOkGrs || 0, qtyTarget: falta, hoursToUse: Number((falta / rate).toFixed(2)), kgTotal: Number((falta * w).toFixed(1)),
+              status: 'En Proceso', logs: [], back: Object.assign({}, o.back || {}, { date: hoy(), endDate: '', endTime: '', unmountDate: '', unmountStart: '', unmountEnd: '', comments: `Repone ${falta} piezas rechazadas en control de la OP ${o.ordNumber}` }),
+              reponeDe: { ordId: o.id, ordNumber: o.ordNumber }, creadaPor: por };
+            productionOrders.unshift(nueva); o.repuestaEn = nueva.ordNumber;
+          }
+        }
+        o.modificadoAt = at; guardar();
+        return nueva;
+      }
+
+      // ---------- ventana
+      let st = { ordId: null, q: '', causa: '', otra: false };
+      function cerrar() { const m = $('rcModal'); if (m) m.remove(); }
+      function abrir(opc) {
+        opc = opc || {};
+        if (!puede()) { showToast('No tenés permiso para cargar rechazos de control'); return; }
+        st = { ordId: opc.ordId || null, q: '', causa: '', otra: false };
+        cerrar();
+        const m = document.createElement('div'); m.id = 'rcModal';
+        m.className = 'fixed inset-0 z-[9985] flex items-start justify-center overflow-auto bg-slate-950/80 p-2 sm:p-6';
+        m.innerHTML = '<div id="rcCaja" class="w-full max-w-2xl space-y-3 rounded-2xl border border-rose-500/40 bg-slate-900 p-4 text-sm text-slate-200 shadow-2xl"></div>';
+        document.body.appendChild(m);
+        m.addEventListener('click', e => { if (e.target === m) cerrar(); });
+        pintar();
+      }
+      const cab = t => `<div class="flex items-center justify-between gap-2"><div class="text-base font-extrabold text-white">🔍 ${t}</div><button type="button" data-rc="cerrar" class="min-h-[40px] rounded-lg px-3 text-xl text-slate-400 hover:bg-slate-800">×</button></div>`;
+      function listaOrdenes() {
+        const q = norm(st.q);
+        const ult = o => (o.logs || []).reduce((a, l) => String(l.date || '') > a ? String(l.date) : a, String(o.date || ''));
+        return ordenes().filter(o => (o.logs || []).length)
+          .filter(o => !q || norm([o.ordNumber, o.part, o.machine, maqDe(o)].join(' ')).includes(q))
+          .sort((a, b) => ((a.status === 'Completada') - (b.status === 'Completada')) || ult(b).localeCompare(ult(a))).slice(0, 40);
+      }
+      function pintar() {
+        const caja = $('rcCaja'); if (!caja) return;
+        const o = st.ordId && ordenes().find(x => x.id === st.ordId);
+        if (!o) {
+          const L = listaOrdenes();
+          caja.innerHTML = cab('Rechazo en control de calidad') + `<p class="text-xs text-slate-400">Elegí la orden de las piezas que se rechazaron. También aparecen las órdenes ya completadas.</p>
+            <input id="rcBuscar" value="${esc(st.q)}" placeholder="Buscar por OP, pieza o máquina…" class="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" />
+            <div class="max-h-[60vh] space-y-1.5 overflow-auto">${L.map(x => { const t = Number(x.qtyTarget) || 0, rr = inoferRechazoTotal(x); return `<button type="button" data-rc-ord="${esc(x.id)}" class="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2.5 text-left hover:border-rose-400/60">
+              <span><b class="text-amber-300">${esc(x.part || '')}</b> <span class="text-xs text-slate-400">· OP ${esc(x.ordNumber || '')} · ${esc(maqDe(x))}</span>${rr ? `<span class="block text-[11px] text-rose-300">${n0(rr)} ya rechazadas en control</span>` : ''}</span>
+              <span class="shrink-0 text-right text-xs"><span class="block font-bold ${x.status === 'Completada' ? 'text-emerald-300' : 'text-cyan-300'}">${esc(x.status || '')}</span><span class="text-slate-400">${n0(inoferOkReal(x))} de ${n0(t)}</span></span></button>`; }).join('') || '<div class="p-4 text-center text-xs text-slate-500">No hay órdenes con turnos cargados.</div>'}</div>`;
+          const b = $('rcBuscar'); b.addEventListener('input', () => { st.q = b.value; const pos = b.selectionStart; pintar(); const b2 = $('rcBuscar'); b2.focus(); try { b2.setSelectionRange(pos, pos); } catch (e) { } });
+          return;
+        }
+        const t = Number(o.qtyTarget) || 0, carg = cargadas(o), rech = inoferRechazoTotal(o), real = inoferOkReal(o);
+        const logs = (o.logs || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.startTime || '').localeCompare(String(a.startTime || '')));
+        const tile = (tt, v, c) => `<div class="rounded-xl bg-slate-950/70 p-2.5 text-center"><div class="text-[10px] font-bold uppercase text-slate-500">${tt}</div><div class="text-xl font-black ${c}">${v}</div></div>`;
+        const lista = inoferRechazos(o);
+        caja.innerHTML = cab('Rechazo en control de calidad') + `
+          <div class="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2"><div><b class="text-lg text-amber-300">${esc(o.part || '')}</b> <span class="text-xs text-slate-400">· OP ${esc(o.ordNumber || '')} · ${esc(maqDe(o))} · ${esc(o.status || '')}</span></div>${st.fijo ? '' : '<button type="button" data-rc="otra" class="text-xs text-sky-300 underline">cambiar de orden</button>'}</div>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">${tile('Cargadas', n0(carg), 'text-white')}${tile('Rechazadas en control', n0(rech), rech ? 'text-rose-300' : 'text-slate-400')}${tile('Buenas reales', n0(real), 'text-emerald-300')}${tile('Faltan', n0(Math.max(0, t - real)), 'text-amber-300')}</div>
+          <form id="rcForm" class="space-y-3">
+            <label class="block text-xs font-bold text-slate-300">¿Cuántas piezas se rechazaron?<input id="rcCant" type="number" min="1" max="${real}" inputmode="numeric" class="mt-1 min-h-[52px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-2xl font-black text-white" placeholder="Ej: 200" /></label>
+            <div><span class="mb-1.5 block text-xs font-bold text-slate-300">Causa</span><div class="flex flex-wrap gap-1.5">${causas().map(c => `<button type="button" data-rc-causa="${esc(c)}" class="min-h-[40px] rounded-xl border px-3 text-sm font-bold ${st.causa === c && !st.otra ? 'border-rose-400 bg-rose-500/20 text-rose-100' : 'border-slate-700 bg-slate-950 text-slate-200'}">${esc(c)}</button>`).join('')}<button type="button" data-rc="otraCausa" class="min-h-[40px] rounded-xl border px-3 text-sm font-bold ${st.otra ? 'border-rose-400 bg-rose-500/20 text-rose-100' : 'border-dashed border-slate-600 text-slate-300'}">＋ Otra causa</button></div>
+              ${st.otra ? '<input id="rcCausaNueva" maxlength="40" placeholder="Escribí la causa (queda guardada para la próxima)" class="mt-2 min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white" />' : ''}</div>
+            <label class="block text-xs font-bold text-slate-300">¿De qué turno salieron? <span class="font-normal text-slate-500">(opcional)</span>
+              <select id="rcTurno" class="mt-1 min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-white"><option value="">No se sabe</option>${logs.map(l => `<option value="${esc(l.id)}">${esc(fDia(l.date))} · ${esc(l.turno || (l.startTime || '') + '–' + (l.endTime || ''))}${l.operator ? ' · ' + esc(l.operator) : ''} · ${n0(inoferOkLog(o, l))} buenas</option>`).join('')}</select>
+              <span class="mt-1 block font-normal text-[11px] text-slate-500">Si elegís el turno, las piezas pasan a ser scrap de ese turno (baja su calidad y su OEE).</span></label>
+            <div class="grid grid-cols-2 gap-2"><label class="text-xs font-bold text-slate-300">Fecha del control<input id="rcFecha" type="date" value="${hoy()}" max="${hoy()}" class="mt-1 min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-white" /></label>
+              <label class="text-xs font-bold text-slate-300">Nota <span class="font-normal text-slate-500">(opcional)</span><input id="rcNota" maxlength="200" class="mt-1 min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-white" /></label></div>
+            <div id="rcError" class="hidden rounded-xl border border-rose-500/50 bg-rose-500/10 p-2 text-sm font-bold text-rose-200"></div>
+            <button type="submit" class="min-h-[52px] w-full rounded-xl bg-rose-500 text-base font-black text-white hover:bg-rose-400">Cargar el rechazo</button>
+          </form>
+          ${lista.length ? `<div class="rounded-xl border border-slate-800 p-3"><div class="mb-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">Rechazos cargados en esta orden</div>${lista.slice().reverse().map(r => { const l = r.logId != null && (o.logs || []).find(x => String(x.id) === String(r.logId)); return `<div class="flex items-center justify-between gap-2 border-t border-slate-800 py-1.5 text-xs"><span><b class="text-rose-300">${n0(r.cant)}</b> · ${esc(r.causa || '')} · control del ${esc(fDia(r.fecha))}${l ? ` · turno ${esc(fDia(l.date))} ${esc(l.turno || '')}` : ' · turno sin indicar'}${r.nota ? ' · ' + esc(r.nota) : ''}<span class="block text-[10px] text-slate-500">${esc((r.por || '').replace(/\s*\(@.*\)$/, ''))}</span></span><button type="button" data-rc-borrar="${esc(r.id)}" class="min-h-[36px] rounded-lg px-2 text-rose-300 hover:bg-slate-800" title="Borrar este rechazo">🗑️</button></div>`; }).join('')}</div>` : ''}`;
+        $('rcForm').addEventListener('submit', e => {
+          e.preventDefault();
+          const causa = st.otra ? ($('rcCausaNueva') ? $('rcCausaNueva').value : '') : st.causa;
+          const err = $('rcError');
+          if (!String(causa || '').trim()) { err.textContent = 'Elegí la causa (o escribí una nueva).'; err.classList.remove('hidden'); return; }
+          const res = cargarRechazo(o.id, { cant: $('rcCant').value, causa, logId: $('rcTurno').value, fecha: $('rcFecha').value, nota: $('rcNota').value });
+          if (res.error) { err.textContent = res.error; err.classList.remove('hidden'); return; }
+          st.causa = ''; st.otra = false;
+          if (res.decidir) return pintarDecision(res);
+          showToast(`✓ Rechazo cargado: ${n0(res.r.cant)} piezas. Buenas reales: ${n0(res.real)}`);
+          pintar();
+        });
+        setTimeout(() => { const c = $('rcCant'); if (c && !('ontouchstart' in window)) c.focus(); }, 50);
+      }
+      function pintarDecision(res) {
+        const caja = $('rcCaja'); if (!caja) return;
+        const o = res.o, enMaq = !!(o.montada && o.montada.maq);
+        const op = (k, ico, t, d, sug) => `<button type="button" data-rc-dec="${k}" class="w-full rounded-2xl border-2 px-4 py-3 text-left ${sug ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/70'} hover:border-emerald-300"><div class="text-base font-black text-white">${ico} ${t}${sug ? ' <span class="ml-1 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-black text-emerald-950">SUGERIDO</span>' : ''}</div><div class="text-xs text-slate-400">${d}</div></button>`;
+        caja.innerHTML = cab('¿Qué hacemos con la orden?') + `
+          <div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">La <b>OP ${esc(o.ordNumber)}</b> (${esc(o.part)}) estaba <b>completa</b>. Con este rechazo quedan <b>${n0(res.real)}</b> buenas reales de <b>${n0(o.qtyTarget)}</b>: faltan <b>${n0(res.falta)}</b>.${enMaq ? `<div class="mt-1 text-xs">La OP está puesta en la máquina <b>${esc(o.montada.maq)}</b>.</div>` : ''}</div>
+          <div class="space-y-2">
+            ${op('dejar', '✅', 'Dejarla completa', 'No se reponen las piezas en esta orden (por ejemplo, ya se entregó o se repone más adelante).', !enMaq)}
+            ${op('reabrir', '🔄', `Reabrir la orden para hacer las ${n0(res.falta)} que faltan`, 'Vuelve a En Proceso y la Carga rápida y el Gantt la toman como abierta.', enMaq)}
+            ${puedeCrear() ? op('nueva', '➕', `Crear una orden nueva por ${n0(res.falta)} piezas`, 'Esta queda completa y se abre otra OP de la misma pieza y máquina para reponer.', false) : ''}
+          </div>
+          <p class="text-[11px] text-slate-500">El rechazo ya quedó cargado. La orden no cambia de estado hasta que elijas.</p>`;
+        caja.querySelectorAll('[data-rc-dec]').forEach(b => b.addEventListener('click', () => {
+          const n = decidir(o.id, b.dataset.rcDec);
+          showToast(b.dataset.rcDec === 'reabrir' ? `✓ OP ${o.ordNumber} reabierta: faltan ${n0(res.falta)}` : (n ? `✓ Nueva OP ${n.ordNumber} por ${n0(n.qtyTarget)} piezas` : `✓ OP ${o.ordNumber} sigue completa`));
+          pintar();
+        }));
+      }
+      document.addEventListener('click', e => {
+        const m = $('rcModal'); if (!m || !m.contains(e.target)) return;
+        const b = e.target.closest('[data-rc],[data-rc-ord],[data-rc-causa],[data-rc-borrar]'); if (!b) return;
+        if (b.dataset.rc === 'cerrar') return cerrar();
+        if (b.dataset.rc === 'otra') { st.ordId = null; return pintar(); }
+        const conservar = () => { const v = { c: $('rcCant') && $('rcCant').value, t: $('rcTurno') && $('rcTurno').value, f: $('rcFecha') && $('rcFecha').value, n: $('rcNota') && $('rcNota').value }; pintar(); if ($('rcCant')) { $('rcCant').value = v.c || ''; $('rcTurno').value = v.t || ''; $('rcFecha').value = v.f || hoy(); $('rcNota').value = v.n || ''; } };
+        if (b.dataset.rc === 'otraCausa') { st.otra = true; st.causa = ''; conservar(); const i = $('rcCausaNueva'); if (i) i.focus(); return; }
+        if (b.dataset.rcOrd) { st.ordId = b.dataset.rcOrd; return pintar(); }
+        if (b.dataset.rcCausa) { st.causa = b.dataset.rcCausa; st.otra = false; return conservar(); }
+        if (b.dataset.rcBorrar) { if (!confirm('¿Borrar este rechazo? Las piezas vuelven a contar como buenas.')) return; borrarRechazo(st.ordId, b.dataset.rcBorrar); return pintar(); }
+      });
+
+      window.inoferRechazo = opc => { abrir(opc); if (opc && opc.ordId) st.fijo = false; };
+      window.inoferRechazosApi = { cargarRechazo, borrarRechazo, decidir, causas, agregarCausa, puede };
+    })();
+  </script>

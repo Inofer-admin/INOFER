@@ -440,6 +440,47 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const d = await nube(A);
       ok(d.modules.rebabadoOp && JSON.stringify(d.modules.rebabadoOp).includes('PEREZ') && d.modules.kpisPrecio && d.modules.kpisPrecio.rendKilo, 'el usuario sin permiso borró datos de la nube');
     });
+    await prueba('Rechazo en control: descuenta buenas, pasa a scrap del turno y la orden no se reabre sola', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const nom = (GANTT_MACHINES_CONFIG.find(x => x.id === '200N') || {}).name || '200N';
+        productionOrders.push({ id: 'ord-rc', ordNumber: '8001', part: 'RC-PIEZA', machine: nom, qtyTarget: 800, unitsPerHour: 100, status: 'Completada', autoCompletada: true, weightWithSprueKg: 0.5, material: 'ZAMAC',
+          logs: [{ id: 'lg-rc1', date: '2026-02-02', turno: 'Mañana', startTime: '06:00', endTime: '14:00', okPcs: 500, scrapPcs: 10, operator: 'Juan' }, { id: 'lg-rc2', date: '2026-02-02', turno: 'Tarde', startTime: '14:00', endTime: '22:00', okPcs: 300, scrapPcs: 0, operator: 'Pedro' }] });
+        saveProductionOrders(); await w(1500);
+        // por la ventana: 200 del turno de Juan, causa nueva
+        inoferRechazo({ ordId: 'ord-rc' }); await w(200);
+        document.getElementById('rcCant').value = '200'; document.getElementById('rcTurno').value = 'lg-rc1'; document.getElementById('rcFecha').value = '2026-02-04';
+        document.querySelector('[data-rc="otraCausa"]').click(); await w(100);
+        document.getElementById('rcCant').value = '200'; document.getElementById('rcTurno').value = 'lg-rc1'; document.getElementById('rcFecha').value = '2026-02-04';
+        document.getElementById('rcCausaNueva').value = 'poro en la cara A';
+        document.getElementById('rcForm').requestSubmit(); await w(300);
+        const decision = !!document.querySelector('[data-rc-dec="dejar"]') && !!document.querySelector('[data-rc-dec="nueva"]');
+        const o = productionOrders.find(x => x.id === 'ord-rc');
+        const estadoAntes = o.status;
+        const m = computeOrderMetrics(o);
+        const reg = inoferRegistrosDeOrdenes().find(x => x.logId === 'lg-rc1' || String(x.id).includes('lg-rc1'));
+        // demasiadas piezas: error
+        const err = inoferRechazosApi.cargarRechazo('ord-rc', { cant: 5000, causa: 'Golpes' });
+        document.querySelector('[data-rc-dec="nueva"]').click(); await w(300);
+        const nueva = productionOrders.find(x => x.reponeDe && x.reponeDe.ordId === 'ord-rc');
+        document.getElementById('rcModal') && document.getElementById('rcModal').remove();
+        // Mi máquina muestra FALTAN grande en la nueva orden
+        await w(1500);
+        return { decision, estadoAntes, estadoDespues: o.status, real: inoferOkReal(o), mOk: m.totalOk, mScrap: m.totalScrap, mCarg: m.totalOkCargadas, regOk: reg && reg.okPcs, regScrap: reg && reg.scrapPcs, err: err.error, nueva: nueva && { q: nueva.qtyTarget, st: nueva.status }, causas: inoferRechazosApi.causas() };
+      });
+      ok(r.decision && r.estadoAntes === 'Completada', 'no preguntó qué hacer o reabrió sola: ' + JSON.stringify(r));
+      ok(r.real === 600 && r.mOk === 600 && r.mScrap === 210 && r.mCarg === 800, 'mal la cuenta de buenas reales: ' + JSON.stringify(r));
+      ok(r.regOk === 300 && r.regScrap === 210, 'el turno de origen no pasó las piezas a scrap: ' + JSON.stringify([r.regOk, r.regScrap]));
+      ok(/no se pueden rechazar/.test(r.err || ''), 'dejó rechazar más de lo que hay');
+      ok(r.estadoDespues === 'Completada' && r.nueva && r.nueva.q === 200 && r.nueva.st === 'En Proceso', 'la orden nueva por lo que falta no quedó bien: ' + JSON.stringify(r));
+      ok(r.causas.includes('Poro en la cara A'), 'no guardó la causa nueva');
+      await A.waitForTimeout(2000);
+      const inf = await A.evaluate(async () => (await inoferCloudPost({ action: 'informeSemanal', token: inoferAuthToken(), semana: '2026-02-02' })));
+      ok(/Rechazos en control de calidad: 200/.test(inf.html || '') && /Poro en la cara A/.test(inf.html || ''), 'el informe no muestra el rechazo');
+      const d = await nube(A);
+      const on = d.modules.orders.find(o => o.id === 'ord-rc');
+      ok(on && (on.rechazos || []).length === 1 && d.modules.calidad && d.modules.calidad.causas.includes('Poro en la cara A'), 'el rechazo o la causa no llegaron a la nube');
+    });
     await prueba('Importar el Gantt de Excel y que el automático lo respete', async () => {
       const r = await A.evaluate(async () => {
         const H = ['Máquina', 'INYECCIÓN', 'Unid.\nTOTALES', 'Material', 'STD\n[Unid./h]', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.', 'Hs', 'Unid.'];

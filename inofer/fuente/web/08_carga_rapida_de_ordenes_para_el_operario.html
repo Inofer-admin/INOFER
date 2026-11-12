@@ -261,7 +261,7 @@
           const opers = operariosDe(st.maq);
           html = `<div class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
               <div><span class="text-base font-black text-amber-300">${esc(o.part)}</span> <span class="text-xs text-slate-400">· ${esc(st.maq)} · OP ${esc(o.ordNumber)}</span></div>
-              <div class="text-xs text-slate-300">Van <b>${a.ok.toLocaleString('es-AR')}</b> · faltan <b>${falta.toLocaleString('es-AR')}</b></div>
+              <div id="crFaltan" class="text-right"><div class="text-[10px] font-black uppercase tracking-wider text-amber-200">Faltan</div><div class="text-3xl font-black leading-none text-white">${falta.toLocaleString('es-AR')}</div><div class="text-[10px] text-slate-400">buenas · van ${a.ok.toLocaleString('es-AR')}${window.inoferRechazoTotal && inoferRechazoTotal(o) ? ` · ${inoferRechazoTotal(o).toLocaleString('es-AR')} rech. control` : ''}</div></div>
             </div>
             ${cont && Dc ? `<div class="mb-3 rounded-xl border border-emerald-700 bg-emerald-950/40 px-3 py-2.5"><div class="mb-1.5 text-xs font-black text-emerald-300">Otra pieza en el mismo turno · arranca ${esc(cont.ini)}</div>${barraTurno(Dc)}</div>` : ''}
             <form id="crTurnoForm" class="space-y-4">

@@ -16,7 +16,7 @@
       const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []);
       const cat = part => (typeof partsCatalog !== 'undefined' ? partsCatalog : []).find(c => norm(c.part) === norm(part));
       const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
-      const hechas = o => (o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0);
+      const hechas = o => inoferOkReal(o); // buenas reales (descuenta los rechazos de control)
       const IGN_KEY = 'tablero_inyectoras_gantt_ordenes_ign_v1';
       let ign = {}; try { ign = JSON.parse(localStorage.getItem(IGN_KEY) || '{}') || {}; } catch (e) { }
       const guardarIgn = () => { try { localStorage.setItem(IGN_KEY, JSON.stringify(ign)); } catch (e) { } };

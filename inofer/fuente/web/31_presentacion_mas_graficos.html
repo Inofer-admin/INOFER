@@ -61,7 +61,7 @@
             const abiertas = ordenes().filter(o => maqId(o) === m.id && window.inoferCargaRapida && inoferCargaRapida.abierta(o));
             const o = (window.inoferOpMontada && inoferOpMontada(m.id)) || abiertas[0];
             let pct = 0; try { const mm = o ? computeOrderMetrics(o) : null; pct = mm ? Math.min(100, Math.round(mm.progressPct || 0)) : 0; } catch (e) { }
-            const hecho = ordenes().filter(x => maqId(x) === m.id).reduce((a, x) => a + (x.logs || []).filter(l => l.date === f).reduce((b, l) => b + (Number(l.okPcs) || 0), 0), 0);
+            const hecho = ordenes().filter(x => maqId(x) === m.id).reduce((a, x) => a + (x.logs || []).filter(l => l.date === f).reduce((b, l) => b + inoferOkLog(x, l), 0), 0);
             const prog = programado(f, m.id);
             const est = !disp ? ['⛔ FUERA DE SERVICIO', 'border-rose-500 bg-rose-500/10', 'text-rose-300'] : (par ? ['⏸ PARADA · ' + corto(par.codigo), 'border-amber-500 bg-amber-500/10', 'text-amber-300'] : ['● EN SERVICIO', 'border-emerald-500/60 bg-emerald-500/5', 'text-emerald-300']);
             return `<div class="flex flex-col rounded-3xl border-2 ${est[1]} p-5"><div class="flex items-baseline justify-between"><span class="text-5xl font-black text-white">${esc(m.short || m.id)}</span><span class="text-xl font-black ${est[2]}">${esc(est[0])}</span></div>
@@ -74,7 +74,7 @@
           const o = d.opciones || {}, dias = diasDe(o.periodo);
           const filas = MAQS().map(m => {
             const prog = dias.reduce((a, f) => a + programado(f, m.id), 0);
-            const hecho = logs(o.periodo).filter(x => maqId(x.o) === m.id).reduce((a, x) => a + (Number(x.l.okPcs) || 0), 0);
+            const hecho = logs(o.periodo).filter(x => maqId(x.o) === m.id).reduce((a, x) => a + inoferOkLog(x.o, x.l), 0);
             return { m: m.short || m.id, prog, hecho };
           });
           if (!filas.some(f => f.prog || f.hecho)) { cont.innerHTML = vacio(h, 'Programado vs. producido', PER(o.periodo), 'No hay programa ni producción en este período.'); return; }
@@ -84,7 +84,7 @@
         piezasDia(d, cont, h) {
           const o = d.opciones || {}, dias = diasDe(o.periodo === 'hoy' ? '7d' : o.periodo);
           const L = logs(o.periodo === 'hoy' ? '7d' : o.periodo, o.maquina);
-          const ok = dias.map(f => L.filter(x => x.l.date === f).reduce((a, x) => a + (Number(x.l.okPcs) || 0), 0));
+          const ok = dias.map(f => L.filter(x => x.l.date === f).reduce((a, x) => a + inoferOkLog(x.o, x.l), 0));
           const sc = dias.map(f => L.filter(x => x.l.date === f).reduce((a, x) => a + (Number(x.l.scrapPcs) || 0), 0));
           const sub = PER(o.periodo === 'hoy' ? '7d' : o.periodo) + (o.maquina && o.maquina !== 'ALL' ? ' · ' + o.maquina : ' · todas las máquinas');
           if (!ok.some(Boolean)) { cont.innerHTML = vacio(h, 'Piezas buenas por día', sub, 'Todavía no hay turnos cargados en este período.'); return; }
@@ -119,7 +119,7 @@
         },
         scrapMaq(d, cont, h) {
           const o = d.opciones || {}, L = logs(o.periodo);
-          const items = MAQS().map(m => { const x = L.filter(y => maqId(y.o) === m.id); const ok = x.reduce((a, y) => a + (Number(y.l.okPcs) || 0), 0), sc = x.reduce((a, y) => a + (Number(y.l.scrapPcs) || 0) + (Number(y.l.lowStartPcs) || 0), 0); const p = ok + sc ? sc / (ok + sc) * 100 : 0; return { n: m.short || m.id, v: p, c: p <= 2 ? '#34d399' : (p <= 5 ? '#fbbf24' : '#fb7185'), t: ok + sc ? n1(p) + '% · ' + n0(sc) + ' piezas' : 'sin datos' }; });
+          const items = MAQS().map(m => { const x = L.filter(y => maqId(y.o) === m.id); const ok = x.reduce((a, y) => a + inoferOkLog(y.o, y.l), 0), sc = x.reduce((a, y) => a + inoferScrapLog(y.o, y.l) + (Number(y.l.lowStartPcs) || 0), 0); const p = ok + sc ? sc / (ok + sc) * 100 : 0; return { n: m.short || m.id, v: p, c: p <= 2 ? '#34d399' : (p <= 5 ? '#fbbf24' : '#fb7185'), t: ok + sc ? n1(p) + '% · ' + n0(sc) + ' piezas' : 'sin datos' }; });
           if (!L.length) { cont.innerHTML = vacio(h, 'Scrap por máquina', PER(o.periodo), 'Todavía no hay turnos cargados en este período.'); return; }
           cont.innerHTML = h.tit('Scrap por máquina', PER(o.periodo) + ' · scrap + arranque en baja sobre lo inyectado') + `<div class="space-y-5">${h.barras(items)}</div>`;
         },

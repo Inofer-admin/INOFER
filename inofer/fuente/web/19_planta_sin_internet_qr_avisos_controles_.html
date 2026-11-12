@@ -346,7 +346,7 @@
             if (!enRango(String(l.date || ''))) return;
             const ps = (Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : [])).map(p => ({ codigo: p.codigo, min: Number(p.min) || 0, cat: catDeCodigo(p.codigo), mant: p.mant === true }));
             const cat = {}; ps.forEach(p => { cat[p.cat] = (cat[p.cat] || 0) + p.min / 60; });
-            out.push({ fuente: 'OP', maq: m, fecha: l.date, turno: l.turno, disp: horasEntre(l.startTime, l.endTime), cat, paradas: ps, ok: Number(l.okPcs) || 0, scrap: Number(l.scrapPcs) || 0, baja: Number(l.lowStartPcs) || 0, part: o.part, op: o.ordNumber, ordId: o.id, logId: l.id, material: o.material, kgP: Number(o.weightWithSprueKg) || 0 });
+            out.push({ fuente: 'OP', maq: m, fecha: l.date, turno: l.turno, disp: horasEntre(l.startTime, l.endTime), cat, paradas: ps, ok: inoferOkLog(o, l), scrap: inoferScrapLog(o, l), baja: Number(l.lowStartPcs) || 0, part: o.part, op: o.ordNumber, ordId: o.id, logId: l.id, material: o.material, kgP: Number(o.weightWithSprueKg) || 0 });
           });
         });
         partes().forEach(r => {
@@ -650,7 +650,7 @@
       }
       function producidoPieza(part, desde, estricto) {
         let u = 0;
-        ordenes().forEach(o => { if (esDemoOrden(o) || norm(o.part) !== norm(part)) return; (o.logs || []).forEach(l => { if (estricto ? l.date > desde : l.date >= desde) u += Number(l.okPcs) || 0; }); });
+        ordenes().forEach(o => { if (esDemoOrden(o) || norm(o.part) !== norm(part)) return; (o.logs || []).forEach(l => { if (estricto ? l.date > desde : l.date >= desde) u += inoferOkLog(o, l); }); });
         return u;
       }
       function programadoPorDia(dias) {

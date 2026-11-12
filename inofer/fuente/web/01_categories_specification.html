@@ -2342,6 +2342,18 @@ ${lines}${trendNote}`;
       return Math.max(0, diff);
     }
 
+    // ===== Rechazos en control de calidad (12/11/2026) =====
+    // o.rechazos = [{id, fecha, cant, causa, logId|null, nota, por, at, borrado?}]. Se borran marcando borrado:true (así la
+    // fusión entre equipos no los revive). Buenas reales = buenas cargadas − rechazadas. Si se sabe de qué turno salieron
+    // (logId), cuentan como scrap de ese turno (baja el OEE de ese turno/operario/máquina); si no, solo bajan las buenas de la orden.
+    function inoferRechazos(o) { return ((o && o.rechazos) || []).filter(r => r && !r.borrado && Number(r.cant) > 0); }
+    function inoferRechazoTotal(o) { return inoferRechazos(o).reduce((a, r) => a + (Number(r.cant) || 0), 0); }
+    function inoferRechLog(o, l) { if (!o || !l || !o.rechazos) return 0; const id = String(l.id); return inoferRechazos(o).reduce((a, r) => a + (r.logId != null && String(r.logId) === id ? Number(r.cant) || 0 : 0), 0); }
+    function inoferOkLog(o, l) { return Math.max(0, (Number(l && l.okPcs) || 0) - inoferRechLog(o, l)); }
+    function inoferScrapLog(o, l) { return (Number(l && l.scrapPcs) || 0) + Math.min(Number(l && l.okPcs) || 0, inoferRechLog(o, l)); }
+    function inoferOkReal(o) { return Math.max(0, ((o && o.logs) || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0) - inoferRechazoTotal(o)); }
+    Object.assign(window, { inoferRechazos, inoferRechazoTotal, inoferRechLog, inoferOkLog, inoferScrapLog, inoferOkReal });
+
     function computeOrderMetrics(ord) {
       if (!ord) return null;
       let totalOk = 0;
@@ -2360,6 +2372,10 @@ ${lines}${trendNote}`;
         totalStopHours += Math.min(h, pm / 60);
       });
 
+      // rechazos en control: salen de las buenas y pasan a scrap (lo inyectado no cambia)
+      const totalOkCargadas = totalOk;
+      const totalRechazo = Math.min(totalOk, inoferRechazoTotal(ord));
+      totalOk -= totalRechazo; totalScrap += totalRechazo;
       const totalInjected = totalOk + totalLowStart + totalScrap;
       const stdRate = Number(ord.unitsPerHour) || 180;
       // Cadencia (04/11/2026): horas estándar de LO PRODUCIDO (buenas + scrap) ÷ horas con la máquina andando (turno − paradas).
@@ -2374,6 +2390,8 @@ ${lines}${trendNote}`;
 
       return {
         totalOk,
+        totalOkCargadas,
+        totalRechazo,
         totalLowStart,
         totalScrap,
         totalInjected,

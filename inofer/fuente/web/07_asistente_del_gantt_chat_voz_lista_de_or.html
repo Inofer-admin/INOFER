@@ -956,9 +956,11 @@ Si falta un dato imprescindible (ej. cuántas piezas), preguntalo en "respuesta"
             <div>
               <div class="flex justify-between text-[10px] text-slate-400"><span>Avance</span><span class="font-bold text-slate-200">${e.pct}%</span></div>
               <div class="mt-0.5 h-1.5 overflow-hidden rounded-full bg-slate-800"><div class="h-full ${barra}" style="width:${e.pct}%"></div></div>
+              ${window.inoferRechazoTotal && inoferRechazoTotal(o) ? `<div class="mt-1 text-[10px] font-bold text-rose-300">🔍 ${inoferRechazoTotal(o).toLocaleString('es-AR')} rechazadas en control · buenas reales ${inoferOkReal(o).toLocaleString('es-AR')}</div>` : ''}
             </div>
             <div class="flex gap-1.5 pt-0.5">
               <button type="button" class="inofer-ord-abrir flex-1 rounded-lg bg-amber-500 px-2 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400" data-id="${esc(o.id)}">📂 Abrir</button>
+              ${(o.logs || []).length && window.inoferRechazosApi && inoferRechazosApi.puede() ? `<button type="button" class="rounded-lg border border-rose-500/40 px-2 py-1.5 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/10" onclick="inoferRechazo({ordId: '${esc(o.id)}'})" title="Rechazo en control de calidad">🔍 Rechazo</button>` : ''}
               ${puede ? `<button type="button" class="inofer-ord-editar flex-1 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-semibold text-slate-200 hover:text-white" data-id="${esc(o.id)}">✏️ Editar</button>
               <button type="button" class="inofer-ord-borrar rounded-lg border border-red-500/40 px-2 py-1.5 text-[11px] font-semibold text-red-300 hover:bg-red-500/10" data-id="${esc(o.id)}">🗑️</button>` : ''}
             </div>

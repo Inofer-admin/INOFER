@@ -20,6 +20,7 @@
           { k: 'ord_crear', t: 'Crear órdenes nuevas' },
           { k: 'ord_editar', t: 'Modificar los datos de la orden (frente y dorso)' },
           { k: 'ord_borrar', t: 'Borrar órdenes' },
+          { k: 'ord_rechazos', t: 'Cargar rechazos de control de calidad (descuentan piezas buenas)' },
           { k: 'ord_imprimir', t: 'Imprimir y exportar órdenes', nivel: 'view' },
           { k: 'ord_informe', t: 'Ver el informe general de órdenes', nivel: 'view' }
         ],
@@ -261,7 +262,7 @@
         (typeof productionOrders !== 'undefined' ? productionOrders : []).forEach(o => {
           (o.logs || []).forEach(l => {
             const r = { id: 'op-' + o.id + '-' + l.id, fromOrder: true, ordId: o.id, logId: l.id, date: l.date, machine: o.machine, shift: l.turno || 'Turno', available: Math.round(horas(l.startTime, l.endTime) * 100) / 100,
-              part: o.part, ordNumber: o.ordNumber, okPcs: Number(l.okPcs) || 0, scrapPcs: Number(l.scrapPcs) || 0, operator: l.operator, cargadoPor: l.cargadoPor || '', modificadoPor: l.modificadoPor || '' };
+              part: o.part, ordNumber: o.ordNumber, okPcs: inoferOkLog(o, l), scrapPcs: inoferScrapLog(o, l), operator: l.operator, cargadoPor: l.cargadoPor || '', modificadoPor: l.modificadoPor || '' };
             (typeof CATEGORIES !== 'undefined' ? CATEGORIES : []).forEach(c => { r[c.key] = 0; });
             const ps = Array.isArray(l.paradas) && l.paradas.length ? l.paradas : (l.stopCode ? [{ codigo: l.stopCode, min: Number(l.stopMinutes) || 0 }] : []);
             ps.forEach(p => {
