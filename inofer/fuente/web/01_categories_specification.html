@@ -3116,6 +3116,9 @@ ${lines}${trendNote}`;
 
       document.getElementById('orderKpiScrapPcs').textContent = `${m.totalScrap + m.totalLowStart} u.`;
       document.getElementById('orderKpiQualityPct').textContent = `Calidad: ${m.qualityPct.toFixed(1)}% OK`;
+      // desglose del scrap (12/11/2026): de dónde sale cada pieza mala, para detectar cargas repetidas
+      { const det = document.getElementById('orderKpiScrapDet'); if (det) { const f = n => Number(n || 0).toLocaleString('es-AR'); const turnos = m.totalScrap - (m.totalRechazo || 0);
+        det.innerHTML = `Scrap de los turnos <b class="text-slate-200">${f(turnos)}</b> · arranque en baja <b class="text-slate-200">${f(m.totalLowStart)}</b> · rechazos en control <b class="text-slate-200">${f(m.totalRechazo)}</b>`; } }
 
       document.getElementById('orderKpiHoursComp').textContent = `${m.totalWorkedHours.toFixed(2)} / ${Number(ord.hoursToUse).toFixed(2)} h`;
       const diffHrs = m.totalWorkedHours - Number(ord.hoursToUse);

@@ -1352,6 +1352,9 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const tx = document.getElementById('viewCalidad').textContent;
         out.tablero = /BIEN A LA PRIMERA/.test(tx) && /NC-001/.test(tx) && /Acción vencida/.test(tx) && /CAL-PZA/.test(tx);
         out.fpy = (document.getElementById('calTiles').textContent.match(/BIEN A LA PRIMERA([\d,]+)%/) || [])[1];
+        // detalle de la OP: desglose del scrap (turnos · arranque · control)
+        selectedOrderId = 'ord-cal'; try { renderProductionOrdersView(); } catch (er) { }
+        out.desglose = (document.getElementById('orderKpiScrapDet') || {}).textContent || '';
         await w(2500);
         return out;
       });
@@ -1362,6 +1365,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.atrasado === 'atrasado' && r.periodico && r.nPeriodico >= 1, 'el control en proceso no se pidió: ' + JSON.stringify(r));
       ok(r.mimaq, 'Mi máquina no muestra el botón de calidad');
       ok(r.lote && r.nc && r.nc.num === 'NC-001' && r.nc.etapa === 4 && r.nc.ord === 'ord-cal' && r.nc.tipo === 'cliente' && r.html8d, 'la no conformidad no quedó bien: ' + JSON.stringify(r));
+      ok(/turnos 20 · arranque en baja 0 · rechazos en control 40/.test(r.desglose), 'falta el desglose del scrap en la OP: ' + r.desglose);
       ok(r.prod.iny === 420 && r.prod.malas === 60 && r.prod.rech >= 40 && r.prod.causa >= 40 && r.prod.real === r.prod.totIny - (r.prod.totIny - r.prod.real) && r.tablero && !!r.fpy, 'el tablero no cuenta bien: ' + JSON.stringify(r));
       const d = await nube(A);
       const q = d.modules.calidadDatos;
