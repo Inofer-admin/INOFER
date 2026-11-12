@@ -67,6 +67,7 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Claves de localStorage `tablero_inyectoras_*` y carpeta de datos `%APPDATA%\INOFER_MES` (datos de la planta).
 - Puerto 47821 y la firma `INOFER_MES_JAVA` (/api/ping) — los usa la detección de instancia abierta.
 - El usuario escribe en español rioplatense y no es programador: explicar en pasos simples.
+- Memoria del chat: el usuario pidió (12/11/2026) que le AVISE cuando el chat esté muy cargado (largo, muchas planillas/fotos, o ya se resumió solo) y le diga cómo liberar: antes, dejar CLAUDE.md al día (pendientes incluidos) y hacer push; después, que abra un chat nuevo y escriba "seguimos con INOFER". /compact es la alternativa en el mismo chat (pierde detalle).
 
 ## Asistente del Gantt y Lista de órdenes (bloque "Asistente del Gantt (chat / voz) + Lista de órdenes")
 - Panel `#inoferGanttChat` en viewGantt: `inoferGanttChat(texto)` interpreta frases en español (parser local; si no entiende y hay `geminiApiKey`, pide ops JSON a Gemini) y aplica ops: set, add, move_day, move_mach, swap, remove, aux, week, undo, show. Índices de día = columnas del Gantt (0=Dom,1=Lun…6=Sáb).
