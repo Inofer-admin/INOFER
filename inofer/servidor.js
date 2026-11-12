@@ -451,7 +451,21 @@ function puede(u, area, nivel) {
 }
 
 const MODULO_AREA = { orders: 'ordenes', gantt: 'gantt', catalog: 'catalogo', weekly: 'partes', memory: 'ia', config: 'admin', pistones: 'gantt', kpis: 'indicadores', turnos: 'admin', setup: 'gantt', presentacion: 'admin',
-  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt' };
+  mantenimiento: 'gantt|ordenes', stock: 'ordenes|catalogo', avisos: 'ordenes', informes: 'admin', operarios: 'admin', avisosPush: 'admin', lotes: 'admin', stockPiezas: 'admin', analisis: 'gantt',
+  kpisPrecio: 'indicadores', scrapDet: 'indicadores', scrapCosto: 'indicadores', rebabadoOp: 'indicadores' };
+// (12/11/2026) módulos de indicadores con plata: solo a quien ve precios. Rebabado por operario: los nombres solo a quien
+// el admin habilitó (permiso detallado kpi_operarios); al resto le llegan como "Operario 1, 2…" y no puede guardar ese módulo.
+const MODULOS_PRECIO = { kpisPrecio: true, scrapCosto: true };
+function puedeVerOperariosSrv_(u) { return !!u && (u.rol === 'admin' || (puede(u, 'indicadores', 'view') && !!(u.permisos && u.permisos.detalle && u.permisos.detalle.kpi_operarios === true))); }
+function anonimizarRebabado_(m) {
+  const out = JSON.parse(JSON.stringify(m || {})); const nombres = {}; let n = 0;
+  const meses = (out.meses && typeof out.meses === 'object') ? out.meses : {};
+  Object.keys(meses).sort().forEach(function (k) {
+    (meses[k].f || []).forEach(function (f) { const nom = String(f[4] || ''); if (!nombres[nom]) nombres[nom] = 'Operario ' + (++n); f[4] = nombres[nom]; });
+  });
+  out.anonimo = true;
+  return out;
+}
 // área 'a|b' = alcanza con tener permiso en cualquiera de las dos
 function puedeArea_(u, area, nivel) { return String(area).split('|').some(function (a) { return puede(u, a, nivel); }); }
 
@@ -462,7 +476,8 @@ function modulosVisibles(u) {
     if (k === 'users') return; // nunca se envía la lista de usuarios por acá
     const area = MODULO_AREA[k];
     if (!area) return;
-    if (k === 'turnos' || k === 'presentacion' || k === 'operarios' || k === 'lotes' || (area === 'admin' ? ((k === 'config' && puede(u, 'ia', 'view')) || u.rol === 'admin') : puedeArea_(u, area, 'view'))) out[k] = all[k];
+    if (MODULOS_PRECIO[k] && !puedeVerPreciosSrv_(u)) return;
+    if (k === 'turnos' || k === 'presentacion' || k === 'operarios' || k === 'lotes' || (area === 'admin' ? ((k === 'config' && puede(u, 'ia', 'view')) || u.rol === 'admin') : puedeArea_(u, area, 'view'))) out[k] = (k === 'rebabadoOp' && !puedeVerOperariosSrv_(u)) ? anonimizarRebabado_(all[k]) : all[k];
   });
   return out;
 }
@@ -2658,6 +2673,8 @@ function doPost(e) {
     if (!area || body.moduleKey === 'users') return sinPermiso('desconocida');
     const ok = area === 'admin' ? u.rol === 'admin' : puedeArea_(u, area, 'edit');
     if (!ok) return sinPermiso(area);
+    if (MODULOS_PRECIO[body.moduleKey] && !puedeVerPreciosSrv_(u)) return sinPermiso('precios');
+    if (body.moduleKey === 'rebabadoOp' && !puedeVerOperariosSrv_(u)) return sinPermiso('operarios');
     // las órdenes archivadas no vuelven aunque un equipo tenga una copia vieja
     if (body.moduleKey === 'orders' && Array.isArray(body.moduleData)) { try { const arch = idsArchivadas_(); body.moduleData = body.moduleData.filter(function (o) { return !(o && arch[String(o.id)]); }); } catch (e) {} }
     const lockM = LockService.getScriptLock();
