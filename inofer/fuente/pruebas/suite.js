@@ -842,6 +842,22 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.rec.anOpc && r.rec.f4 && r.rec.f4.origen === 'recuperado' && r.rec.f4.grado === 2 && r.rec.nuevo === 'nuevo' && /recup\. · 500 kg/.test(r.rec.celda) && r.rec.html, 'material recuperado: ' + JSON.stringify(r.rec));
       ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
+    await prueba('Gantt: desgasificado de 30 min y lo programado con 2 h pasa a 0,5 h por unidad', async () => {
+      const r = await A.evaluate(async () => {
+        const std = inoferStdAux('200V', 'DESG');
+        const aux = v => ({ CMA: [0, 0, 0, 0, 0, 0, 0], CMO: [0, 0, 0, 0, 0, 0, 0], ALIS: [0, 0, 0, 0, 0, 0, 0], DESG: v, LING: [0, 0, 0, 0, 0, 0, 0], LIMP: [0, 0, 0, 0, 0, 0, 0], CPIS: [0, 0, 0, 0, 0, 0, 0] });
+        ganttWeeksData['ZZ-DESG-1'] = { code: 'ZZ-DESG-1', name: 'prueba', startDate: '2020-01-05', machines: { '200V': { aux: aux([0, 2, 4, 0, 0, 0, 0]), items: [] } } };
+        ganttWeeksData['ZZ-DESG-2'] = { code: 'ZZ-DESG-2', name: 'prueba', startDate: '2020-01-12', machines: { '200V': { aux: aux([0, 1.5, 0, 0, 0, 0, 0]), items: [] } } };
+        const n = inoferMigrarDesg();
+        const a1 = ganttWeeksData['ZZ-DESG-1'].machines['200V'].aux.DESG.slice(), a2 = ganttWeeksData['ZZ-DESG-2'].machines['200V'].aux.DESG.slice();
+        const n2 = inoferMigrarDesg(); // segunda vez no cambia nada
+        const a1b = ganttWeeksData['ZZ-DESG-1'].machines['200V'].aux.DESG.slice();
+        delete ganttWeeksData['ZZ-DESG-1']; delete ganttWeeksData['ZZ-DESG-2']; try { saveGanttWeeks(); } catch (e) { }
+        return { std, n: n >= 2, a1: a1.join(','), a2: a2.join(','), n2, a1b: a1b.join(',') };
+      });
+      ok(r.std === 0.5, 'estándar del desgasificado: ' + r.std);
+      ok(r.a1 === '0,0.5,1,0,0,0,0' && r.a2 === '0,1.5,0,0,0,0,0' && r.n2 === 0 && r.a1b === r.a1 && r.n, 'migración: ' + JSON.stringify(r));
+    });
     await prueba('Stock por fardos: corregir un fardo y retirar kilos sueltos (976 kg − 406 kg)', async () => {
       const r = await A.evaluate(async () => {
         const esperar = ms => new Promise(res => setTimeout(res, ms));

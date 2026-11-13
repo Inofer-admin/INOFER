@@ -100,6 +100,25 @@
         const t = (typeof GANTT_AUX_TASKS !== 'undefined' ? GANTT_AUX_TASKS : []).find(a => a.code === code);
         return t ? t.stdHours : 0;
       };
+      // (13/11/2026) El desgasificado pasó de 2 h a 30 min. El Gantt guarda HORAS en aux.DESG: lo ya programado con el
+      // estándar viejo (múltiplos de 2 h) se pasa a 0,5 h por unidad (÷4) para que siga siendo la misma cantidad.
+      // Una sola vez por semana (marca week.desg05, viaja con el Gantt); semanas con horas que no son múltiplos de 2
+      // (cargadas a mano en horas o del Excel) no se tocan.
+      window.inoferMigrarDesg = () => {
+        if (typeof ganttWeeksData === 'undefined' || !ganttWeeksData) return 0;
+        const a = document.activeElement; if (a && a.classList && a.classList.contains('gantt-item-qty-input')) return 0;
+        let n = 0;
+        Object.values(ganttWeeksData).forEach(w => {
+          if (!w || typeof w !== 'object' || w.desg05) return;
+          const arrs = Object.values(w.machines || {}).map(md => md && md.aux && md.aux.DESG).filter(Array.isArray);
+          const vals = []; arrs.forEach(x => x.forEach(v => { if (Number(v)) vals.push(Number(v)); }));
+          if (vals.length && vals.every(v => Math.abs(v / 2 - Math.round(v / 2)) < 1e-6)) Object.values(w.machines || {}).forEach(md => { if (md && md.aux && Array.isArray(md.aux.DESG)) md.aux.DESG = md.aux.DESG.map(v => Math.round((Number(v) || 0) / 4 * 100) / 100); });
+          w.desg05 = true; n++;
+        });
+        if (n) { try { saveGanttWeeks(); } catch (e) { } try { renderGanttView(); } catch (e) { } }
+        return n;
+      };
+      setInterval(() => { try { if (typeof inoferSession !== 'undefined' && inoferSession && !document.hidden) inoferMigrarDesg(); } catch (e) { } }, 10000);
       // Agrega el set-up (cambio de molde + puesta a punto) de una pieza nueva en una máquina/día
       window.inoferAgregarSetup = (week, m, d) => {
         const s = setupDe(m);
