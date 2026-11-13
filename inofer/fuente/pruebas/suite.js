@@ -926,6 +926,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const ordenada = ganttWeeksData['SEM-20'].startDate === lunesN(20) && inoferSemanaInfo('SEM-20').num === 20;
         // mover todo de la 20 a la 22 (se crea por fecha)
         const mv = inoferMoverSemana('20', '22', { modo: 'mover' });
+        // que llegue a la nube antes de seguir (si no, una sincronización en el medio puede traer el Gantt de antes)
+        saveGanttWeeks(); await esperar(3000);
         const c22 = inoferResolverSemana('22', false);
         const movio = mv.ok && !!c22 && (ganttWeeksData[c22].machines['200V'].items || []).some(x => x.part === cat.part) && !(ganttWeeksData['SEM-20'].machines['200V'].items || []).length;
         // el asistente entiende la semana en la frase (sin elegirla)
