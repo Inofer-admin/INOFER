@@ -355,7 +355,7 @@
       if (!usuario || !clave) { inoferLoginError('Completá usuario y clave.'); return; }
       if (inoferSetupMode) {
         if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) { inoferLoginError('El usuario debe tener entre 3 y 30 letras o números, sin espacios.'); return; }
-        if (clave.length < 4) { inoferLoginError('La clave debe tener al menos 4 caracteres.'); return; }
+        if (clave.length < 6) { inoferLoginError('La clave debe tener al menos 6 caracteres.'); return; }
         if (clave !== document.getElementById('inoferSetupPass2').value) { inoferLoginError('Las dos claves no coinciden.'); return; }
       }
       btn.disabled = true; const txt = btn.textContent; btn.textContent = 'Verificando…';
@@ -453,9 +453,9 @@
     async function inoferChangeMyPassword() {
       const actual = prompt('Clave actual:');
       if (actual == null) return;
-      const nueva = prompt('Clave nueva (mínimo 4 caracteres):');
+      const nueva = prompt('Clave nueva (mínimo 6 caracteres):');
       if (nueva == null) return;
-      if (nueva.length < 4) { showToast('La clave nueva debe tener al menos 4 caracteres'); return; }
+      if (nueva.length < 6) { showToast('La clave nueva debe tener al menos 6 caracteres'); return; }
       if (nueva !== prompt('Repetí la clave nueva:')) { showToast('Las claves no coinciden'); return; }
       try {
         if (inoferAuthMode === 'nube') {
@@ -507,7 +507,7 @@
                 <label class="text-[11px] font-semibold text-slate-400">Usuario (para ingresar)
                   <input id="inoferUfUsuario" type="text" autocapitalize="none" spellcheck="false" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
                 <label class="text-[11px] font-semibold text-slate-400"><span id="inoferUfClaveLabel">Clave</span>
-                  <input id="inoferUfClave" type="text" autocomplete="new-password" placeholder="mínimo 4 caracteres" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
+                  <input id="inoferUfClave" type="text" autocomplete="new-password" placeholder="mínimo 6 caracteres" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none" /></label>
                 <label class="text-[11px] font-semibold text-slate-400">Tipo de usuario
                   <select id="inoferUfRol" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-cyan-400 focus:outline-none">
                     <option value="usuario">Usuario (permisos a elección)</option>
@@ -642,8 +642,8 @@
       };
       if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return inoferUfError('El usuario debe tener entre 3 y 30 letras o números, sin espacios (ej: jperez).');
       if (!inoferEditingUser && inoferUsersCache.some(u => u.usuario === usuario)) return inoferUfError('Ya existe un usuario con ese nombre.');
-      if (!inoferEditingUser && data.clave.length < 4) return inoferUfError('La clave debe tener al menos 4 caracteres.');
-      if (data.clave && data.clave.length < 4) return inoferUfError('La clave debe tener al menos 4 caracteres.');
+      if (!inoferEditingUser && data.clave.length < 6) return inoferUfError('La clave debe tener al menos 6 caracteres.');
+      if (data.clave && data.clave.length < 6) return inoferUfError('La clave debe tener al menos 6 caracteres.');
       const btn = document.getElementById('inoferUfSave'); btn.disabled = true;
       try {
         if (inoferAuthMode === 'nube') {

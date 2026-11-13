@@ -99,6 +99,17 @@ public final class ServidorLocal {
                 responder(ex, 403, "text/plain", "Prohibido".getBytes(StandardCharsets.UTF_8));
                 return;
             }
+            // (v2.8) Una página de otro sitio abierta en esta PC no puede mandarle nada al programa (ni pantallas
+            // ni datos): el navegador siempre dice de dónde viene el pedido (Origin / Sec-Fetch-Site) y solo
+            // se aceptan los que vienen de la propia ventana de INOFER.
+            String origen = ex.getRequestHeaders().getFirst("Origin");
+            String sitio = ex.getRequestHeaders().getFirst("Sec-Fetch-Site");
+            boolean origenOk = origen == null || origen.startsWith("http://127.0.0.1:") || origen.startsWith("http://localhost:");
+            boolean sitioOk = sitio == null || sitio.equals("same-origin") || sitio.equals("none");
+            if (!origenOk || (!"GET".equalsIgnoreCase(metodo) && !sitioOk)) {
+                responder(ex, 403, "text/plain", "Prohibido".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
 
             if (ruta.equals("/api/actualizar")) {
                 // la pantalla pide revisar GitHub ya mismo (descarga la versión nueva si la hay)

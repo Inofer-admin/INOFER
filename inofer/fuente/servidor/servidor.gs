@@ -370,6 +370,38 @@ function hashClave(sal, clave) {
   const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, sal + ':' + clave, Utilities.Charset.UTF_8);
   return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
 }
+// ===== Seguridad de claves (13/11/2026) =====
+// - Clave nueva: mínimo CLAVE_MIN caracteres (las viejas de 4 siguen entrando hasta que se cambien).
+// - Se guarda "v2$" + hash repetido HASH_VUELTAS veces (mucho más lento de adivinar si alguien copiara la hoja de usuarios).
+//   Las claves viejas (una sola vuelta) se pasan solas a v2 la próxima vez que el usuario entra bien.
+// - 5 intentos fallidos seguidos bloquean ese usuario 15 minutos (CacheService).
+const CLAVE_MIN = 6, HASH_VUELTAS = 1000, INTENTOS_MAX = 5, BLOQUEO_MIN = 15;
+function hashClaveV2_(sal, clave) {
+  let h = hashClave(sal, clave);
+  for (let i = 1; i < HASH_VUELTAS; i++) h = hashClave(sal, h);
+  return 'v2$' + h;
+}
+function claveCorrecta_(u, clave) {
+  if (!u || !u.hash) return false;
+  if (String(u.hash).indexOf('v2$') === 0) return hashClaveV2_(u.sal, clave) === u.hash;
+  if (hashClave(u.sal, clave) !== u.hash) return false;
+  try { u.sal = Utilities.getUuid(); u.hash = hashClaveV2_(u.sal, clave); escribirUsuario(u); } catch (e) { }
+  return true;
+}
+function claveNuevaMala_(clave) {
+  clave = String(clave || '');
+  if (clave.length < CLAVE_MIN) return 'La clave debe tener al menos ' + CLAVE_MIN + ' caracteres.';
+  if (/^(\d)\1+$/.test(clave) || /^(123456|1234567|12345678|654321|abcdef|qwerty|inofer|inofer1234|contraseña|password)$/i.test(clave)) return 'Esa clave es muy fácil de adivinar: elegí otra.';
+  return '';
+}
+function intentosClave_(usuario) { try { return Number(CacheService.getScriptCache().get('intentos_' + usuario) || 0); } catch (e) { return 0; } }
+function anotarIntento_(usuario, mal) {
+  try {
+    const c = CacheService.getScriptCache();
+    if (!mal) { c.remove('intentos_' + usuario); return; }
+    c.put('intentos_' + usuario, String(intentosClave_(usuario) + 1), BLOQUEO_MIN * 60);
+  } catch (e) { }
+}
 
 function normalizarPermisos(rol, permisos) {
   const out = {};
@@ -509,19 +541,27 @@ function accionCuenta(body) {
     if (body.action === 'setupAdmin') {
       if (usuarios.length > 0) return { status: 'error', error: 'Ya existe un administrador.' };
       const usuario = String(body.usuario || '').trim().toLowerCase();
-      if (!usuario || String(body.clave || '').length < 4) return { status: 'error', error: 'Usuario o clave inválidos.' };
+      if (!usuario) return { status: 'error', error: 'Usuario o clave inválidos.' };
+      const malaA = claveNuevaMala_(body.clave); if (malaA) return { status: 'error', error: malaA };
       const sal = Utilities.getUuid();
-      const u = { usuario: usuario, nombre: String(body.nombre || usuario), rol: 'admin', permisos: normalizarPermisos('admin', {}), activo: true, sal: sal, hash: hashClave(sal, String(body.clave)) };
+      const u = { usuario: usuario, nombre: String(body.nombre || usuario), rol: 'admin', permisos: normalizarPermisos('admin', {}), activo: true, sal: sal, hash: hashClaveV2_(sal, String(body.clave)) };
       escribirUsuario(u);
       return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
     }
     if (body.action === 'login') {
       const usuario = String(body.usuario || '').trim().toLowerCase();
       const u = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
-      if (!u || !u.activo || hashClave(u.sal, String(body.clave || '')) !== u.hash) {
+      if (intentosClave_(usuario) >= INTENTOS_MAX) {
+        Utilities.sleep(800);
+        return { status: 'error', error: 'Demasiados intentos con clave equivocada. Esperá ' + BLOQUEO_MIN + ' minutos o pedile al administrador que te cambie la clave.', bloqueado: true };
+      }
+      if (!u || !u.activo || !claveCorrecta_(u, String(body.clave || ''))) {
+        anotarIntento_(usuario, true);
+        if (u && intentosClave_(usuario) >= INTENTOS_MAX) try { auditar_(u, 'bloqueado', 'sesión', [INTENTOS_MAX + ' intentos con clave equivocada: bloqueado ' + BLOQUEO_MIN + ' min']); } catch (e) { }
         Utilities.sleep(800);
         return { status: 'error', error: 'Usuario o clave incorrectos.' };
       }
+      anotarIntento_(usuario, false);
       auditar_(u, 'ingresó', 'sesión', ['Inició sesión']);
       return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
     }
@@ -532,9 +572,9 @@ function accionCuenta(body) {
     const yo = usuarioDeToken(body.token);
     if (!yo) return { status: 'error', error: 'auth' };
     if (body.action === 'cambiarMiClave') {
-      if (hashClave(yo.sal, String(body.claveActual || '')) !== yo.hash) return { status: 'error', error: 'La clave actual no es correcta.' };
-      if (String(body.claveNueva || '').length < 4) return { status: 'error', error: 'La clave nueva debe tener al menos 4 caracteres.' };
-      yo.sal = Utilities.getUuid(); yo.hash = hashClave(yo.sal, String(body.claveNueva));
+      if (!claveCorrecta_(yo, String(body.claveActual || ''))) return { status: 'error', error: 'La clave actual no es correcta.' };
+      const malaN = claveNuevaMala_(body.claveNueva); if (malaN) return { status: 'error', error: malaN };
+      yo.sal = Utilities.getUuid(); yo.hash = hashClaveV2_(yo.sal, String(body.claveNueva));
       escribirUsuario(yo);
       return { status: 'ok' };
     }
@@ -553,12 +593,12 @@ function accionCuenta(body) {
         const otrosAdmins = usuarios.filter(function (x) { return x.rol === 'admin' && x.activo && x.usuario !== usuario; });
         if (!otrosAdmins.length) return { status: 'error', error: 'Tiene que quedar al menos un administrador activo.' };
       }
-      if (!ex && String(d.clave || '').length < 4) return { status: 'error', error: 'La clave debe tener al menos 4 caracteres.' };
+      if (!ex || d.clave) { const malaU = claveNuevaMala_(d.clave); if (malaU) return { status: 'error', error: malaU }; }
       const u = ex || { usuario: usuario, sal: '', hash: '' };
       u.nombre = String(d.nombre || usuario).slice(0, 60);
       u.rol = rol; u.activo = activo;
       u.permisos = normalizarPermisos(rol, d.permisos || {});
-      if (d.clave) { u.sal = Utilities.getUuid(); u.hash = hashClave(u.sal, String(d.clave)); }
+      if (d.clave) { u.sal = Utilities.getUuid(); u.hash = hashClaveV2_(u.sal, String(d.clave)); anotarIntento_(u.usuario, false); }
       const permAntes = ex ? JSON.stringify(ex.permisos) : '';
       escribirUsuario(u);
       auditar_(yo, ex ? 'modificó' : 'creó', 'usuarios', [(ex ? 'Usuario ' : 'Creó el usuario ') + usuario + ' (' + u.nombre + ', ' + (rol === 'admin' ? 'administrador' : 'usuario') + (activo ? '' : ', DESACTIVADO') + ')' + (ex && permAntes !== JSON.stringify(u.permisos) ? ' · cambió permisos' : '') + (ex && d.clave ? ' · cambió la clave' : '')]);
@@ -580,14 +620,16 @@ function accionCuenta(body) {
 /**
  * EMERGENCIA: si te olvidás la clave del administrador, en el editor de Apps Script
  * elegí esta función arriba (menú desplegable) y tocá "Ejecutar".
- * La clave del primer administrador pasa a ser: inofer1234  (cambiala después de entrar).
+ * Genera una clave TEMPORAL al azar y la muestra en el registro de ejecución (cambiala después de entrar).
  */
 function restablecerClaveAdmin() {
   const admin = leerUsuarios().filter(function (x) { return x.rol === 'admin'; })[0];
   if (!admin) { Logger.log('No hay administradores: al abrir INOFER se te va a pedir crear uno.'); return; }
-  admin.sal = Utilities.getUuid(); admin.hash = hashClave(admin.sal, 'inofer1234'); admin.activo = true;
-  escribirUsuario(admin);
-  Logger.log('Listo. Usuario: ' + admin.usuario + '  Clave: inofer1234');
+  // (13/11/2026) ya no vuelve a una clave fija conocida: genera una al azar que solo ve quien corre esto en el editor
+  const temporal = 'inofer-' + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
+  admin.sal = Utilities.getUuid(); admin.hash = hashClaveV2_(admin.sal, temporal); admin.activo = true;
+  escribirUsuario(admin); anotarIntento_(admin.usuario, false);
+  Logger.log('Listo. Usuario: ' + admin.usuario + '  Clave temporal: ' + temporal + '  (cambiala al entrar: menú del usuario → Cambiar mi clave)');
 }
 
 function doGet(e) {

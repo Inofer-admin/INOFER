@@ -56,7 +56,25 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
   let A, B;
   try {
     console.log('Pruebas de INOFER');
-    await prueba('Abre la app y crea el administrador', async () => { A = await equipo(b); await ingresar(A, 'admin', 'abcd'); });
+    await prueba('Abre la app y crea el administrador', async () => { A = await equipo(b); await ingresar(A, 'admin', 'abcd12'); });
+    // (13/11/2026) la app ya no trae la base de piezas adentro (repositorio público): se carga una base INVENTADA para las pruebas
+    await prueba('Carga una base de piezas de prueba en la nube', async () => {
+      const n = await A.evaluate(async () => {
+        const combos = [['200N', '200V'], ['200V', '200N'], ['180', 'Z30'], ['Z30', 'H50'], ['H50', 'Z30'], ['180']];
+        const mats = ['ALSI', 'ALSI', 'ZAMAC', 'ZAMAC', 'ZAMAC', 'ALSI'];
+        const lista = [];
+        for (let i = 0; i < 60; i++) {
+          const ms = combos[i % combos.length], num = String(90100 + i * 7);
+          lista.push({ id: 'cat-t' + i, part: num + (i % 4 === 0 ? '-PB' : ''), desc: 'PIEZA DE PRUEBA ' + i, mold: num, cavities: 1 + (i % 2), unitsPerHour: 60 + (i * 13) % 140,
+            machines: ms.slice(), machine: (SHORT_TO_FULL_MACHINE[ms[0]] || ms[0]), material: mats[i % mats.length], weightWithSprueKg: Number((0.08 + (i % 9) * 0.05).toFixed(3)), weightOkGrs: 40 + (i % 9) * 30, recuperoKg: 0.02 });
+        }
+        lista.push({ id: 'cat-tr1', part: '90999-R', desc: 'PIEZA R DE PRUEBA', mold: '90999', cavities: 1, unitsPerHour: 80, machines: ['200N', '200V'], machine: SHORT_TO_FULL_MACHINE['200N'], material: 'ALSI', weightWithSprueKg: 0.25, weightOkGrs: 150 });
+        partsCatalog = lista; savePartsCatalog(); try { renderPartsCatalogView(); } catch (e) { }
+        await new Promise(r => setTimeout(r, 2500));
+        return partsCatalog.length;
+      });
+      ok(n === 61, 'no quedó la base de prueba: ' + n);
+    });
     await prueba('Estilos y gráficos incluidos (sin internet)', async () => {
       const r = await A.evaluate(() => ({ css: !!document.getElementById('inoferEstilos'), chart: typeof window.Chart === 'function', bg: getComputedStyle(document.body).backgroundColor }));
       ok(r.css && r.chart, 'faltan estilos o Chart.js dentro de la página'); ok(r.bg !== 'rgba(0, 0, 0, 0)', 'la página no tiene estilos aplicados');
@@ -85,7 +103,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
     });
     await prueba('Dos equipos cargan a la vez y no se pisan', async () => {
       await A.waitForTimeout(8500);
-      B = await equipo(b); await ingresar(B, 'admin', 'abcd'); await B.waitForTimeout(2500);
+      B = await equipo(b); await ingresar(B, 'admin', 'abcd12'); await B.waitForTimeout(2500);
       await Promise.all([
         A.evaluate(() => { const o = productionOrders.find(x => x.part === 'PRUEBA-1'); o.logs.push({ id: 'lg-sA', date: '2026-01-05', turno: 'Tarde', startTime: '14:00', endTime: '22:00', okPcs: 10, operator: 'A' }); saveProductionOrders(); }),
         B.evaluate(() => { const o = productionOrders.find(x => x.part === 'PRUEBA-1'); o.logs.push({ id: 'lg-sB', date: '2026-01-05', turno: 'Noche', startTime: '22:00', endTime: '06:00', okPcs: 20, operator: 'B' }); saveProductionOrders(); })
@@ -132,8 +150,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.ok, 'no se aplicó: ' + r.t.slice(0, 120));
     });
     await prueba('Permisos: operario sin carga manual ni Admin', async () => {
-      await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'operario', nombre: 'Operario', clave: '1111', rol: 'usuario', permisos: { partes: 'edit', ordenes: 'edit', catalogo: 'none', gantt: 'view', ia: 'none', indicadores: 'none' } } }));
-      const O = await equipo(b); await ingresar(O, 'operario', '1111'); await O.waitForTimeout(1500);
+      await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'operario', nombre: 'Operario', clave: 'oper11', rol: 'usuario', permisos: { partes: 'edit', ordenes: 'edit', catalogo: 'none', gantt: 'view', ia: 'none', indicadores: 'none' } } }));
+      const O = await equipo(b); await ingresar(O, 'operario', 'oper11'); await O.waitForTimeout(1500);
       const r = await O.evaluate(async () => ({ g: [...document.querySelectorAll('.nb-grupo')].map(b => b.dataset.g).join(','), add: (await inoferCloudPost({ action: 'add', token: inoferAuthToken(), entry: { id: 'rec-x', date: '2026-01-05', machine: 'H-50', shift: 'Mañana', available: 8 } })).error, aud: (await inoferCloudPost({ action: 'audListar', token: inoferAuthToken() })).error }));
       ok(!r.g.includes('adm') && !r.g.includes('ia'), 've menús que no debe: ' + r.g);
       ok(r.add === 'permiso', 'pudo cargar un parte manual sin estar habilitado');
@@ -329,7 +347,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.habilitada && r.trabajo, 'al resolver no habilitó la máquina o no registró el trabajo: ' + JSON.stringify(r));
     });
     await prueba('Modo tablet "Mi máquina"', async () => {
-      const T = await equipo(b, { width: 800, height: 1100 }); await ingresar(T, 'admin', 'abcd');
+      const T = await equipo(b, { width: 800, height: 1100 }); await ingresar(T, 'admin', 'abcd12');
       await T.goto(`http://127.0.0.1:${PUERTO_WEB}/index.html?mimaquina=200V`); await T.waitForTimeout(4500);
       const r = await T.evaluate(() => ({ vis: !document.getElementById('viewMiMaq').classList.contains('hidden'), txt: document.getElementById('viewMiMaq').innerText }));
       ok(r.vis && /200V/.test(r.txt) && /CARGAR TURNO/.test(r.txt), 'no entró a la pantalla de la máquina');
@@ -422,8 +440,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(!r2.conPct.length && r2.conPesos > 2, 'el gráfico de facturación sin animación muestra %: ' + JSON.stringify(r2));
       await A.waitForTimeout(1500);
       // usuario que solo ve indicadores: sin plata y con los nombres ocultos; no puede guardar el rebabado por operario
-      await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'indic', nombre: 'Indicadores', clave: '5555', rol: 'usuario', permisos: { partes: 'none', ordenes: 'none', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'edit' } } }));
-      const K = await equipo(b); await ingresar(K, 'indic', '5555'); await K.waitForTimeout(1500);
+      await A.evaluate(() => inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'indic', nombre: 'Indicadores', clave: 'ind555', rol: 'usuario', permisos: { partes: 'none', ordenes: 'none', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'edit' } } }));
+      const K = await equipo(b); await ingresar(K, 'indic', 'ind555'); await K.waitForTimeout(1500);
       const k = await K.evaluate(async () => {
         const d = await (await fetch(cloudApiUrl + '?action=json&t=' + Date.now() + inoferTokenParam())).json();
         const g = await inoferCloudPost({ action: 'saveModule', token: inoferAuthToken(), moduleKey: 'rebabadoOp', moduleData: { meses: {} } });
@@ -480,6 +498,25 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const d = await nube(A);
       const on = d.modules.orders.find(o => o.id === 'ord-rc');
       ok(on && (on.rechazos || []).length === 1 && d.modules.calidad && d.modules.calidad.causas.includes('Poro en la cara A'), 'el rechazo o la causa no llegaron a la nube');
+    });
+    await prueba('Seguridad: claves de 6, clave fácil rechazada y bloqueo tras 5 intentos', async () => {
+      const r = await A.evaluate(async () => {
+        const P = b => inoferCloudPost(Object.assign({ token: inoferAuthToken() }, b));
+        const corta = await P({ action: 'saveUser', user: { usuario: 'seg', nombre: 'Seg', clave: 'ab12', rol: 'usuario', permisos: {} } });
+        const facil = await P({ action: 'saveUser', user: { usuario: 'seg', nombre: 'Seg', clave: '123456', rol: 'usuario', permisos: {} } });
+        const bien = await P({ action: 'saveUser', user: { usuario: 'seg', nombre: 'Seg', clave: 'planta77', rol: 'usuario', permisos: {} } });
+        const login = c => inoferCloudPost({ action: 'login', usuario: 'seg', clave: c });
+        const ok1 = await login('planta77');
+        for (let i = 0; i < 5; i++) await login('mala' + i);
+        const bloq = await login('planta77');
+        await P({ action: 'saveUser', user: { usuario: 'seg', nombre: 'Seg', clave: 'planta88', rol: 'usuario', permisos: {} } });
+        const ok2 = await login('planta88');
+        return { corta: corta.error, facil: facil.error, bien: bien.status, ok1: ok1.status, bloq: bloq.error, bloqFlag: bloq.bloqueado, ok2: ok2.status };
+      });
+      ok(/6 caracteres/.test(r.corta || '') && /fácil/.test(r.facil || '') && r.bien === 'ok', 'reglas de clave: ' + JSON.stringify(r));
+      ok(r.ok1 === 'ok', 'no entró con la clave buena');
+      ok(r.bloqFlag === true && /Demasiados intentos/.test(r.bloq || ''), 'no bloqueó tras 5 intentos: ' + JSON.stringify(r));
+      ok(r.ok2 === 'ok', 'cambiar la clave no desbloqueó');
     });
     await prueba('Importar el Gantt de Excel y que el automático lo respete', async () => {
       const r = await A.evaluate(async () => {
@@ -1112,14 +1149,14 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const m2 = inoferStockPiezas.aplicar([{ part: 'PZA-STK1', qty: 1000, mOrders: [1000, 1000] }], 1);
         const linea = inoferStockPiezas.lineaPrevia();
         let enNube = false; for (let i = 0; i < 16 && !enNube; i++) { await esperar(500); const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json(); const sp = (n.modules || {}).stockPiezas; enNube = !!(sp && sp.piezas && sp.piezas['PZA-STK1'] && sp.piezas['PZA-STK1'].iny === 300 && !JSON.stringify(sp).includes('30000')); }
-        await inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'planif', nombre: 'Planificador', clave: '2222', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'edit', ia: 'none', indicadores: 'none' } } });
+        await inoferCloudPost({ action: 'saveUser', token: inoferAuthToken(), user: { usuario: 'planif', nombre: 'Planificador', clave: 'kpi222', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'view', gantt: 'edit', ia: 'none', indicadores: 'none' } } });
         return { txt: /3 piezas|2 piezas con stock/.test(txt) && /5\.500/.test(txt), m1: m1.map(x => x.part + ':' + x.qty).join(','), m2: m2.map(x => x.part + ':' + x.qty).join(','), linea: /no se programa/.test(linea) && /solo lo ves vos/.test(linea), enNube };
       });
       ok(r.txt, 'pantalla del stock: ' + JSON.stringify(r));
       ok(r.m1 === 'PZA-STK1:500,PZA-STK3:400' && r.m2 === 'PZA-STK1:1000' && r.linea, 'descuento en el armado: ' + JSON.stringify(r));
       ok(r.enNube, 'no quedó en la nube (o quedaron precios)');
       // otro usuario con permiso de Gantt: no recibe el stock, pero la nube le descuenta
-      const P = await equipo(b); await ingresar(P, 'planif', '2222'); await P.waitForTimeout(1500);
+      const P = await equipo(b); await ingresar(P, 'planif', 'kpi222'); await P.waitForTimeout(1500);
       const q = await P.evaluate(async () => {
         const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json();
         const d = await inoferCloudPost({ token: inoferAuthToken(), action: 'stockGantt', partes: { 'PZA-STK1': 2000, 'PZA-STK2': 1000, 'PZA-NADA': 50 } });
@@ -1133,7 +1170,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const r = await A.evaluate(async () => {
         const t = inoferAuthToken();
         await inoferCloudPost({ action: 'solCrear', token: t, tipo: 'Otro', titulo: 'SOL-PRUEBA-ADMIN', detalle: 'x' });
-        await inoferCloudPost({ action: 'saveUser', token: t, user: { usuario: 'vesol', nombre: 'Ve Solicitudes', clave: '3333', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'none', detalle: { sol_ver_todas: true } } } });
+        await inoferCloudPost({ action: 'saveUser', token: t, user: { usuario: 'vesol', nombre: 'Ve Solicitudes', clave: 'tab333', rol: 'usuario', permisos: { partes: 'view', ordenes: 'view', catalogo: 'none', gantt: 'none', ia: 'none', indicadores: 'none', detalle: { sol_ver_todas: true } } } });
         const cod = (typeof INOFER_28_CODES !== 'undefined' ? INOFER_28_CODES : []).find(c => /^32-/.test(c));
         return { cod, cat: (window.INOFER_CODIGO_CATEGORIA || {})[32], opc: !!document.querySelector('.cr-pcod') || true };
       });
@@ -1144,10 +1181,10 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         inoferCargaRapida.abrir({ maq: 'H50' }); const sel = () => { const f = document.querySelector('#crParadasList .cr-pcod'); return f ? [...f.options].map(o => o.value) : null; };
         return { v200: t(inoferCodigosDe('200V')), z30: t(inoferCodigosDe('Z30')), h50: t(inoferCodigosDe('H50')), todos: t(INOFER_28_CODES), cat: [window.INOFER_CODIGO_CATEGORIA[36], window.INOFER_CODIGO_CATEGORIA[37]] }; });
       ok(r3.v200 === 0 && r3.z30 === 2 && r3.h50 === 2 && r3.todos === 2 && r3.cat.join() === 'puesta_punto,puesta_punto', 'códigos 36-37 solo Z30/H50: ' + JSON.stringify(r3));
-      const V = await equipo(b); await ingresar(V, 'vesol', '3333'); await V.waitForTimeout(1200);
+      const V = await equipo(b); await ingresar(V, 'vesol', 'tab333'); await V.waitForTimeout(1200);
       const v = await V.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); const e = await inoferCloudPost({ action: 'msgEstado', token: inoferAuthToken() }); const u = await inoferCloudPost({ action: 'solActualizar', token: inoferAuthToken(), id: (d.solicitudes[0] || {}).id, estado: 'resuelta' }); return { ve: (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'), flag: e.solVerTodas, responde: u.status }; });
       await V.context().close();
-      const N = await equipo(b); await ingresar(N, 'planif', '2222'); await N.waitForTimeout(1200);
+      const N = await equipo(b); await ingresar(N, 'planif', 'kpi222'); await N.waitForTimeout(1200);
       const n = await N.evaluate(async () => { const d = await inoferCloudPost({ action: 'solListar', token: inoferAuthToken() }); return (d.solicitudes || []).some(s => s.titulo === 'SOL-PRUEBA-ADMIN'); });
       await N.context().close();
       ok(v.ve && v.flag && v.responde === 'error', 'con permiso: ' + JSON.stringify(v));

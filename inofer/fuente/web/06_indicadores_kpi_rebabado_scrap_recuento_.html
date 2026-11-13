@@ -48,12 +48,8 @@
     const INOFER_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
     // Datos de partida del gráfico "Eficiencia de conteo" que pasó la planta (se pueden editar)
     // Datos históricos de las planillas REBABADO.xlsx, INYECCION.xlsx y SCRAP.xlsx (jun-25 a sept-26)
-    const INOFER_KPI_INICIAL = {
-      rebabado: { datos: [["2025-06", 68.0], ["2025-07", 70.0], ["2025-08", 68.0], ["2025-09", 71.0], ["2025-10", 66.0], ["2025-11", 65.0], ["2025-12", 66.0], ["2026-01", 64.0], ["2026-02", 66.0], ["2026-03", 69.0], ["2026-04", 64.0], ["2026-05", 69.0], ["2026-06", 61.0], ["2026-07", 68.0], ["2026-08", 64.0], ["2026-09", 62.5]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
-      inyeccion: { datos: [["2025-06", 88.0], ["2025-07", 89.0], ["2025-08", 89.0], ["2025-09", 89.0], ["2025-10", 92.0], ["2025-11", 90.0], ["2025-12", 91.0], ["2026-01", 86.0], ["2026-02", 84.0], ["2026-03", 89.0], ["2026-04", 93.0], ["2026-05", 90.0], ["2026-06", 91.0], ["2026-07", 90.0], ["2026-08", 90.0], ["2026-09", 87.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
-      scrap: { datos: [["2025-06", 7.0], ["2025-07", 13.0], ["2025-08", 9.0], ["2025-09", 17.0], ["2025-10", 8.0], ["2025-11", 10.0], ["2025-12", 16.0], ["2026-01", 9.0], ["2026-02", 6.0], ["2026-03", 8.0], ["2026-04", 2.0], ["2026-05", 6.0], ["2026-06", 5.0], ["2026-07", 6.0], ["2026-08", 7.0], ["2026-09", 4.0]].map(([mes, valor]) => ({ mes, valor, nota: '' })) },
-      recuento: { meta: 98, datos: [['2025-09', 99.24], ['2025-10', 98.00], ['2025-11', 99.12], ['2025-12', 98.15], ['2026-01', 96.63], ['2026-02', 100], ['2026-03', 95.61], ['2026-04', 99.17], ['2026-05', 100], ['2026-06', 100], ['2026-07', 98.81], ['2026-08', 99.17], ['2026-09', 98.68]].map(([mes, valor]) => ({ mes, valor, nota: '' })) }
-    };
+    // (13/11/2026) El historial de indicadores ya no viene en la app (repositorio público): vive en la nube (módulo kpis).
+    const INOFER_KPI_INICIAL = {};
     let inoferKpis = {};
     let inoferKpisP = {};
     try { inoferKpisP = inoferKpiPuedePrecios() ? (JSON.parse(localStorage.getItem(INOFER_KPI_PRECIO_KEY) || 'null') || {}) : {}; } catch (e) { inoferKpisP = {}; }
