@@ -842,6 +842,43 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.rec.anOpc && r.rec.f4 && r.rec.f4.origen === 'recuperado' && r.rec.f4.grado === 2 && r.rec.nuevo === 'nuevo' && /recup\. · 500 kg/.test(r.rec.celda) && r.rec.html, 'material recuperado: ' + JSON.stringify(r.rec));
       ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
+    await prueba('Gantt: pieza cargada a mano trae los datos de la base y se corrigen las ya cargadas', async () => {
+      const r = await A.evaluate(async () => {
+        const w8 = ms => new Promise(res => setTimeout(res, ms));
+        const out = {};
+        const d = new Date(); d.setDate(d.getDate() - d.getDay()); const sd = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const ant = activeGanttWeekCode;
+        const aux = () => ({ CMA: [0, 0, 0, 0, 0, 0, 0], CMO: [0, 0, 0, 0, 0, 0, 0], ALIS: [0, 0, 0, 0, 0, 0, 0], DESG: [0, 0, 0, 0, 0, 0, 0], LING: [0, 0, 0, 0, 0, 0, 0], LIMP: [0, 0, 0, 0, 0, 0, 0], CPIS: [0, 0, 0, 0, 0, 0, 0] });
+        ganttWeeksData['ZZ-BASE'] = { code: 'ZZ-BASE', name: 'prueba base', startDate: sd, desg05: true, machines: { '200V': { aux: aux(), items: [] }, '180': { aux: aux(), items: [
+          { id: 'gi-viejo', part: '90114', desc: 'Pieza 90114', totalQty: 500, mat: 'alsi', stdRate: 60, weightKg: 0.45, recuperoKg: 0.02, dailyQty: [0, 100, 0, 0, 0, 0, 0] },
+          { id: 'gi-excel', part: '90121', desc: 'DEL EXCEL', totalQty: 500, mat: 'alsi', stdRate: 33, dailyQty: [0, 50, 0, 0, 0, 0, 0], origen: 'excel', fijo: true }] } } };
+        activeGanttWeekCode = 'ZZ-BASE'; switchTab('gantt'); await w8(300);
+        // 1) cargar a mano escribiendo el código
+        openGanttAssignModal('200V'); await w8(150);
+        document.querySelector('.add-piece-to-mach-btn[data-add-to-mach="200V"]') ;
+        const p = document.getElementById('ganttModalPart'); p.dispatchEvent(new Event('focus'));
+        out.lista = document.querySelectorAll('#inoferGanttPartList option').length;
+        document.getElementById('ganttModalDesc').value = '';
+        p.value = '90107'; p.dispatchEvent(new Event('input', { bubbles: true })); p.dispatchEvent(new Event('change', { bubbles: true }));
+        out.form = { desc: document.getElementById('ganttModalDesc').value, mat: document.getElementById('ganttModalMaterial').value, rate: document.getElementById('ganttModalStdRate').value, info: document.getElementById('inoferGanttPartInfo').textContent };
+        document.getElementById('ganttDayQty_1').value = '200';
+        document.getElementById('ganttAssignForm').requestSubmit(); await w8(300);
+        const nuevo = getActiveGanttWeek().machines['200V'].items.find(i => i.part === '90107');
+        out.nuevo = nuevo && { rate: nuevo.stdRate, kg: nuevo.weightKg, desc: nuevo.desc, sinc: nuevo.sinc };
+        // 2) corregir lo ya cargado
+        const res = inoferSincGanttBase({ forzar: true });
+        const v = ganttWeeksData['ZZ-BASE'].machines['180'].items;
+        out.viejo = { rate: v[0].stdRate, mat: v[0].mat, desc: v[0].desc, kg: v[0].weightKg, sinc: v[0].sinc };
+        out.excel = { rate: v[1].stdRate, desc: v[1].desc };
+        out.res = res;
+        out.segunda = inoferSincGanttBase({ forzar: true }).piezas;
+        delete ganttWeeksData['ZZ-BASE']; activeGanttWeekCode = ant; try { saveGanttWeeks(); renderGanttView(); } catch (e) { }
+        return out;
+      });
+      ok(r.lista >= 50 && r.form.desc === 'PIEZA DE PRUEBA 1' && r.form.mat === 'alsi' && r.form.rate === '73' && /De la base/.test(r.form.info), 'la ventana no trajo los datos: ' + JSON.stringify(r.form) + ' lista ' + r.lista);
+      ok(r.nuevo && r.nuevo.rate === 73 && r.nuevo.kg === 0.13 && r.nuevo.desc === 'PIEZA DE PRUEBA 1' && r.nuevo.sinc === 1, 'la pieza nueva no quedó bien: ' + JSON.stringify(r.nuevo));
+      ok(r.viejo.rate === 86 && r.viejo.mat === 'zamac' && r.viejo.desc === 'PIEZA DE PRUEBA 2' && r.viejo.kg === 0.18 && r.viejo.sinc === 1 && r.excel.rate === 33 && r.excel.desc === 'DEL EXCEL' && r.segunda === 0, 'corrección de lo cargado: ' + JSON.stringify(r));
+    });
     await prueba('Gantt: desgasificado de 30 min y lo programado con 2 h pasa a 0,5 h por unidad', async () => {
       const r = await A.evaluate(async () => {
         const std = inoferStdAux('200V', 'DESG');

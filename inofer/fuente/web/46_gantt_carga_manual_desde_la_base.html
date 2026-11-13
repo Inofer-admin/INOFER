@@ -1,0 +1,127 @@
+  <script>
+    // ===== Gantt: carga manual de piezas con los datos de la base (13/11/2026, pedido del usuario) =====
+    // "+ Programar Pieza / OP" no buscaba la pieza en la base: quedaba descripción vacía, material aluminio y 60 u/h
+    // (horas y utilización mal). Ahora: lista para elegir la pieza, al escribir el código completa descripción,
+    // material y cadencia (y avisa si la máquina no está entre las de la pieza o si no está en la base), y al guardar
+    // usa el código tal cual está en la base (así toma peso con colada y pieza compañera).
+    // Las piezas ya cargadas a mano (sin `sinc`, que no vienen del Excel) de la semana pasada en adelante se corrigen
+    // una vez con los datos de la base (`inoferSincGanttBase`).
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const catArr = () => (typeof partsCatalog !== 'undefined' && Array.isArray(partsCatalog)) ? partsCatalog : [];
+      // busca la pieza aunque esté escrita distinto: mayúsculas, espacios, guiones, con o sin "/1"
+      function buscar(p) {
+        const t = String(p || '').trim(); if (!t || typeof inoferCatBuscar !== 'function') return null;
+        return inoferCatBuscar(t, true) || inoferCatBuscar(t + '/1', true) || inoferCatBuscar(t.replace(/\/1$/, ''), true) || null;
+      }
+      const matDe = c => /zama|^zn|zinc/i.test(String((c && c.material) || '')) ? 'zamac' : 'alsi';
+      const maqsDe = c => (Array.isArray(c && c.machines) ? c.machines : [c && c.machine]).filter(Boolean).map(x => String(x).toUpperCase());
+      const nombreMaq = id => ((typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : []).find(m => m.id === id) || {}).name || id;
+      const admite = (c, m) => { const L = maqsDe(c); if (!L.length) return true; const nm = String(nombreMaq(m)).toUpperCase(); return L.some(x => x === String(m).toUpperCase() || x === nm || nm.includes(x) || x.includes(String(m).toUpperCase())); };
+
+      // ---------- ventana "Programar pieza"
+      function preparar() {
+        const inp = $('ganttModalPart'); if (!inp || inp.__base) return;
+        inp.__base = true;
+        inp.setAttribute('list', 'inoferGanttPartList'); inp.setAttribute('autocomplete', 'off');
+        const dl = document.createElement('datalist'); dl.id = 'inoferGanttPartList'; inp.parentNode.appendChild(dl);
+        const info = document.createElement('div'); info.id = 'inoferGanttPartInfo'; info.className = 'mt-1 text-[11px]'; inp.parentNode.appendChild(info);
+        inp.addEventListener('focus', llenarLista);
+        inp.addEventListener('input', () => completar(false));
+        inp.addEventListener('change', () => completar(true));
+        const maq = $('ganttModalMachine'); if (maq) maq.addEventListener('change', () => completar(false, true));
+      }
+      function llenarLista() {
+        const dl = $('inoferGanttPartList'); if (!dl) return;
+        const L = catArr(); if (dl.__n === L.length) return; dl.__n = L.length;
+        dl.innerHTML = L.filter(c => c && c.part && !(typeof inoferEsPiezaR === 'function' && inoferEsPiezaR(c.part))).slice(0, 2000).map(c => `<option value="${esc(c.part)}">${esc(c.desc || '')}${c.unitsPerHour ? ' · ' + esc(c.unitsPerHour) + ' u/h' : ''}</option>`).join('');
+      }
+      function completar(final, soloAviso) {
+        const inp = $('ganttModalPart'), info = $('inoferGanttPartInfo'); if (!inp || !info) return;
+        const t = inp.value.trim();
+        if (!t) { info.innerHTML = ''; return; }
+        const c = buscar(t);
+        if (!c) { info.innerHTML = final ? '<span class="text-amber-300">⚠️ Esta pieza no está en la base de piezas: completá descripción, material y cadencia a mano (o cargala en Órdenes → Base de datos).</span>' : ''; return; }
+        if (!soloAviso) {
+          if (final && inp.value !== c.part) inp.value = c.part;
+          const d = $('ganttModalDesc'); if (d && (!d.value.trim() || d.__auto)) { d.value = c.desc || ''; d.__auto = true; }
+          const mt = $('ganttModalMaterial'); if (mt) mt.value = matDe(c);
+          const r = $('ganttModalStdRate'); if (r && Number(c.unitsPerHour) > 0) r.value = Number(c.unitsPerHour);
+        }
+        const m = ($('ganttModalMachine') || {}).value || '';
+        const peso = Number(c.weightWithSprueKg) ? ` · ${(Number(c.weightWithSprueKg) * 1000).toLocaleString('es-AR', { maximumFractionDigits: 0 })} g con colada` : '';
+        info.innerHTML = `<span class="text-emerald-300">✓ De la base: ${esc(c.part)}${c.desc ? ' · ' + esc(c.desc) : ''} · ${esc(c.unitsPerHour || '?')} u/h · ${esc(String(c.material || '').toUpperCase())}${peso}</span>`
+          + (m && !admite(c, m) ? `<span class="block text-amber-300">⚠️ En la base esta pieza va en ${esc(maqsDe(c).join(', '))}, no en ${esc(m)}.</span>` : '');
+      }
+      // al guardar: el código como está en la base y la descripción si quedó vacía (antes de que lo procese el núcleo)
+      document.addEventListener('submit', ev => {
+        if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+        const inp = $('ganttModalPart'); if (!inp) return;
+        const c = buscar(inp.value); if (!c) return;
+        inp.value = c.part;
+        const d = $('ganttModalDesc'); if (d && !d.value.trim()) d.value = c.desc || '';
+        const r = $('ganttModalStdRate'); if (r && (!Number(r.value) || (Number(r.value) === 60 && Number(c.unitsPerHour) > 0 && !r.__tocado))) r.value = Number(c.unitsPerHour) || r.value;
+      }, true);
+      document.addEventListener('input', ev => { if (ev.target && ev.target.id === 'ganttModalStdRate') ev.target.__tocado = true; if (ev.target && ev.target.id === 'ganttModalDesc') ev.target.__auto = false; });
+      // lo que se carga desde ahora ya viene con los datos de la base (o con lo que el usuario escribió a propósito): no se corrige después
+      document.addEventListener('submit', ev => {
+        if (!ev.target || ev.target.id !== 'ganttAssignForm') return;
+        setTimeout(() => {
+          try {
+            const w = typeof getActiveGanttWeek === 'function' ? getActiveGanttWeek() : null; if (!w || !w.machines) return;
+            let n = 0; const ahora = Date.now();
+            Object.values(w.machines).forEach(md => ((md && md.items) || []).forEach(it => { const t = /^gi-(?:sis-)?(\d{12,})$/.exec(String(it && it.id || '')); if (t && !it.sinc && ahora - Number(t[1]) < 15000) { it.sinc = 1; n++; } }));
+            if (n) saveGanttWeeks();
+          } catch (e) { }
+        }, 0);
+      });
+
+      // ---------- corregir lo ya cargado a mano
+      function lunesDe(d) { const x = new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+      function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+      window.inoferSincGanttBase = function (opc) {
+        opc = opc || {};
+        if (typeof ganttWeeksData === 'undefined' || !ganttWeeksData || !catArr().length) return { semanas: 0, piezas: 0 };
+        const a = document.activeElement; if (!opc.forzar && a && a.classList && a.classList.contains('gantt-item-qty-input')) return { semanas: 0, piezas: 0 };
+        const desde = iso(new Date(lunesDe(new Date()).getTime() - 7 * 86400000)); // desde la semana pasada
+        let semanas = 0, piezas = 0;
+        Object.values(ganttWeeksData).forEach(w => {
+          if (!w || !w.machines) return;
+          const sd = String(w.startDate || ''); if (sd && sd < iso(new Date(new Date(desde + 'T12:00:00').getTime() - 86400000))) return;
+          let toco = false;
+          Object.keys(w.machines).forEach(m => {
+            ((w.machines[m] && w.machines[m].items) || []).forEach(it => {
+              if (!it || it.sinc || it.origen === 'excel') return;
+              const c = buscar(it.part);
+              if (c) {
+                const ref = it.isSharedCompanion && it.sharedWithPart ? (buscar(it.sharedWithPart) || c) : c;
+                if (it.part !== c.part) it.part = c.part;
+                const suf = (String(it.desc || '').match(/\s*\[🔗[^\]]*\]$/) || [''])[0];
+                const base = String(it.desc || '').replace(/\s*\[🔗[^\]]*\]$/, '').trim();
+                if (c.desc && (!base || /^Pieza\s/i.test(base) || base === it.part)) it.desc = c.desc + suf;
+                it.mat = matDe(c);
+                if (Number(ref.unitsPerHour) > 0) it.stdRate = Number(ref.unitsPerHour);
+                if (Number(c.weightWithSprueKg) > 0) { it.weightKg = Number(c.weightWithSprueKg); it.recuperoKg = Number(c.recuperoKg) || Math.round(Number(c.weightWithSprueKg) * 0.3 * 1000) / 1000; }
+                piezas++;
+              }
+              it.sinc = 1; toco = true;
+            });
+          });
+          if (toco) semanas++;
+        });
+        if (semanas && !opc.sinGuardar) { try { saveGanttWeeks(); } catch (e) { } try { renderGanttView(); } catch (e) { } if (piezas) { try { showToast(`✓ Gantt: ${piezas} pieza${piezas > 1 ? 's' : ''} cargada${piezas > 1 ? 's' : ''} a mano se actualizaron con los datos de la base`); } catch (e) { } } }
+        return { semanas, piezas };
+      };
+      window.inoferGanttBuscarPieza = buscar;
+
+      // al abrir la ventana: limpiar el aviso; al elegir una OP: mostrar los datos de la base de esa pieza
+      document.addEventListener('click', ev => { const b = ev.target.closest && ev.target.closest('.add-piece-to-mach-btn, #assignOrderToGanttBtn'); if (!b) return; setTimeout(() => { preparar(); const i = $('inoferGanttPartInfo'); if (i) i.innerHTML = ''; const d = $('ganttModalDesc'); if (d) d.__auto = true; const r = $('ganttModalStdRate'); if (r) r.__tocado = false; const p = $('ganttModalPart'); if (p && p.value) completar(false, true); }, 0); });
+      document.addEventListener('change', ev => { if (ev.target && ev.target.id === 'ganttModalOrderSelect') setTimeout(() => completar(false, true), 0); });
+      function iniciar() { try { preparar(); } catch (e) { } }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 50)); else setTimeout(iniciar, 50);
+      window.addEventListener('load', () => setTimeout(iniciar, 300));
+      // corrige lo cargado cuando ya está la base (que viene de la nube) y cada tanto por si llegan semanas de otro equipo
+      setInterval(() => { try { iniciar(); if (typeof inoferSession !== 'undefined' && inoferSession && !document.hidden) window.inoferSincGanttBase(); } catch (e) { } }, 12000);
+    })();
+  </script>
