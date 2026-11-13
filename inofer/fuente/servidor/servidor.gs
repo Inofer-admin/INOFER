@@ -1372,6 +1372,17 @@ function resumenCambio_(clave, ant, nue) {
       const a = FA[id], x = FN[id];
       if (x.f.retiro && !(a && a.f.retiro)) out.push('Material ' + x.k + ': retiró el fardo N° ' + x.f.numero + (x.f.analisis ? ' (análisis ' + x.f.analisis + ')' : '') + ' de ' + fmtN_(x.f.kg) + ' kg' + (x.f.retiro.maquina ? ' → ' + x.f.retiro.maquina : ''));
       if (a && a.f.retiro && !x.f.retiro) out.push('Material ' + x.k + ': el fardo N° ' + x.f.numero + ' volvió al depósito');
+      const pa = {}; ((a && a.f.parciales) || []).forEach(function (p) { pa[p.id] = p; });
+      const pn = {}; (x.f.parciales || []).forEach(function (p) { pn[p.id] = p; if (!pa[p.id]) out.push('Material ' + x.k + ': sacó ' + fmtN_(p.kg) + ' kg del fardo N° ' + x.f.numero + (p.destino ? ' → ' + p.destino : '') + (p.descuenta ? ' (descontado del stock)' : '')); });
+      Object.keys(pa).forEach(function (id) { if (!pn[id]) out.push('Material ' + x.k + ': anuló el retiro de ' + fmtN_(pa[id].kg) + ' kg del fardo N° ' + x.f.numero); });
+      if (a && x.f.modificadoAt && x.f.modificadoAt !== a.f.modificadoAt) {
+        const cam = [];
+        if (Number(a.f.kg) !== Number(x.f.kg)) cam.push('kg ' + fmtN_(a.f.kg) + ' → ' + fmtN_(x.f.kg));
+        if (String(a.f.analisis || '') !== String(x.f.analisis || '')) cam.push('análisis ' + (a.f.analisis || '—') + ' → ' + (x.f.analisis || '—'));
+        if (Number(a.f.numero) !== Number(x.f.numero)) cam.push('N° ' + a.f.numero + ' → ' + x.f.numero);
+        if (String(a.f.fecha || '') !== String(x.f.fecha || '')) cam.push('fecha ' + (a.f.fecha || '') + ' → ' + (x.f.fecha || ''));
+        out.push('Material ' + x.k + ': corrigió el fardo N° ' + x.f.numero + (cam.length ? ' (' + cam.join(', ') + ')' : ''));
+      }
     });
     Object.keys(FA).forEach(function (id) { if (!FN[id]) out.push('Material ' + FA[id].k + ': borró el fardo N° ' + FA[id].f.numero); });
     if (!out.length) out.push('Cambió mínimos o datos del stock');

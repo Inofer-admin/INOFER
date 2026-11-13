@@ -32,9 +32,13 @@
       function fardoDe(mat, m, fecha) {
         const st = (window.inoferModLocal && inoferModLocal('stock')) || {}; const M = st.materiales || {};
         const k = Object.keys(M).find(x => norm(x) === norm(mat)); if (!k) return null;
-        const L = (M[k].fardos || []).filter(f => f.retiro && norm(f.retiro.maquina) === norm(m) && String(f.retiro.fecha || '').slice(0, 10) <= fecha);
-        L.sort((a, b) => String(b.retiro.fecha || '').localeCompare(String(a.retiro.fecha || '')) || (b.numero || 0) - (a.numero || 0));
-        return L[0] || null;
+        const L = [];
+        (M[k].fardos || []).forEach(f => {
+          if (f.retiro && !f.retiro.porPartes && norm(f.retiro.maquina) === norm(m) && String(f.retiro.fecha || '').slice(0, 10) <= fecha) L.push({ f, fe: String(f.retiro.fecha || '') });
+          (f.parciales || []).forEach(p => { if (norm(p.destino) === norm(m) && String(p.fecha || '').slice(0, 10) <= fecha) L.push({ f, fe: String(p.fecha || '') }); });
+        });
+        L.sort((a, b) => b.fe.localeCompare(a.fe) || (b.f.numero || 0) - (a.f.numero || 0));
+        return L[0] ? L[0].f : null;
       }
       const ordenes = () => (typeof productionOrders !== 'undefined' ? productionOrders : []).filter(o => o && o.part);
       function datosBase(o, log, fecha) {

@@ -829,6 +829,57 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.rec.anOpc && r.rec.f4 && r.rec.f4.origen === 'recuperado' && r.rec.f4.grado === 2 && r.rec.nuevo === 'nuevo' && /recup\. · 500 kg/.test(r.rec.celda) && r.rec.html, 'material recuperado: ' + JSON.stringify(r.rec));
       ok(r.informe.ing === 4 && r.informe.ret === 1 && r.informe.dep === 3 && r.informe.maq === '200V' && r.informe.html && /1 retirado/.test(r.informe.pm), 'listado para imprimir: ' + JSON.stringify(r.informe));
     });
+    await prueba('Stock por fardos: corregir un fardo y retirar kilos sueltos (976 kg − 406 kg)', async () => {
+      const r = await A.evaluate(async () => {
+        const esperar = ms => new Promise(res => setTimeout(res, ms));
+        const out = {};
+        switchTab('stock'); await esperar(300);
+        const v = document.getElementById('viewStock');
+        v.querySelector('.st-nuevo[data-t="fardos"]').click(); await esperar(100);
+        const f = v.querySelector('.st-form-fardos');
+        f.querySelector('[name="clave"]').value = 'ZAMAC-PRUEBA'; f.querySelector('[name="analisis"]').value = 'ZN-1'; f.querySelector('[name="kg"]').value = '976'; f.requestSubmit(); await esperar(200);
+        const d = () => inoferModLocal('stock').materiales['ZAMAC-PRUEBA'];
+        const st = () => (inoferStock().materiales.find(m => m.nombre === 'ZAMAC-PRUEBA') || {}).stock;
+        const fd = () => d().fardos[0];
+        out.stock0 = st();
+        // retiro parcial desde la ventana de fardos: 406 kg a otro destino (descuenta del stock)
+        inoferVerFardos('ZAMAC-PRUEBA'); await esperar(100);
+        document.querySelector('.stf-parcial').click(); await esperar(100);
+        const fp = document.querySelector('.stfp-form');
+        out.descPorDefecto = fp.descuenta.checked;
+        fp.kg.value = '406'; fp.kg.dispatchEvent(new Event('input', { bubbles: true }));
+        out.queda = fp.querySelector('.stfp-res').textContent;
+        fp.otro.value = 'Otra planta'; fp.requestSubmit(); await esperar(200);
+        out.p1 = { disp: inoferKgFardo(fd()), stock: st(), mov: d().movimientos.filter(m => m.tipo === 'despacho').map(m => m.kg).join(','), destino: fd().parciales[0].destino };
+        const modalTxt = (document.getElementById('inoferPlantaModal') || {}).textContent || '';
+        out.modal = /570/.test(modalTxt) && /de 976/.test(modalTxt) && /406 kg → Otra planta/.test(modalTxt);
+        // a una máquina: no descuenta (lo descuenta la producción)
+        out.p2 = inoferFardosApi.retiroParcial('ZAMAC-PRUEBA', fd().id, { kg: 100, destino: 'Z30' });
+        out.p2s = { disp: inoferKgFardo(fd()), stock: st() };
+        out.demas = inoferFardosApi.retiroParcial('ZAMAC-PRUEBA', fd().id, { kg: 999, destino: 'Otra' }).error || '';
+        // corregir el fardo: 980 kg y otro análisis → el ingreso y el stock se corrigen
+        inoferVerFardos('ZAMAC-PRUEBA'); await esperar(100);
+        document.querySelector('.stf-editar').click(); await esperar(100);
+        const fe = document.querySelector('.stfe-form'); fe.kg.value = '980'; fe.analisis.value = 'ZN-2'; fe.requestSubmit(); await esperar(200);
+        out.ed = { kg: fd().kg, an: fd().analisis, ing: d().movimientos.find(m => m.tipo === 'ingreso').kg, disp: inoferKgFardo(fd()), stock: st(), por: !!fd().modificadoPor };
+        out.edMal = inoferFardosApi.editar('ZAMAC-PRUEBA', fd().id, { numero: 1, kg: 400, analisis: 'ZN-2' }).error || '';
+        // listado imprimible: dos salidas parciales y lo que queda en depósito
+        const inf = inoferInformeFardos({ material: 'ZAMAC-PRUEBA' });
+        out.inf = { ret: inf.d.ret.length, retKg: inf.d.ret.reduce((a, x) => a + x.kg, 0), dep: inf.d.dep[0] && inf.d.dep[0].kg, maq: Object.keys(inf.d.porMaq).sort().join(',') };
+        // anular el retiro de 406: vuelven al fardo y al stock
+        inoferFardosApi.anularParcial('ZAMAC-PRUEBA', fd().id, fd().parciales[0].id);
+        out.anul = { disp: inoferKgFardo(fd()), stock: st(), movs: d().movimientos.length };
+        document.getElementById('inoferPlantaModal')?.remove();
+        const S = inoferModLocal('stock'); delete S.materiales['ZAMAC-PRUEBA']; inoferModGuardar('stock');
+        return out;
+      });
+      ok(r.stock0 === 976 && r.descPorDefecto && /570/.test(r.queda), 'arranque del retiro parcial: ' + JSON.stringify(r));
+      ok(r.p1.disp === 570 && r.p1.stock === 570 && r.p1.mov === '406' && r.p1.destino === 'Otra planta' && r.modal, 'retiro de 406 kg: ' + JSON.stringify(r.p1) + ' modal ' + r.modal);
+      ok(r.p2.ok && r.p2s.disp === 470 && r.p2s.stock === 570 && /tiene 470/.test(r.demas), 'retiro a máquina / de más: ' + JSON.stringify(r));
+      ok(r.ed.kg === 980 && r.ed.an === 'ZN-2' && r.ed.ing === 980 && r.ed.disp === 474 && r.ed.stock === 574 && r.ed.por && /no puede pesar menos/.test(r.edMal), 'corrección del fardo: ' + JSON.stringify(r.ed) + ' ' + r.edMal);
+      ok(r.inf.ret === 2 && r.inf.retKg === 506 && r.inf.dep === 474 && r.inf.maq === 'Otra planta,Z30', 'listado: ' + JSON.stringify(r.inf));
+      ok(r.anul.disp === 880 && r.anul.stock === 980 && r.anul.movs === 1, 'anular parcial: ' + JSON.stringify(r.anul));
+    });
     await prueba('Gantt automático: elegir las semanas tocándolas (1 a 8, por fecha)', async () => {
       const r = await A.evaluate(async () => {
         const esperar = ms => new Promise(res => setTimeout(res, ms));

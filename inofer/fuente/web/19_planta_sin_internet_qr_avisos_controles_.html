@@ -692,7 +692,7 @@
           }
           const enDep = (d.fardos || []).filter(f => !f.retiro);
           const enRec = enDep.filter(f => f.origen === 'recuperado');
-          const dep = { n: enDep.length, kg: enDep.reduce((a, f) => a + (Number(f.kg) || 0), 0), total: (d.fardos || []).length, recN: enRec.length, recKg: enRec.reduce((a, f) => a + (Number(f.kg) || 0), 0) };
+          const dep = { n: enDep.length, kg: enDep.reduce((a, f) => a + kgDisp(f), 0), total: (d.fardos || []).length, recN: enRec.length, recKg: enRec.reduce((a, f) => a + kgDisp(f), 0) };
           return { nombre, minimo: min, stock: r.stock, desde: r.desde, sinDatos: r.sinDatos, c7, prog14, alcanza, bajoMin, alerta, nivel, movimientos: d.movimientos || [], dep };
         });
         const piezas = {};
@@ -741,8 +741,8 @@
           <label class="text-[11px] text-slate-400">Fecha<input type="date" name="fecha" value="${hoyIso()}" class="${INP} w-full"></label>
           <label class="text-[11px] text-slate-400">Nota<input name="nota" class="${INP} w-full"></label>
           <div class="sm:col-span-4 text-[11px] font-bold text-slate-300">¿Qué fardo${fardosDep.length > 1 ? 's' : ''} se retira${fardosDep.length > 1 ? 'n' : ''}?</div>
-          <div class="sm:col-span-4 grid gap-1.5 sm:grid-cols-3">${fardosDep.map(f => `<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-slate-200 has-[:checked]:border-orange-400 has-[:checked]:bg-orange-500/15"><input type="checkbox" name="fardo" value="${esc(f.id)}" class="h-4 w-4 accent-orange-500" ${fm.fardoId === f.id ? 'checked' : ''}><span><b class="text-white">Fardo N° ${f.numero}</b> · ${n1(f.kg)} kg ${chipFardo(f)}<span class="block text-[10px] text-slate-400">Análisis ${esc(f.analisis || '—')} · entró ${fDia(f.fecha)}</span></span></label>`).join('')}</div>
-          <p class="sm:col-span-4 text-[11px] text-slate-400">El fardo sale del depósito. El stock total del material lo sigue descontando la producción de los turnos.</p>
+          <div class="sm:col-span-4 grid gap-1.5 sm:grid-cols-3">${fardosDep.map(f => `<label class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-slate-200 has-[:checked]:border-orange-400 has-[:checked]:bg-orange-500/15"><input type="checkbox" name="fardo" value="${esc(f.id)}" class="h-4 w-4 accent-orange-500" ${fm.fardoId === f.id ? 'checked' : ''}><span><b class="text-white">Fardo N° ${f.numero}</b> · ${n1(kgDisp(f))} kg${kgParc(f) ? ` <span class="text-[10px] text-amber-300">(de ${n1(f.kg)})</span>` : ''} ${chipFardo(f)}<span class="block text-[10px] text-slate-400">Análisis ${esc(f.analisis || '—')} · entró ${fDia(f.fecha)}</span></span></label>`).join('')}</div>
+          <p class="sm:col-span-4 text-[11px] text-slate-400">El fardo sale del depósito. El stock total del material lo sigue descontando la producción de los turnos. Para sacar solo una parte (por kilos), usá ✂️ Retirar kg en la lista de fardos.</p>
           <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-orange-400 bg-orange-500 text-slate-950">Retirar</button></div>`
           : `<div class="sm:col-span-4 text-xs text-slate-400">No hay fardos cerrados en el depósito. Cargalos con 📦 Ingreso de fardos.</div><div class="sm:col-span-4 flex justify-end"><button type="button" class="st-cancel ${BTN} border-slate-700 text-slate-300">Cerrar</button></div>`}</form>` : '';
         const form = fm && (fm.tipo === 'fardos' || fm.tipo === 'retiro') ? formFardos + formRetiro : fm ? `<form class="inofer-planta-form st-form rounded-2xl border border-teal-500/40 bg-slate-950/70 p-3 grid gap-2 sm:grid-cols-4">
@@ -791,28 +791,137 @@
       const tipoFardo = f => f && f.origen === 'recuperado' ? `Recuperado ${f.grado || 1}°` : 'Nuevo';
       const chipFardo = f => f && f.origen === 'recuperado' ? `<span class="rounded bg-lime-500/15 px-1.5 py-0.5 text-[10px] font-black text-lime-300">♻️ Rec. ${f.grado || 1}°</span>` : `<span class="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-black text-sky-300">Nuevo</span>`;
       window.inoferTipoFardo = tipoFardo;
+      // Retiros parciales por kilos (13/11/2026): f.parciales = [{id, kg, fecha, destino, nota, descuenta, movId, por, at}]
+      const kgParc = f => Math.round(((f && f.parciales) || []).reduce((a, p) => a + (Number(p.kg) || 0), 0) * 10) / 10;
+      const kgDisp = f => Math.max(0, Math.round(((Number(f && f.kg) || 0) - kgParc(f)) * 10) / 10);
+      const kgRetiro = f => f.retiro && f.retiro.kg != null ? Number(f.retiro.kg) || 0 : kgDisp(f);
+      window.inoferKgFardo = kgDisp;
+      const MAQF = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG.map(m => m.id) : ['200V', '200N', '180', 'H50', 'Z30']);
+      const esMaqF = d => MAQF().some(m => norm(m) === norm(d));
+      const fardoDeId = (k, id) => { const d = ((D('stock').materiales || {})[k]) || {}; return { d, f: (d.fardos || []).find(x => x.id === id) }; };
+      function retiroParcial(k, id, datos) {
+        const { d, f } = fardoDeId(k, id); if (!f) return { error: 'No se encontró el fardo' };
+        if (f.retiro) return { error: 'El fardo ya está retirado' };
+        const kg = Math.round((Number(String(datos.kg).replace(',', '.')) || 0) * 10) / 10, disp = kgDisp(f);
+        if (!(kg > 0)) return { error: 'Poné los kilos que se retiran' };
+        if (kg > disp + 0.001) return { error: `El fardo tiene ${n1(disp)} kg: no se pueden sacar ${n1(kg)}` };
+        const destino = String(datos.destino || '').trim().slice(0, 60), ahora = new Date().toISOString(), fecha = datos.fecha || hoyIso();
+        const descuenta = datos.descuenta != null ? !!datos.descuenta : !esMaqF(destino);
+        const pr = { id: 'fp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kg, fecha, destino, nota: String(datos.nota || '').trim().slice(0, 120), descuenta, por: quien(), at: ahora };
+        if (descuenta) { d.movimientos = d.movimientos || []; const mv = { id: 'sm-' + Date.now() + 'p', fecha, tipo: 'despacho', kg, nota: `Retiro parcial del fardo N° ${f.numero}${destino ? ' → ' + destino : ''}${pr.nota ? ' · ' + pr.nota : ''}`, por: quien(), cargadoAt: ahora, fardoParcial: pr.id }; d.movimientos.push(mv); pr.movId = mv.id; }
+        f.parciales = (f.parciales || []).concat([pr]);
+        if (kgDisp(f) <= 0) f.retiro = { fecha, maquina: destino, nota: 'Se terminó de sacar por partes', por: quien(), at: ahora, kg: 0, porPartes: true };
+        guardarMod('stock'); renderStock(); programarAvisos();
+        return { ok: true, queda: kgDisp(f), parcial: pr };
+      }
+      function anularParcial(k, id, pid) {
+        const { d, f } = fardoDeId(k, id); if (!f) return false;
+        const pr = (f.parciales || []).find(x => x.id === pid); if (!pr) return false;
+        f.parciales = f.parciales.filter(x => x.id !== pid);
+        if (pr.movId) d.movimientos = (d.movimientos || []).filter(m => m.id !== pr.movId);
+        if (f.retiro && f.retiro.porPartes) delete f.retiro;
+        guardarMod('stock'); renderStock(); programarAvisos(); return true;
+      }
+      function editarFardoDatos(k, id, x) {
+        const { d, f } = fardoDeId(k, id); if (!f) return { error: 'No se encontró el fardo' };
+        const kg = Math.round((Number(String(x.kg).replace(',', '.')) || 0) * 10) / 10;
+        if (!(kg > 0)) return { error: 'Poné los kilos del fardo' };
+        if (kg < kgParc(f) - 0.001) return { error: `Ya se sacaron ${n1(kgParc(f))} kg de este fardo: no puede pesar menos` };
+        const num = Math.round(Number(x.numero) || 0);
+        if (!(num > 0)) return { error: 'El número de fardo tiene que ser mayor a 0' };
+        if ((d.fardos || []).some(o => o !== f && Number(o.numero) === num)) return { error: `Ya existe el fardo N° ${num} de ${k}` };
+        const og = String(x.origen || 'nuevo'), rec = /^r[123]$/.test(og);
+        const analisis = String(x.analisis || '').trim().slice(0, 40);
+        if (!rec && !analisis) return { error: 'El material nuevo necesita el N° de análisis' };
+        const delta = Math.round((kg - (Number(f.kg) || 0)) * 10) / 10;
+        const mv = (d.movimientos || []).find(m => Array.isArray(m.fardos) && m.fardos.includes(f.id));
+        if (delta && mv) mv.kg = Math.round(((Number(mv.kg) || 0) + delta) * 10) / 10;
+        const antes = { numero: f.numero, kg: f.kg, analisis: f.analisis, fecha: f.fecha };
+        Object.assign(f, { numero: num, kg, analisis, fecha: x.fecha || f.fecha, nota: String(x.nota || '').trim().slice(0, 120), modificadoPor: quien(), modificadoAt: new Date().toISOString() });
+        if (rec) { f.origen = 'recuperado'; f.grado = Number(og.slice(1)); } else { f.origen = 'nuevo'; delete f.grado; }
+        if (f.retiro && !f.retiro.porPartes) { f.retiro.fecha = x.retFecha || f.retiro.fecha; f.retiro.maquina = String(x.retMaquina != null ? x.retMaquina : f.retiro.maquina || ''); f.retiro.nota = String(x.retNota != null ? x.retNota : f.retiro.nota || '').trim(); f.retiro.kg = kgDisp(f); }
+        f.correcciones = (f.correcciones || []).concat([{ at: f.modificadoAt, por: f.modificadoPor, antes }]).slice(-10);
+        guardarMod('stock'); renderStock(); programarAvisos();
+        return { ok: true, delta };
+      }
+      window.inoferFardosApi = { retiroParcial, anularParcial, editar: editarFardoDatos, kgDisp };
+      function formParcial(k, id) {
+        const { f } = fardoDeId(k, id); if (!f) return;
+        const disp = kgDisp(f);
+        const w = modal(`✂️ Retirar kilos del fardo N° ${f.numero} · ${esc(k)}`, `<form class="stfp-form grid gap-2 sm:grid-cols-4 text-xs">
+            <div class="sm:col-span-4 rounded-lg bg-slate-950/70 px-3 py-2 text-slate-300">El fardo pesa <b class="text-white">${n1(f.kg)} kg</b>${kgParc(f) ? ` · ya se sacaron ${n1(kgParc(f))} kg` : ''} · quedan <b class="text-teal-200">${n1(disp)} kg</b>. Análisis ${esc(f.analisis || '—')}.</div>
+            <label class="text-[11px] text-slate-400">Kg que se retiran<input name="kg" type="number" step="0.1" min="0.1" max="${disp}" required class="stfp-kg ${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Fecha<input name="fecha" type="date" value="${hoyIso()}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">¿A dónde va?<select name="dest" class="stfp-dest ${INP} w-full"><option value="__otro">Otro destino (sale de la planta)</option>${MAQF().map(m => `<option>${esc(m)}</option>`).join('')}</select></label>
+            <label class="stfp-otro-box text-[11px] text-slate-400">¿Cuál?<input name="otro" maxlength="60" placeholder="Ej: otra planta, cliente, proveedor" class="${INP} w-full"></label>
+            <label class="sm:col-span-4 text-[11px] text-slate-400">Nota<input name="nota" maxlength="120" class="${INP} w-full"></label>
+            <label class="sm:col-span-4 flex items-start gap-2 text-[11px] text-slate-200"><input type="checkbox" name="descuenta" checked class="stfp-desc mt-0.5 h-4 w-4 accent-orange-500"><span>Descontar estos kilos del stock del material<span class="block text-slate-400">Sí cuando el material sale de la planta. No cuando va a una máquina: ahí lo descuenta la producción de los turnos.</span></span></label>
+            <div class="stfp-res sm:col-span-4 text-sm font-black text-white"></div>
+            <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="pm-cerrar ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-orange-400 bg-orange-500 text-slate-950">Retirar kilos</button></div></form>`, 'max-w-2xl');
+        const fm = w.querySelector('.stfp-form');
+        const pintar = () => { const kg = Number(fm.kg.value) || 0; fm.querySelector('.stfp-res').textContent = kg > 0 ? (kg > disp ? `⚠️ El fardo tiene ${n1(disp)} kg` : `Quedan en el fardo: ${n1(disp - kg)} kg`) : ''; const otro = fm.dest.value === '__otro'; fm.querySelector('.stfp-otro-box').classList.toggle('hidden', !otro); };
+        fm.addEventListener('input', pintar);
+        fm.addEventListener('change', e => { if (e.target.classList.contains('stfp-dest')) fm.descuenta.checked = e.target.value === '__otro'; pintar(); });
+        pintar(); setTimeout(() => fm.kg.focus(), 30);
+        fm.addEventListener('submit', e => {
+          e.preventDefault(); if (!editStock()) return;
+          const destino = fm.dest.value === '__otro' ? (fm.otro.value.trim() || 'Otro destino') : fm.dest.value;
+          const r = retiroParcial(k, id, { kg: fm.kg.value, fecha: fm.fecha.value, destino, nota: fm.nota.value, descuenta: fm.descuenta.checked });
+          if (r.error) { toast(r.error); return; }
+          toast(`✓ Se retiraron ${n1(r.parcial.kg)} kg del fardo N° ${f.numero}. Quedan ${n1(r.queda)} kg${r.parcial.descuenta ? ' (descontado del stock)' : ''}`);
+          verFardos(k);
+        });
+      }
+      function formEditar(k, id) {
+        const { f } = fardoDeId(k, id); if (!f) return;
+        const og = f.origen === 'recuperado' ? 'r' + (f.grado || 1) : 'nuevo', R = f.retiro && !f.retiro.porPartes;
+        const w = modal(`✏️ Corregir el fardo N° ${f.numero} · ${esc(k)}`, `<form class="stfe-form grid gap-2 sm:grid-cols-4 text-xs">
+            <div class="sm:col-span-4 flex flex-wrap gap-2">${[['nuevo', 'Material nuevo'], ['r1', '♻️ Recuperado 1°'], ['r2', '♻️ Recuperado 2°'], ['r3', '♻️ Recuperado 3°']].map(([v, t]) => `<label class="cursor-pointer rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-bold text-slate-200 has-[:checked]:border-teal-400 has-[:checked]:bg-teal-500/15"><input type="radio" name="origen" value="${v}" class="mr-1.5" ${og === v ? 'checked' : ''}>${t}</label>`).join('')}</div>
+            <label class="text-[11px] text-slate-400">Fardo N°<input name="numero" type="number" min="1" step="1" required value="${esc(f.numero)}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">N° de análisis<input name="analisis" maxlength="40" value="${esc(f.analisis || '')}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Kg del fardo (al entrar)<input name="kg" type="number" step="0.1" min="0.1" required value="${esc(f.kg)}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Fecha de ingreso<input name="fecha" type="date" value="${esc(f.fecha || '')}" class="${INP} w-full"></label>
+            <label class="sm:col-span-4 text-[11px] text-slate-400">Proveedor / remito / nota<input name="nota" maxlength="120" value="${esc(f.nota || '')}" class="${INP} w-full"></label>
+            ${R ? `<div class="sm:col-span-4 text-[11px] font-bold text-orange-300">Retiro</div>
+            <label class="text-[11px] text-slate-400">Fecha de retiro<input name="retFecha" type="date" value="${esc(f.retiro.fecha || '')}" class="${INP} w-full"></label>
+            <label class="text-[11px] text-slate-400">Máquina / destino<select name="retMaquina" class="${INP} w-full"><option value="">— (sin especificar)</option>${MAQF().concat(['Otro destino']).map(m => `<option ${f.retiro.maquina === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}${f.retiro.maquina && !MAQF().concat(['Otro destino']).includes(f.retiro.maquina) ? `<option selected>${esc(f.retiro.maquina)}</option>` : ''}</select></label>
+            <label class="sm:col-span-2 text-[11px] text-slate-400">Nota del retiro<input name="retNota" maxlength="120" value="${esc(f.retiro.nota || '')}" class="${INP} w-full"></label>` : ''}
+            <p class="sm:col-span-4 text-[11px] text-slate-400">Si cambiás los kilos, el ingreso de este fardo se corrige y el stock del material también. Queda registrado quién lo corrigió.</p>
+            <div class="sm:col-span-4 flex justify-end gap-2"><button type="button" class="pm-cerrar ${BTN} border-slate-700 text-slate-300">Cancelar</button><button class="${BTN} border-teal-400 bg-teal-500 text-slate-950">Guardar cambios</button></div></form>`, 'max-w-2xl');
+        const fm = w.querySelector('.stfe-form');
+        fm.addEventListener('submit', e => {
+          e.preventDefault(); if (!editStock()) return;
+          const r = editarFardoDatos(k, id, Object.fromEntries(new FormData(fm).entries()));
+          if (r.error) { toast(r.error); return; }
+          toast(`✓ Fardo corregido${r.delta ? ` (${r.delta > 0 ? '+' : ''}${n1(r.delta)} kg en el stock)` : ''}`);
+          verFardos(k);
+        });
+      }
       function verFardos(k) {
         const S = D('stock'); const d = ((S.materiales || {})[k]) || {}; const edit = editStock();
         const L = (d.fardos || []).slice().sort((a, b) => (b.numero || 0) - (a.numero || 0));
         const dep = L.filter(f => !f.retiro), vis = fardosVerRet ? L : dep;
-        const porTipo = {}; dep.forEach(f => { const t = tipoFardo(f); porTipo[t] = porTipo[t] || { n: 0, kg: 0 }; porTipo[t].n++; porTipo[t].kg += Number(f.kg) || 0; });
-        const porAn = {}; dep.forEach(f => { const a = f.analisis || '—'; porAn[a] = porAn[a] || { n: 0, kg: 0 }; porAn[a].n++; porAn[a].kg += Number(f.kg) || 0; });
-        const w = modal(`🧱 Fardos · ${esc(k)}`, `<div class="flex flex-wrap items-center gap-2 text-xs"><span class="rounded-lg bg-teal-500/15 px-2.5 py-1.5 font-black text-teal-200">En depósito: ${dep.length} fardo${dep.length === 1 ? '' : 's'} · ${n0(dep.reduce((a, f) => a + (Number(f.kg) || 0), 0))} kg</span>
+        const porTipo = {}; dep.forEach(f => { const t = tipoFardo(f); porTipo[t] = porTipo[t] || { n: 0, kg: 0 }; porTipo[t].n++; porTipo[t].kg += kgDisp(f); });
+        const porAn = {}; dep.forEach(f => { const a = f.analisis || '—'; porAn[a] = porAn[a] || { n: 0, kg: 0 }; porAn[a].n++; porAn[a].kg += kgDisp(f); });
+        const w = modal(`🧱 Fardos · ${esc(k)}`, `<div class="flex flex-wrap items-center gap-2 text-xs"><span class="rounded-lg bg-teal-500/15 px-2.5 py-1.5 font-black text-teal-200">En depósito: ${dep.length} fardo${dep.length === 1 ? '' : 's'} · ${n0(dep.reduce((a, f) => a + kgDisp(f), 0))} kg</span>
             ${Object.keys(porTipo).sort().map(t => `<span class="rounded-lg border ${t === 'Nuevo' ? 'border-sky-500/40 text-sky-200' : 'border-lime-500/40 text-lime-200'} px-2 py-1">${t === 'Nuevo' ? '' : '♻️ '}${esc(t)}: <b>${porTipo[t].n}</b> · ${n0(porTipo[t].kg)} kg</span>`).join('')}
             ${Object.keys(porAn).sort().map(a => `<span class="rounded-lg border border-slate-700 px-2 py-1 text-slate-300">Análisis <b class="text-white">${esc(a)}</b>: ${porAn[a].n} · ${n0(porAn[a].kg)} kg</span>`).join('')}
             <label class="ml-auto flex items-center gap-1.5 text-slate-300"><input type="checkbox" class="stf-ret h-4 w-4" ${fardosVerRet ? 'checked' : ''}> Ver también los retirados</label>
             <button type="button" class="stf-imp ${BTN} border-slate-600 text-slate-200">🖨️ Imprimir</button></div>
           ${vis.length ? `<div class="max-h-[60vh] overflow-y-auto"><table class="w-full text-xs"><thead class="sticky top-0 bg-slate-900"><tr class="text-left text-[10px] uppercase text-slate-500"><th class="py-1.5 pr-2">Fardo</th><th class="pr-2">Tipo</th><th class="pr-2">Análisis</th><th class="pr-2 text-right">Kg</th><th class="pr-2">Ingresó</th><th class="pr-2">Estado</th><th></th></tr></thead><tbody>
-            ${vis.map(f => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-black text-white">N° ${f.numero}</td><td class="pr-2">${chipFardo(f)}</td><td class="pr-2 text-slate-200">${esc(f.analisis || '—')}</td><td class="pr-2 text-right font-bold text-white">${n1(f.kg)}</td><td class="pr-2 text-slate-400">${fDia(f.fecha)}${f.nota ? `<span class="block text-[10px] text-slate-500">${esc(f.nota)}</span>` : ''}</td>
-              <td class="pr-2">${f.retiro ? `<span class="text-orange-300">Retirado ${fDia(f.retiro.fecha)}${f.retiro.maquina ? ' → ' + esc(f.retiro.maquina) : ''}</span><span class="block text-[10px] text-slate-500">${esc(f.retiro.por || '')}${f.retiro.nota ? ' · ' + esc(f.retiro.nota) : ''}</span>` : '<span class="font-bold text-teal-300">En depósito</span>'}</td>
-              <td class="whitespace-nowrap text-right">${edit ? (f.retiro ? `<button type="button" class="stf-volver text-[11px] text-slate-300 hover:text-white" data-id="${esc(f.id)}">↩ Volver al depósito</button>` : `<button type="button" class="stf-retirar text-[11px] font-bold text-orange-300 hover:text-orange-200" data-id="${esc(f.id)}">📤 Retirar</button>`) : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="text-xs text-slate-400">No hay fardos en el depósito.</div>'}`, 'max-w-3xl');
+            ${vis.map(f => `<tr class="border-t border-slate-800"><td class="py-1.5 pr-2 font-black text-white">N° ${f.numero}</td><td class="pr-2">${chipFardo(f)}</td><td class="pr-2 text-slate-200">${esc(f.analisis || '—')}</td><td class="pr-2 text-right font-bold text-white">${kgParc(f) ? `${n1(kgDisp(f))}<span class="block text-[10px] font-normal text-amber-300">de ${n1(f.kg)}</span>` : n1(f.kg)}</td><td class="pr-2 text-slate-400">${fDia(f.fecha)}${f.nota ? `<span class="block text-[10px] text-slate-500">${esc(f.nota)}</span>` : ''}${f.modificadoAt ? `<span class="block text-[10px] text-slate-500">✏️ corregido por ${esc(String(f.modificadoPor || '').replace(/\s*\(@.*\)$/, ''))}</span>` : ''}</td>
+              <td class="pr-2">${f.retiro ? `<span class="text-orange-300">Retirado ${fDia(f.retiro.fecha)}${f.retiro.maquina ? ' → ' + esc(f.retiro.maquina) : ''}</span><span class="block text-[10px] text-slate-500">${esc(f.retiro.por || '')}${f.retiro.nota ? ' · ' + esc(f.retiro.nota) : ''}</span>` : '<span class="font-bold text-teal-300">En depósito</span>'}${(f.parciales || []).map(p => `<span class="mt-0.5 block text-[10px] text-amber-200">✂️ ${fDia(p.fecha)}: ${n1(p.kg)} kg${p.destino ? ' → ' + esc(p.destino) : ''}${p.descuenta ? ' · descontado del stock' : ''}${p.nota ? ' · ' + esc(p.nota) : ''}${edit ? ` <button type="button" class="stf-anular ml-1 text-slate-400 hover:text-rose-300" data-id="${esc(f.id)}" data-p="${esc(p.id)}" title="Anular este retiro parcial">✕</button>` : ''}</span>`).join('')}</td>
+              <td class="whitespace-nowrap text-right">${edit ? `<button type="button" class="stf-editar mr-2 text-[11px] text-slate-300 hover:text-white" data-id="${esc(f.id)}" title="Corregir datos del fardo">✏️ Editar</button>` + (f.retiro ? `<button type="button" class="stf-volver text-[11px] text-slate-300 hover:text-white" data-id="${esc(f.id)}">↩ Volver al depósito</button>` : `<button type="button" class="stf-parcial mr-2 text-[11px] font-bold text-amber-300 hover:text-amber-200" data-id="${esc(f.id)}">✂️ Retirar kg</button><button type="button" class="stf-retirar text-[11px] font-bold text-orange-300 hover:text-orange-200" data-id="${esc(f.id)}">📤 Retirar</button>`) : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="text-xs text-slate-400">No hay fardos en el depósito.</div>'}`, 'max-w-3xl');
         w.addEventListener('change', e => { if (e.target.classList.contains('stf-ret')) { fardosVerRet = e.target.checked; verFardos(k); } });
         w.addEventListener('click', e => {
           const b = e.target.closest('button'); if (!b) return;
           if (b.classList.contains('stf-imp')) { imprimirFardos({ material: k }); return; }
           if (!editStock()) return;
+          if (b.classList.contains('stf-editar')) { formEditar(k, b.dataset.id); return; }
+          if (b.classList.contains('stf-parcial')) { formParcial(k, b.dataset.id); return; }
+          if (b.classList.contains('stf-anular')) { const { f } = fardoDeId(k, b.dataset.id); const pr = f && (f.parciales || []).find(x => x.id === b.dataset.p); if (!pr || !confirm(`¿Anular el retiro de ${n1(pr.kg)} kg del fardo N° ${f.numero}? Los kilos vuelven al fardo${pr.descuenta ? ' y al stock' : ''}.`)) return; anularParcial(k, b.dataset.id, b.dataset.p); verFardos(k); toast('✓ Retiro parcial anulado'); return; }
           if (b.classList.contains('stf-retirar')) { cerrarModal(); stockForm = { tipo: 'retiro', clave: k, fardoId: b.dataset.id }; renderStock(); const vv = $('viewStock'); if (vv) vv.scrollIntoView({ behavior: 'smooth' }); return; }
-          if (b.classList.contains('stf-volver')) { const f = (d.fardos || []).find(x => x.id === b.dataset.id); if (!f || !confirm(`¿El fardo N° ${f.numero} vuelve al depósito (se anula el retiro)?`)) return; delete f.retiro; guardarMod('stock'); verFardos(k); renderStock(); toast('✓ El fardo volvió al depósito'); }
+          if (b.classList.contains('stf-volver')) { const f = (d.fardos || []).find(x => x.id === b.dataset.id); if (!f || !confirm(`¿El fardo N° ${f.numero} vuelve al depósito (se anula el retiro)?`)) return; if (f.retiro && f.retiro.porPartes && !kgDisp(f)) { toast('Ese fardo se sacó entero por partes: anulá alguno de los retiros parciales'); return; } delete f.retiro; guardarMod('stock'); verFardos(k); renderStock(); toast('✓ El fardo volvió al depósito'); }
         });
       }
       window.inoferVerFardos = verFardos;
@@ -823,13 +932,13 @@
         const ing = [], ret = [], dep = [], res = {}, porMaq = {}, porTipo = {};
         mats.forEach(m => (S.materiales[m].fardos || []).forEach(f => {
           const r = res[m] = res[m] || { ingN: 0, ingKg: 0, retN: 0, retKg: 0, depN: 0, depKg: 0 }; const kg = Number(f.kg) || 0;
-          if (f.fecha >= o.desde && f.fecha <= o.hasta) { ing.push(Object.assign({ material: m }, f)); r.ingN++; r.ingKg += kg; }
-          if (f.retiro && f.retiro.fecha >= o.desde && f.retiro.fecha <= o.hasta) { ret.push(Object.assign({ material: m }, f)); r.retN++; r.retKg += kg; const q = f.retiro.maquina || 'Sin especificar'; const x = porMaq[q] = porMaq[q] || { n: 0, kg: 0, mats: {} }; x.n++; x.kg += kg; x.mats[m] = (x.mats[m] || 0) + kg; }
-          if (!f.retiro) { dep.push(Object.assign({ material: m }, f)); r.depN++; r.depKg += kg; }
           const tk = m + '|' + tipoFardo(f), t = porTipo[tk] = porTipo[tk] || { material: m, tipo: tipoFardo(f), ingN: 0, ingKg: 0, retN: 0, retKg: 0, depN: 0, depKg: 0 };
-          if (f.fecha >= o.desde && f.fecha <= o.hasta) { t.ingN++; t.ingKg += kg; }
-          if (f.retiro && f.retiro.fecha >= o.desde && f.retiro.fecha <= o.hasta) { t.retN++; t.retKg += kg; }
-          if (!f.retiro) { t.depN++; t.depKg += kg; }
+          if (f.fecha >= o.desde && f.fecha <= o.hasta) { ing.push(Object.assign({ material: m }, f)); r.ingN++; r.ingKg += kg; t.ingN++; t.ingKg += kg; }
+          // retiros: los parciales (por kilos) y el retiro final (lo que quedaba en el fardo) van como renglones separados
+          const salidas = (f.parciales || []).map(p => ({ kg: Number(p.kg) || 0, retiro: { fecha: p.fecha, maquina: p.destino, nota: '✂️ Parcial' + (p.descuenta ? ' (descontado del stock)' : '') + (p.nota ? ' · ' + p.nota : ''), por: p.por }, parcial: true }));
+          if (f.retiro && kgRetiro(f) > 0) salidas.push({ kg: kgRetiro(f), retiro: f.retiro });
+          salidas.forEach(sx => { if (!(sx.retiro.fecha >= o.desde && sx.retiro.fecha <= o.hasta)) return; ret.push(Object.assign({ material: m }, f, sx)); r.retN++; r.retKg += sx.kg; t.retN++; t.retKg += sx.kg; const q = sx.retiro.maquina || 'Sin especificar'; const x = porMaq[q] = porMaq[q] || { n: 0, kg: 0, mats: {} }; x.n++; x.kg += sx.kg; x.mats[m] = (x.mats[m] || 0) + sx.kg; });
+          if (!f.retiro) { const kd = kgDisp(f); dep.push(Object.assign({ material: m }, f, { kg: kd })); r.depN++; r.depKg += kd; t.depN++; t.depKg += kd; }
         }));
         const orden = (a, b) => String(a.material).localeCompare(String(b.material)) || (a.numero || 0) - (b.numero || 0);
         ing.sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || orden(a, b));
@@ -956,7 +1065,7 @@
             const clave = String(fd.clave || '').trim(); const ids = new FormData(e.target).getAll('fardo');
             if (!ids.length) { toast('Elegí qué fardo se retira'); return; }
             const d = ((D('stock').materiales || {})[clave]) || {}; const ahora = new Date().toISOString(); let kg = 0;
-            (d.fardos || []).forEach(f => { if (ids.includes(f.id) && !f.retiro) { f.retiro = { fecha: fd.fecha || hoyIso(), maquina: String(fd.maquina || ''), nota: String(fd.nota || '').trim(), por: quien(), at: ahora }; kg += Number(f.kg) || 0; } });
+            (d.fardos || []).forEach(f => { if (ids.includes(f.id) && !f.retiro) { const kd = kgDisp(f); f.retiro = { fecha: fd.fecha || hoyIso(), maquina: String(fd.maquina || ''), nota: String(fd.nota || '').trim(), por: quien(), at: ahora, kg: kd }; kg += kd; } });
             stockForm = null; guardarMod('stock'); renderStock(); programarAvisos();
             toast(`✓ ${ids.length} fardo${ids.length === 1 ? '' : 's'} retirado${ids.length === 1 ? '' : 's'} del depósito (${n0(kg)} kg)`);
             return;
