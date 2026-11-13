@@ -388,6 +388,8 @@ function claveCorrecta_(u, clave) {
   try { u.sal = Utilities.getUuid(); u.hash = hashClaveV2_(u.sal, clave); escribirUsuario(u); } catch (e) { }
   return true;
 }
+// (13/11/2026) mismo criterio que la app: sin tildes ni ñ, espacios → punto
+function normUsuario_(v) { return String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '.'); }
 function claveNuevaMala_(clave) {
   clave = String(clave || '');
   if (clave.length < CLAVE_MIN) return 'La clave debe tener al menos ' + CLAVE_MIN + ' caracteres.';
@@ -540,7 +542,7 @@ function accionCuenta(body) {
     }
     if (body.action === 'setupAdmin') {
       if (usuarios.length > 0) return { status: 'error', error: 'Ya existe un administrador.' };
-      const usuario = String(body.usuario || '').trim().toLowerCase();
+      const usuario = normUsuario_(body.usuario);
       if (!usuario) return { status: 'error', error: 'Usuario o clave inválidos.' };
       const malaA = claveNuevaMala_(body.clave); if (malaA) return { status: 'error', error: malaA };
       const sal = Utilities.getUuid();
@@ -549,7 +551,7 @@ function accionCuenta(body) {
       return { status: 'ok', token: crearSesion(usuario), auth: publico(u) };
     }
     if (body.action === 'login') {
-      const usuario = String(body.usuario || '').trim().toLowerCase();
+      const usuario = normUsuario_(body.usuario);
       const u = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
       if (intentosClave_(usuario) >= INTENTOS_MAX) {
         Utilities.sleep(800);
@@ -584,8 +586,8 @@ function accionCuenta(body) {
     }
     if (body.action === 'saveUser') {
       const d = body.user || {};
-      const usuario = String(d.usuario || '').trim().toLowerCase();
-      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return { status: 'error', error: 'El usuario debe tener entre 3 y 30 letras o números (sin espacios).' };
+      const usuario = normUsuario_(d.usuario);
+      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return { status: 'error', error: 'El usuario tiene que tener entre 3 y 30 caracteres: letras sin tilde, números, punto, guion o guion bajo (ej: juan.perez).' };
       const ex = usuarios.filter(function (x) { return x.usuario === usuario; })[0];
       const rol = d.rol === 'admin' ? 'admin' : 'usuario';
       const activo = d.activo !== false;

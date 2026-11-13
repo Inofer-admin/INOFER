@@ -499,6 +499,19 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const on = d.modules.orders.find(o => o.id === 'ord-rc');
       ok(on && (on.rechazos || []).length === 1 && d.modules.calidad && d.modules.calidad.causas.includes('Poro en la cara A'), 'el rechazo o la causa no llegaron a la nube');
     });
+    await prueba('Usuarios: se aceptan tildes, ñ y espacios ("José Núñez" → jose.nunez) y se entra igual', async () => {
+      const r = await A.evaluate(async () => {
+        const out = { norm: inoferNormUsuario('  José Núñez '), mal: inoferUsuarioMal('ju@n'), corto: inoferUsuarioMal('jo') };
+        const g = await inoferCloudPost({ token: inoferAuthToken(), action: 'saveUser', user: { usuario: 'José Núñez', nombre: 'José Núñez', clave: 'nunez77', rol: 'usuario', activo: true, permisos: {} } });
+        out.guardo = g && g.status;
+        const l = await inoferCloudPost({ action: 'login', usuario: 'JOSÉ NÚÑEZ', clave: 'nunez77' });
+        out.login = l && l.status; out.quien = l && l.auth && l.auth.usuario;
+        await inoferCloudPost({ token: inoferAuthToken(), action: 'deleteUser', usuario: 'jose.nunez' });
+        return out;
+      });
+      ok(r.norm === 'jose.nunez' && /"@"/.test(r.mal) && /tiene 2/.test(r.corto), 'normalización: ' + JSON.stringify(r));
+      ok(r.guardo === 'ok' && r.login === 'ok' && r.quien === 'jose.nunez', 'crear y entrar con tildes: ' + JSON.stringify(r));
+    });
     await prueba('Seguridad: claves de 6, clave fácil rechazada y bloqueo tras 5 intentos', async () => {
       const r = await A.evaluate(async () => {
         const P = b => inoferCloudPost(Object.assign({ token: inoferAuthToken() }, b));

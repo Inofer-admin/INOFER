@@ -26,6 +26,7 @@ Todas las PC (programa Java) y celulares (web/PWA) se actualizan solos desde ac�
 - Ingreso obligatorio. Áreas: partes, ordenes, catalogo, gantt, ia, indicadores. Niveles: none / view / edit. Rol admin = todo + usuarios + nube.
 - Modo nube (Codigo.gs nuevo): login/token y permisos validados en el servidor (hoja BD_Usuarios, sesiones en Script Properties).
 - Modo local (sin nube o Codigo.gs viejo): usuarios en localStorage `tablero_inyectoras_users_v1`, compartidos como módulo `users`.
+- Nombre de usuario (13/11/2026, el usuario no podía crear uno): se normaliza en app y servidor (`inoferNormUsuario` / `normUsuario_`): minúsculas, sin tildes ni ñ, espacios → punto ("José Núñez" → jose.nunez); vale en login, alta del admin y saveUser. `inoferUsuarioMal` dice el largo o qué caracteres no van. Válido: [a-z0-9._-]{3,30}.
 - Interfaz: `INOFER_EDIT_CONTROLS` en index.html lista los controles que modifican datos por área. Si se agrega un botón/campo
   que modifica datos, sumarlo ahí.
 

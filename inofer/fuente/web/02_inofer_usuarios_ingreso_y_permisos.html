@@ -1,4 +1,13 @@
   <script>
+    // (13/11/2026) Usuario: se aceptan tildes, ñ y espacios escribiendo y se guardan sin ellos ("Iván Núñez" → "ivan.nunez").
+    // Antes la validación rechazaba "iván" o "juan perez" con un mensaje que no explicaba por qué.
+    window.inoferNormUsuario = v => String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '.');
+    window.inoferUsuarioMal = u => {
+      if (u.length < 3 || u.length > 30) return `El usuario tiene que tener entre 3 y 30 caracteres (tiene ${u.length}).`;
+      const malos = [...new Set(u.replace(/[a-z0-9._-]/g, '').split(''))];
+      if (malos.length) return `El usuario no puede llevar: ${malos.map(c => '"' + c + '"').join(' ')}. Usá solo letras, números, punto, guion o guion bajo (ej: jperez o juan.perez).`;
+      return '';
+    };
     // =====================================================================
     // INOFER — USUARIOS, INGRESO Y PERMISOS
     //  Áreas: partes · ordenes · catalogo · gantt · ia
@@ -347,14 +356,14 @@
     }
 
     async function inoferSubmitLogin() {
-      const usuario = (document.getElementById('inoferLoginUser').value || '').trim().toLowerCase();
+      const usuario = inoferNormUsuario(document.getElementById('inoferLoginUser').value);
       const clave = document.getElementById('inoferLoginPass').value || '';
       const btn = document.getElementById('inoferLoginBtn');
       inoferLoginError('');
       if (inoferAuthMode === 'offline') { await inoferShowLogin(); return; }
       if (!usuario || !clave) { inoferLoginError('Completá usuario y clave.'); return; }
       if (inoferSetupMode) {
-        if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) { inoferLoginError('El usuario debe tener entre 3 y 30 letras o números, sin espacios.'); return; }
+        { const m = inoferUsuarioMal(usuario); if (m) { inoferLoginError(m); return; } }
         if (clave.length < 6) { inoferLoginError('La clave debe tener al menos 6 caracteres.'); return; }
         if (clave !== document.getElementById('inoferSetupPass2').value) { inoferLoginError('Las dos claves no coinciden.'); return; }
       }
@@ -631,8 +640,9 @@
     function inoferUfError(msg) {
       const el = document.getElementById('inoferUfError'); el.textContent = msg; el.classList.toggle('hidden', !msg);
     }
+    document.addEventListener('change', e => { if (e.target && e.target.id === 'inoferUfUsuario') { const n = inoferNormUsuario(e.target.value); if (n !== e.target.value) { e.target.value = n; inoferUfError(''); try { showToast('El usuario se guarda como: ' + n); } catch (er) { } } } });
     async function inoferSaveUserForm() {
-      const usuario = (document.getElementById('inoferUfUsuario').value || '').trim().toLowerCase();
+      const ufu = document.getElementById('inoferUfUsuario'); const usuario = inoferNormUsuario(ufu.value); if (ufu.value !== usuario) ufu.value = usuario;
       const data = {
         usuario, nombre: (document.getElementById('inoferUfNombre').value || '').trim() || usuario,
         clave: document.getElementById('inoferUfClave').value || '',
@@ -640,7 +650,7 @@
         activo: document.getElementById('inoferUfActivo').checked,
         permisos: { ...inoferFormPerms }
       };
-      if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return inoferUfError('El usuario debe tener entre 3 y 30 letras o números, sin espacios (ej: jperez).');
+      { const m = inoferUsuarioMal(usuario); if (m) return inoferUfError(m); }
       if (!inoferEditingUser && inoferUsersCache.some(u => u.usuario === usuario)) return inoferUfError('Ya existe un usuario con ese nombre.');
       if (!inoferEditingUser && data.clave.length < 6) return inoferUfError('La clave debe tener al menos 6 caracteres.');
       if (data.clave && data.clave.length < 6) return inoferUfError('La clave debe tener al menos 6 caracteres.');
