@@ -1465,6 +1465,17 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         out.hoja = { n: h.n, filas: h.filas, par: h.par, ok: /HOJA DE CONTROL DE INYECCIÓN/.test(h.html) && /Peso neto/.test(h.html) && /1° Velocidad/.test(h.html) && /70 g/.test(h.html) && /260/.test(h.html) };
         inoferCalidad.estado().sub = 'liberaciones'; switchTab('calidad'); await w(300);
         out.botonHoja = !!document.querySelector('[data-cal-hoja]');
+        // descargar: Excel con Resumen + una pestaña por hoja, PDF con todas, ventana con cuenta
+        const xl = inoferCalidad.descargarHojas({ desde: f, hasta: f, maq: '200V', pieza: '' }, 'excel', { probar: true });
+        const R = xl.book && XLSX.utils.sheet_to_json(xl.book.Sheets.Resumen, { header: 1 });
+        const hoja2 = xl.book && XLSX.utils.sheet_to_json(xl.book.Sheets[xl.book.SheetNames[1]], { header: 1 });
+        out.excel = xl.book && { hojas: xl.book.SheetNames.length, nombre: xl.book.SheetNames[1], filas: R.length, neto: R[1][R[0].indexOf('Peso neto (g)')], pm: R[2][R[0].indexOf('Presión de mult. (bar)')], tieneDatos: hoja2.some(fl => fl[0] === 'Peso neto (g)' && fl[1] === 69) };
+        const pdf = inoferCalidad.descargarHojas({ desde: f, hasta: f, maq: '', pieza: '90107' }, 'pdf', { probar: true });
+        out.pdf = pdf.n === 1 && /HOJA DE CONTROL/.test(pdf.html);
+        out.nada = inoferCalidad.descargarHojas({ desde: '2020-01-01', hasta: '2020-01-02' }, 'excel', { probar: true }).n;
+        document.querySelector('[data-cal="hojasDesc"]').click(); await w(200);
+        out.ventana = /1<\/b> hoja/.test(document.getElementById('calHdCuenta').innerHTML) || /hoja/.test(document.getElementById('calHdCuenta').textContent);
+        document.querySelector('[data-hd="cerrar"]').click();
         // configuración de la hoja: tolerancia 3%
         inoferCalidad.estado().sub = 'planes'; inoferCalidad.estado().planPieza = ''; switchTab('calidad'); await w(300);
         document.getElementById('calHjTol').value = '3'; document.querySelector('[data-cal="hojaGuardar"]').click(); await w(300);
@@ -1483,6 +1494,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.rec1 && r.rec1.tipo === 'primera' && r.rec1.par.v1 === 30 && r.rec1.par.pm === 250 && r.rec1.neto === 69 && r.rec1.n === 6, 'la liberación no guardó valores o parámetros: ' + JSON.stringify(r.rec1));
       ok(r.pre === '30' && r.cambio && r.bajo, 'los parámetros no vinieron precargados o el peso bajo no bloqueó: ' + JSON.stringify(r));
       ok(r.hoja.n === 2 && r.hoja.filas === 6 && r.hoja.par >= 2 && r.hoja.ok && r.botonHoja, 'la hoja del día no salió bien: ' + JSON.stringify(r.hoja));
+      ok(r.excel && r.excel.hojas === 2 && r.excel.filas === 3 && r.excel.neto === 69 && r.excel.pm === 260 && r.excel.tieneDatos && /200V 90107/.test(r.excel.nombre), 'el Excel de hojas de control no salió bien: ' + JSON.stringify(r.excel));
+      ok(r.pdf && r.nada === 0 && r.ventana, 'la descarga en PDF o la ventana no anduvieron: ' + JSON.stringify(r));
       ok(r.tol3 === '67.9-72.1', 'la tolerancia configurada no se aplicó: ' + r.tol3);
       ok(r.editor.filas === 6 && r.editor.dato && r.editor.txt, 'el editor no arrancó con la hoja: ' + JSON.stringify(r.editor));
     });
