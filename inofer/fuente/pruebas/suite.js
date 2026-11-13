@@ -914,49 +914,52 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
     });
     await prueba('Semanas: ordenar la numeración, mover y asistente que entiende "semana N"', async () => {
       const r = await A.evaluate(async () => {
+        // semanas cercanas a hoy (la app toma la semana N más cercana a la fecha): así la prueba no depende del día
+        const K = (() => { const d = new Date(); d.setHours(12); d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7)); const w1 = new Date(d.getFullYear(), 0, 4, 12); return 1 + Math.round(((d - w1) / 864e5 - 3 + ((w1.getDay() + 6) % 7)) / 7); })();
+        const N0 = K <= 40 ? K + 2 : K - 12, W = { a: N0, b: N0 + 1, c: N0 + 2, d: N0 + 3 };
         const esperar = ms => new Promise(res => setTimeout(res, ms));
         switchTab('gantt'); await esperar(300);
         const lunesN = n => { const y = new Date().getFullYear(); const j4 = new Date(y, 0, 4, 12); j4.setDate(j4.getDate() - ((j4.getDay() + 6) % 7) + (n - 1) * 7); return j4.getFullYear() + '-' + String(j4.getMonth() + 1).padStart(2, '0') + '-' + String(j4.getDate()).padStart(2, '0'); };
         const cat = partsCatalog.find(c => (c.machines || []).includes('200V') && !/-R$/.test(c.part));
         const it = { id: 'gi-ord', part: cat.part, desc: 'x', totalQty: 500, stdRate: 100, dailyQty: [0, 100, 100, 100, 100, 100, 0] };
         // SEM-20 con las fechas de la semana 21 (como el armado viejo)
-        ganttWeeksData['SEM-20'] = { code: 'SEM-20', name: 'Semana 20 vieja', startDate: lunesN(21), machines: { '200V': { aux: {}, items: [JSON.parse(JSON.stringify(it))] } } };
-        const corr = inoferSemanasCorridas().filter(x => x.code === 'SEM-20');
-        inoferOrdenarSemanas(['SEM-20']);
-        const ordenada = ganttWeeksData['SEM-20'].startDate === lunesN(20) && inoferSemanaInfo('SEM-20').num === 20;
+        ganttWeeksData['SEM-' + W.a] = { code: 'SEM-' + W.a, name: 'Semana 20 vieja', startDate: lunesN(W.b), machines: { '200V': { aux: {}, items: [JSON.parse(JSON.stringify(it))] } } };
+        const corr = inoferSemanasCorridas().filter(x => x.code === 'SEM-' + W.a);
+        inoferOrdenarSemanas(['SEM-' + W.a]);
+        const ordenada = ganttWeeksData['SEM-' + W.a].startDate === lunesN(W.a) && inoferSemanaInfo('SEM-' + W.a).num === W.a;
         // mover todo de la 20 a la 22 (se crea por fecha)
-        const mv = inoferMoverSemana('20', '22', { modo: 'mover' });
+        const mv = inoferMoverSemana(String(W.a), String(W.c), { modo: 'mover' });
         // que llegue a la nube antes de seguir (si no, una sincronización en el medio puede traer el Gantt de antes)
         saveGanttWeeks(); await esperar(3000);
-        const c22 = inoferResolverSemana('22', false);
-        const movio = mv.ok && !!c22 && (ganttWeeksData[c22].machines['200V'].items || []).some(x => x.part === cat.part) && !(ganttWeeksData['SEM-20'].machines['200V'].items || []).length;
+        const c22 = inoferResolverSemana(String(W.c), false);
+        const movio = mv.ok && !!c22 && (ganttWeeksData[c22].machines['200V'].items || []).some(x => x.part === cat.part) && !(ganttWeeksData['SEM-' + W.a].machines['200V'].items || []).length;
         // el asistente entiende la semana en la frase (sin elegirla)
-        const ops1 = inoferGanttInterpretar('pasá todo lo de la semana 22 a la semana 23');
-        const ops2 = inoferGanttInterpretar('cuántas horas libres tiene la 200V en la semana 22');
+        const ops1 = inoferGanttInterpretar(`pasá todo lo de la semana ${W.c} a la semana ${W.d}`);
+        const ops2 = inoferGanttInterpretar(`cuántas horas libres tiene la 200V en la semana ${W.c}`);
         const ops3 = inoferGanttInterpretar(`donde está programada la ${cat.part}`);
         const lejos = new Date(); lejos.setDate(lejos.getDate() + 21 - ((lejos.getDay() + 6) % 7)); let fin = new Date(lejos); fin.setDate(fin.getDate() + 5); if (fin.getMonth() !== lejos.getMonth()) { lejos.setDate(lejos.getDate() + 7); fin = new Date(lejos); fin.setDate(fin.getDate() + 5); }
         const MESES_T = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
         // una semana que nunca es "la que viene" (3 semanas adelante), así la prueba no depende de la fecha
         const sem = inoferSemanasEnTexto(`del ${lejos.getDate()} al ${fin.getDate()} de ${MESES_T[fin.getMonth()]} y la semana que viene`);
         // cambio grande: primero muestra y espera "Aplicar"
-        const t = await inoferGanttChat('pasá todo lo de la semana 22 a la semana 23');
+        const t = await inoferGanttChat(`pasá todo lo de la semana ${W.c} a la semana ${W.d}`);
         const log = document.getElementById('inoferGanttChatLog'); const conBoton = !!(log && log.querySelector('.gc-aplicar'));
         const sigueEn22 = (ganttWeeksData[c22].machines['200V'].items || []).some(x => x.part === cat.part);
         inoferGanttAplicarPendiente(); await esperar(200);
-        const c23 = inoferResolverSemana('23', false);
+        const c23 = inoferResolverSemana(String(W.d), false);
         const aplicado = !!c23 && (ganttWeeksData[c23].machines['200V'].items || []).some(x => x.part === cat.part);
-        const etiqueta = /Sem 2[23] · /.test(t);
+        const etiqueta = new RegExp('Sem (' + W.c + '|' + W.d + ') · ').test(t);
         // chico: directo y con la semana dicha
-        const t2 = await inoferGanttChat(`poné 200 de la ${cat.part} en la 200V el martes de la semana 23`);
+        const t2 = await inoferGanttChat(`poné 200 de la ${cat.part} en la 200V el martes de la semana ${W.d}`);
         const dia = ((ganttWeeksData[c23].machines['200V'].items || []).find(x => x.part === cat.part) || {}).dailyQty || [];
-        ['SEM-20', c22, c23].forEach(c => { delete ganttWeeksData[c]; }); saveGanttWeeks(); renderGanttView();
-        return { corr: corr.length, ordenada, movio, ops1: ops1[0], ops2: ops2[0] && ops2[0].op, ops3: ops3[0] && ops3[0].op, sem: sem.map(x => x.num), conBoton, sigueEn22, aplicado, etiqueta, t: String(t).slice(0, 200), martes: dia[2], t2: String(t2).slice(0, 160) };
+        ['SEM-' + W.a, c22, c23].forEach(c => { delete ganttWeeksData[c]; }); saveGanttWeeks(); renderGanttView();
+        return { corr: corr.length, ordenada, movio, ops1: ops1[0], W, ops2: ops2[0] && ops2[0].op, ops3: ops3[0] && ops3[0].op, sem: sem.map(x => x.num), conBoton, sigueEn22, aplicado, etiqueta, t: String(t).slice(0, 200), martes: dia[2], t2: String(t2).slice(0, 160) };
       });
       ok(r.corr === 1 && r.ordenada, 'ordenar semanas: ' + JSON.stringify(r));
       ok(r.movio, 'mover semana: ' + JSON.stringify(r));
-      ok(r.ops1 && r.ops1.op === 'move_week' && r.ops1.from === '22' && r.ops1.to === '23' && r.ops2 === 'free' && r.ops3 === 'donde' && r.sem.length === 2, 'parser: ' + JSON.stringify(r));
+      ok(r.ops1 && r.ops1.op === 'move_week' && String(r.ops1.from) === String(r.W.c) && String(r.ops1.to) === String(r.W.d) && r.ops2 === 'free' && r.ops3 === 'donde' && r.sem.length === 2, 'parser: ' + JSON.stringify(r));
       ok(r.conBoton && r.sigueEn22 && r.aplicado && r.etiqueta, 'vista previa y aplicar: ' + JSON.stringify(r));
-      ok(Number(r.martes) === 200, 'pedido con semana dicha: ' + JSON.stringify(r));
+      ok(Number(r.martes) === W.a0, 'pedido con semana dicha: ' + JSON.stringify(r));
     });
     await prueba('Armado del Gantt en 3 pasos: semanas, qué cargo, vista previa, aplicar, deshacer y 📌', async () => {
       const r = await A.evaluate(async () => {
