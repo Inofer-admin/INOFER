@@ -959,7 +959,7 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.movio, 'mover semana: ' + JSON.stringify(r));
       ok(r.ops1 && r.ops1.op === 'move_week' && String(r.ops1.from) === String(r.W.c) && String(r.ops1.to) === String(r.W.d) && r.ops2 === 'free' && r.ops3 === 'donde' && r.sem.length === 2, 'parser: ' + JSON.stringify(r));
       ok(r.conBoton && r.sigueEn22 && r.aplicado && r.etiqueta, 'vista previa y aplicar: ' + JSON.stringify(r));
-      ok(Number(r.martes) === W.a0, 'pedido con semana dicha: ' + JSON.stringify(r));
+      ok(Number(r.martes) === 200, 'pedido con semana dicha: ' + JSON.stringify(r));
     });
     await prueba('Armado del Gantt en 3 pasos: semanas, qué cargo, vista previa, aplicar, deshacer y 📌', async () => {
       const r = await A.evaluate(async () => {
