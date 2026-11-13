@@ -1424,6 +1424,68 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         ok(ids.includes('lb-a') && ids.includes('lb-b') && ids.length === 4, 'dos equipos se pisaron: ' + ids.join(','));
       }
     });
+    await prueba('Calidad: hoja de control de inyección automática (pesos, temperatura, muestras y parámetros de máquina)', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(res => setTimeout(res, ms));
+        const out = {};
+        const put = (sel, v) => { const el = document.querySelector(sel); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+        const d0 = new Date(), f = d0.getFullYear() + '-' + String(d0.getMonth() + 1).padStart(2, '0') + '-' + String(d0.getDate()).padStart(2, '0');
+        const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;
+        productionOrders.push({ id: 'ord-hoja', ordNumber: '7002', part: '90107', machine: nom('200V'), qtyTarget: 500, unitsPerHour: 80, status: 'En Proceso', logs: [] });
+        saveProductionOrders(); inoferPonerOp('200V', 'ord-hoja'); await w(300);
+        const e = inoferCalidad.estadoMaq('200V');
+        const C = e.pl ? e.pl.controles : [];
+        const neto = C.find(c => c.id === 'h-neto') || {};
+        out.auto = { est: e.est, auto: !!(e.pl && e.pl.auto), ids: C.map(c => c.id).join(','), min: neto.min, max: neto.max, ref: neto.ref };
+        const z = inoferCalidad.planHoja('90114'); const zt = z.controles.find(c => c.id === 'h-temp');
+        out.zamac = { taco: z.controles.some(c => c.id === 'h-taco'), t: zt.min + '-' + zt.max };
+        // primera pieza con los datos de la hoja de papel
+        inoferCalidad.abrirLiberacion({ maq: '200V' }); await w(200);
+        out.parCampos = document.querySelectorAll('#calLibCaja [data-lb-par]').length;
+        const V = { 'h-colada': '175,9', 'h-neto': '69', 'h-pulm': '16,6', 'h-temp': '690', 'h-taco': '23,55', 'h-muestras': '5' };
+        Object.keys(V).forEach(k => put(`[data-lb-num="${k}"]`, V[k]));
+        put('[data-lb-par="v1"]', '30'); put('[data-lb-par="pm"]', '250');
+        out.anotado = document.getElementById('calLbE_h-colada').textContent;
+        out.libre = !document.getElementById('calLbLiberar').disabled;
+        document.getElementById('calLbLiberar').click(); await w(400);
+        const L1 = inoferCalidad.datos().liberaciones.filter(x => x.ordId === 'ord-hoja');
+        out.rec1 = L1[0] && { tipo: L1[0].tipo, par: L1[0].par, neto: (L1[0].v.find(v => v[0] === 'h-neto') || [])[1], n: L1[0].v.length };
+        // control en proceso: parámetros precargados, cambio marcado, peso bajo bloquea
+        inoferCalidad.abrirLiberacion({ maq: '200V', tipo: 'periodico' }); await w(200);
+        out.pre = document.querySelector('[data-lb-par="v1"]').value;
+        put('[data-lb-par="pm"]', '260');
+        out.cambio = document.querySelector('[data-lb-par="pm"]').className.includes('border-amber-400') && /antes 250/.test(document.getElementById('calLbPa_pm').textContent);
+        Object.keys(V).forEach(k => put(`[data-lb-num="${k}"]`, V[k]));
+        put('[data-lb-num="h-neto"]', '60');
+        out.bajo = /FUERA/.test(document.getElementById('calLbE_h-neto').textContent) && document.getElementById('calLbLiberar').disabled;
+        put('[data-lb-num="h-neto"]', '68,5');
+        document.getElementById('calLbLiberar').click(); await w(400);
+        // hoja del día
+        const h = inoferCalidad.hojaDia('200V', '90107', f, { soloHtml: true });
+        out.hoja = { n: h.n, filas: h.filas, par: h.par, ok: /HOJA DE CONTROL DE INYECCIÓN/.test(h.html) && /Peso neto/.test(h.html) && /1° Velocidad/.test(h.html) && /70 g/.test(h.html) && /260/.test(h.html) };
+        inoferCalidad.estado().sub = 'liberaciones'; switchTab('calidad'); await w(300);
+        out.botonHoja = !!document.querySelector('[data-cal-hoja]');
+        // configuración de la hoja: tolerancia 3%
+        inoferCalidad.estado().sub = 'planes'; inoferCalidad.estado().planPieza = ''; switchTab('calidad'); await w(300);
+        document.getElementById('calHjTol').value = '3'; document.querySelector('[data-cal="hojaGuardar"]').click(); await w(300);
+        const n2 = inoferCalidad.planDe('90107').controles.find(c => c.id === 'h-neto');
+        out.tol3 = n2.min + '-' + n2.max;
+        // el editor arranca con la hoja y permite "se anota"
+        inoferCalidad.abrirPlan('90107'); await w(200);
+        out.editor = { filas: document.querySelectorAll('#calPlanFilas [data-k="que"]').length, dato: !!document.querySelector('#calPlanFilas option[value="dato"]'), txt: /HOJA DE INYECCIÓN AUTOMÁTICA/.test(document.getElementById('viewCalidad').textContent) };
+        document.querySelector('[data-cal="planVolver"]').click();
+        inoferPonerOp('200V', ''); await w(200);
+        return out;
+      });
+      ok(r.auto.est === 'falta' && r.auto.auto && r.auto.ids === 'h-colada,h-neto,h-pulm,h-temp,h-taco,h-muestras' && r.auto.min === 66.5 && r.auto.max === 73.5 && r.auto.ref === 70, 'la hoja automática no se armó bien: ' + JSON.stringify(r.auto));
+      ok(!r.zamac.taco && r.zamac.t === '410-440', 'zamac sin taco y con su temperatura: ' + JSON.stringify(r.zamac));
+      ok(r.parCampos === 10 && /anotado/.test(r.anotado) && r.libre, 'la pantalla de control no quedó bien: ' + JSON.stringify(r));
+      ok(r.rec1 && r.rec1.tipo === 'primera' && r.rec1.par.v1 === 30 && r.rec1.par.pm === 250 && r.rec1.neto === 69 && r.rec1.n === 6, 'la liberación no guardó valores o parámetros: ' + JSON.stringify(r.rec1));
+      ok(r.pre === '30' && r.cambio && r.bajo, 'los parámetros no vinieron precargados o el peso bajo no bloqueó: ' + JSON.stringify(r));
+      ok(r.hoja.n === 2 && r.hoja.filas === 6 && r.hoja.par >= 2 && r.hoja.ok && r.botonHoja, 'la hoja del día no salió bien: ' + JSON.stringify(r.hoja));
+      ok(r.tol3 === '67.9-72.1', 'la tolerancia configurada no se aplicó: ' + r.tol3);
+      ok(r.editor.filas === 6 && r.editor.dato && r.editor.txt, 'el editor no arrancó con la hoja: ' + JSON.stringify(r.editor));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
