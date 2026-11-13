@@ -57,7 +57,7 @@
         if (!header || $('nbBar')) return !!$('nbBar');
         const viejo = header.firstElementChild;
         const st = document.createElement('style');
-        st.textContent = `#nbRight .sm\\:inline{display:none!important}#nbRight #syncStatusText{display:none}#nbRight>button,#nbRight>div>button{padding:.45rem .6rem}#nbRight #inoferUserChipRole{display:none}@media(min-width:640px){#nbRight #inoferUserChipRole{display:inline}}#nbNav::-webkit-scrollbar{display:none}#nbNav{scrollbar-width:none}#nbBar[data-c="1"] #inoferUserChipName,#nbBar[data-c="1"] #inoferUserChipRole,#nbBar[data-c="1"] #toggleFullscreenBtn{display:none!important}#nbBar[data-c="2"] .nb-txt,#nbBar[data-c="2"] #inoferUserChipName,#nbBar[data-c="2"] #inoferUserChipRole,#nbBar[data-c="2"] #toggleFullscreenBtn{display:none!important}#nbHamb{display:none}@media(max-width:639px){#nbNav{display:none!important}#nbRight>*:not(.nb-keep){display:none!important}#nbHamb{display:inline-flex}#nbRight #inoferUserChipName{display:none!important}#nbBar{flex-wrap:nowrap!important}#nbLogo .leading-tight{min-width:0}}`;
+        st.textContent = `body>header{z-index:50!important}#nbRight .sm\\:inline{display:none!important}#nbRight #syncStatusText{display:none}#nbRight>button,#nbRight>div>button{padding:.45rem .6rem}#nbRight #inoferUserChipRole{display:none}@media(min-width:640px){#nbRight #inoferUserChipRole{display:inline}}#nbNav::-webkit-scrollbar{display:none}#nbNav{scrollbar-width:none}#nbBar[data-c="1"] #inoferUserChipName,#nbBar[data-c="1"] #inoferUserChipRole,#nbBar[data-c="1"] #toggleFullscreenBtn{display:none!important}#nbBar[data-c="2"] .nb-txt,#nbBar[data-c="2"] #inoferUserChipName,#nbBar[data-c="2"] #inoferUserChipRole,#nbBar[data-c="2"] #toggleFullscreenBtn{display:none!important}#nbHamb{display:none}@media(max-width:639px){#nbNav{display:none!important}#nbRight>*:not(.nb-keep){display:none!important}#nbHamb{display:inline-flex}#nbRight #inoferUserChipName{display:none!important}#nbBar{flex-wrap:nowrap!important}#nbLogo .leading-tight{min-width:0}}`;
         document.head.appendChild(st);
         const bar = document.createElement('div');
         bar.id = 'nbBar';
@@ -78,7 +78,7 @@
         // menú desplegable (uno solo, flotante)
         const menu = document.createElement('div');
         menu.id = 'nbMenu';
-        menu.className = 'hidden fixed z-[80] w-72 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-2xl backdrop-blur';
+        menu.className = 'hidden fixed z-[80] w-60 max-h-[80vh] overflow-y-auto rounded-xl border border-slate-700 bg-slate-900/95 p-1 shadow-2xl backdrop-blur';
         document.body.appendChild(menu);
         document.addEventListener('click', e => { if (!e.target.closest('#nbMenu') && !e.target.closest('.nb-grupo')) cerrarMenu(); });
         document.addEventListener('keydown', e => { if (e.key === 'Escape') cerrarMenu(); });
@@ -116,13 +116,14 @@
         menu.innerHTML = g.items.map((it, ii) => {
           if (!itemVisible(it)) return '';
           const on = it.tab && it.tab === act; const n = it.n ? it.n() : '';
-          return `<button type="button" class="nb-item flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${on ? 'bg-cyan-500/15 ring-1 ring-cyan-500/40' : 'hover:bg-slate-800'}" data-k="${gi}.${ii}">
-            <span class="text-xl leading-none">${it.ico}</span><span class="min-w-0 flex-1"><span class="block text-sm font-bold ${on ? 'text-cyan-200' : 'text-white'}">${esc(it.t)}</span>${it.d ? `<span class="block truncate text-[11px] text-slate-400">${esc(it.d)}</span>` : ''}</span>
+          // (13/11/2026) menú compacto: un renglón por opción; la descripción queda como ayuda al pasar el mouse
+          return `<button type="button" class="nb-item flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition ${on ? 'bg-cyan-500/15 ring-1 ring-cyan-500/40' : 'hover:bg-slate-800'}" data-k="${gi}.${ii}"${it.d ? ` title="${esc(it.d)}"` : ''}>
+            <span class="w-5 text-center text-base leading-none">${it.ico}</span><span class="min-w-0 flex-1 truncate text-sm font-semibold ${on ? 'text-cyan-200' : 'text-white'}">${esc(it.t)}</span>
             ${n !== '' && n != null ? `<span class="rounded-full bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-300">${n}</span>` : ''}</button>`;
         }).join('');
         const r = boton.getBoundingClientRect();
         menu.classList.remove('hidden');
-        const w = Math.min(288, window.innerWidth - 16);
+        const w = Math.min(264, window.innerWidth - 16);
         menu.style.width = w + 'px';
         menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
         menu.style.top = (r.bottom + 6) + 'px';
