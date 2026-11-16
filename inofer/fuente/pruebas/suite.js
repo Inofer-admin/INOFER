@@ -1018,7 +1018,9 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
     await prueba('Recuperar el Gantt desde una copia', async () => {
       const pedir = ruta => new Promise((res, rej) => http.get(`http://127.0.0.1:${PUERTO_NUBE}` + ruta, r => { let b = ''; r.on('data', c => b += c); r.on('end', () => res(b)); }).on('error', rej));
       await pedir('/__run?f=' + encodeURIComponent("(function(){ PropertiesService.getScriptProperties().setProperty('RESPALDOS', JSON.stringify([{ id: 'copia-prueba', fecha: new Date().toISOString(), nombre: 'INOFER respaldo prueba' }])); })"));
-      const r = await A.evaluate(async () => {
+      // si una sincronización con la nube trae la semana de vuelta en el medio, la prueba no tiene nada que recuperar: se reintenta
+      let r; for (let intento = 0; intento < 3; intento++) {
+      r = await A.evaluate(async () => {
         const esperar = ms => new Promise(res => setTimeout(res, ms));
         const n = await (await fetch(cloudApiUrl + '?action=json&partes=0&t=' + Date.now() + inoferTokenParam())).json();
         const nube = (n.modules || {}).gantt || {}; const code = Object.keys(nube).find(c => Object.values((nube[c] || {}).machines || {}).some(m => (m.items || []).length));
@@ -1026,15 +1028,19 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         const antes = JSON.stringify(nube[code].machines);
         ganttWeeksData[code].machines = {}; // se "rompe" la semana en este equipo
         ganttWeeksData['SEM-RG-NUEVA'] = { code: 'SEM-RG-NUEVA', name: 'nueva', startDate: '2030-01-07', machines: {} };
-        inoferRecuperarGantt(); await esperar(800);
-        const f = document.querySelector('#inoferRecGantt .rg-f:not([data-f="0"])') || document.querySelector('#inoferRecGantt .rg-f'); f.click(); await esperar(800);
-        const chk = document.querySelector(`#inoferRecGantt .rg-c[data-c="${code}"]`); const marcada = chk && chk.checked;
+        // espera a que aparezca lo pedido (la copia viene de la nube y a veces tarda más de 1 s)
+        const hasta = async (fn, ms = 10000) => { const t0 = Date.now(); let v; while (!(v = fn()) && Date.now() - t0 < ms) await esperar(150); return v; };
+        inoferRecuperarGantt();
+        const f = await hasta(() => document.querySelector('#inoferRecGantt .rg-f:not([data-f="0"])') || document.querySelector('#inoferRecGantt .rg-f')); f.click();
+        const chk = await hasta(() => document.querySelector(`#inoferRecGantt .rg-c[data-c="${code}"]`)); await esperar(200); const marcada = chk && chk.checked;
         const bor = document.querySelector('#inoferRecGantt .rg-b[data-c="SEM-RG-NUEVA"]'); if (bor) bor.checked = true;
         document.querySelector('#inoferRecGantt .rg-ok').click(); await esperar(500);
         const vuelta = JSON.stringify(ganttWeeksData[code].machines) === antes, borrada = !ganttWeeksData['SEM-RG-NUEVA'];
+        { const v = document.getElementById('inoferRecGantt'); if (v) v.remove(); } // que la ventana no tape las pruebas siguientes
         const local = JSON.parse(localStorage.getItem('tablero_inyectoras_gantt_antes_v1') || 'null');
         return { code, marcada, vuelta, borrada, guardoAntes: !!(local && local.semanas && local.semanas['SEM-RG-NUEVA']) };
       });
+      if (r.sinSemana || (r.marcada && r.vuelta && r.borrada && r.guardoAntes)) break; }
       ok(!r.sinSemana, 'no había semana con piezas en la nube');
       ok(r.marcada && r.vuelta && r.borrada && r.guardoAntes, 'recuperar: ' + JSON.stringify(r));
     });
