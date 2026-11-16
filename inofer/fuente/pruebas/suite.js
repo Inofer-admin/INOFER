@@ -1327,6 +1327,38 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(v.ve && v.flag && v.responde === 'error', 'con permiso: ' + JSON.stringify(v));
       ok(!n, 'sin permiso ve solicitudes de otros');
     });
+    await prueba('Tablero: los 5 velocímetros por máquina y la IA cuentan turnos de órdenes + partes manuales', async () => {
+      const r = await A.evaluate(async () => {
+        const M = 'Italpresse 180 Tn', F = '2031-03-03', ids = ['filterMachine', 'filterShift', 'filterDateFrom', 'filterDateTo', 'filterFuente'];
+        const antes = ids.map(i => [i, document.getElementById(i).value]);
+        const vacio = {}; CATEGORIES.forEach(c => { vacio[c.key] = 0; });
+        records.unshift(Object.assign({ id: 't-strip-man', date: F, machine: M, shift: 'Mañana', available: 8 }, vacio, { setup_molde: 2 }));
+        productionOrders.push({ id: 't-strip-op', ordNumber: '99901', machine: M, part: 'X', qtyTarget: 1000, unitsPerHour: 100, status: 'En Proceso',
+          logs: [{ id: 't-l1', date: F, turno: 'Tarde', startTime: '14:00', endTime: '22:00', okPcs: 100, scrapPcs: 0, paradas: [{ codigo: '1', min: 60 }] }] });
+        const leer = () => { renderMachinesStrip(); const b = document.querySelector(`#machinesQuickGrid [data-mach="${M}"]`); return b ? b.textContent.replace(/\s+/g, ' ') : ''; };
+        const out = {};
+        try {
+          document.getElementById('filterMachine').value = 'Italpresse 200 Tn (V)'; // el filtro de máquina no debe vaciar las otras tarjetas
+          document.getElementById('filterShift').value = 'ALL'; document.getElementById('filterDateFrom').value = F; document.getElementById('filterDateTo').value = F;
+          document.getElementById('filterFuente').value = 'ALL'; out.todo = leer();
+          document.getElementById('filterFuente').value = 'OP'; out.op = leer();
+          document.getElementById('filterFuente').value = 'MANUAL'; out.man = leer();
+          const ia = inoferRegistrosTodos().map(x => x.id);
+          out.ia = ia.includes('t-strip-man') && ia.includes('op-t-strip-op-t-l1');
+          out.filtrosIntactos = document.getElementById('filterFuente').value === 'MANUAL' && document.getElementById('filterMachine').value === 'Italpresse 200 Tn (V)';
+        } finally {
+          records.splice(records.findIndex(x => x.id === 't-strip-man'), 1);
+          productionOrders.splice(productionOrders.findIndex(x => x.id === 't-strip-op'), 1);
+          antes.forEach(([i, v]) => { document.getElementById(i).value = v; }); renderMachinesStrip();
+        }
+        return out;
+      });
+      ok(/13\.0h prod \/ 16\.0h disp/.test(r.todo), 'todo: ' + r.todo);
+      ok(/7\.0h prod \/ 8\.0h disp/.test(r.op), 'solo OP: ' + r.op);
+      ok(/6\.0h prod \/ 8\.0h disp/.test(r.man), 'solo manual: ' + r.man);
+      ok(r.ia, 'la IA no ve los turnos de las órdenes');
+      ok(r.filtrosIntactos, 'cambió los filtros de la pantalla');
+    });
     await prueba('Eficiencia de cadencia: lo producido vs. horas con la máquina andando', async () => {
       const r = await A.evaluate(async () => {
         const nom = id => (GANTT_MACHINES_CONFIG.find(x => x.id === id) || {}).name || id;

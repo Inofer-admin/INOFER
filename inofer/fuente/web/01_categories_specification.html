@@ -385,6 +385,19 @@
       }, 2800);
     }
 
+    // Mismos registros que usa el Tablero (turnos de las órdenes + partes manuales + órdenes archivadas, sin datos de ejemplo),
+    // pero dejando de lado algunos filtros de arriba (16/11/2026). `sin` = { idDelFiltro: valorTemporal }.
+    function inoferRegistrosSin(sin) {
+      const prev = [];
+      Object.keys(sin || {}).forEach(id => { const el = document.getElementById(id); if (el) { prev.push([el, el.value]); el.value = sin[id]; } });
+      try { return (window.getFilteredRecords || getFilteredRecords)(); }
+      finally { prev.forEach(([el, v]) => { el.value = v; }); }
+    }
+    window.inoferRegistrosSin = inoferRegistrosSin;
+    // Todo el historial para la IA: sin filtros de máquina, turno, fechas ni fuente
+    function inoferRegistrosTodos() { return inoferRegistrosSin({ filterMachine: 'ALL', filterShift: 'ALL', filterDateFrom: '', filterDateTo: '', filterFuente: 'ALL' }); }
+    window.inoferRegistrosTodos = inoferRegistrosTodos;
+
     function getFilteredRecords() {
       const machine = document.getElementById('filterMachine').value;
       const shift = document.getElementById('filterShift').value;
@@ -742,14 +755,11 @@
       const target = Number(document.getElementById('targetUtilizationInput').value) || 80;
       const maxArc = 125.66;
 
+      // los mismos datos que el velocímetro general (órdenes + partes manuales, filtros de fecha, turno y fuente);
+      // solo se ignora el filtro de máquina para que se vean las 5 (antes leía solo los partes manuales)
+      const todosStrip = inoferRegistrosSin({ filterMachine: 'ALL' });
       container.innerHTML = MACHINES_LIST.map(mach => {
-        const machRecords = records.filter(r => {
-          if (r.machine !== mach) return false;
-          if (shift !== 'ALL' && r.shift !== shift) return false;
-          if (from && r.date < from) return false;
-          if (to && r.date > to) return false;
-          return true;
-        });
+        const machRecords = todosStrip.filter(r => r.machine === mach);
         const agg = computeAggregates(machRecords);
         const pct = Math.max(0, Math.min(100, agg.utilizationPct));
         const offset = maxArc - (pct / 100) * maxArc;
@@ -1940,7 +1950,7 @@ ${lines}${trendNote}`;
     }
 
     function aiFilterRecords(p, period) {
-      return records.filter(r => {
+      return inoferRegistrosTodos().filter(r => {
         const d = String(r.date || '').slice(0, 10);
         if (p.machines.length && !p.machines.includes(r.machine)) return false;
         if (p.shift && r.shift !== p.shift) return false;
@@ -1967,9 +1977,10 @@ ${lines}${trendNote}`;
       learnFromUserInteraction(userQuery, p.wantsTips ? 'mejoras' : 'utilizacion', { utilizationPct: subset.length ? aiAggregate(subset).utilizationPct : 0 });
 
       if (!subset.length) {
-        const dates = records.map(r => String(r.date).slice(0, 10)).filter(Boolean).sort();
-        return `### 🔎 ${titulo}\n\nNo encontré partes de horas cargados para esa consulta.\n` +
-          (dates.length ? `* Los datos disponibles van del **${aiFmt(dates[0])}** al **${aiFmt(dates[dates.length - 1])}** (${records.length} partes).\n` : '* Todavía no hay partes cargados.\n') +
+        const todos = inoferRegistrosTodos();
+        const dates = todos.map(r => String(r.date).slice(0, 10)).filter(Boolean).sort();
+        return `### 🔎 ${titulo}\n\nNo encontré turnos ni partes de horas cargados para esa consulta.\n` +
+          (dates.length ? `* Los datos disponibles van del **${aiFmt(dates[0])}** al **${aiFmt(dates[dates.length - 1])}** (${todos.length} turnos y partes).\n` : '* Todavía no hay turnos ni partes cargados.\n') +
           `* Probá con otro período (ej. *"setup de la 180 este mes"*, *"utilización de la H-50 en octubre"*, *"últimos 15 días"*).`;
       }
 
@@ -2056,15 +2067,17 @@ ${lines}${trendNote}`;
 
     function buildAiFullContext() {
       const ctx = buildDetailedPlantContext();
-      const all = aiAggregate(records);
-      const dates = records.map(r => String(r.date).slice(0, 10)).filter(Boolean).sort();
+      // turnos de las órdenes + partes manuales + archivadas (antes solo los partes manuales)
+      const regs = inoferRegistrosTodos();
+      const all = aiAggregate(regs);
+      const dates = regs.map(r => String(r.date).slice(0, 10)).filter(Boolean).sort();
       const byMachine = MACHINES_LIST.map(m => {
-        const ma = aiAggregate(records.filter(r => r.machine === m));
+        const ma = aiAggregate(regs.filter(r => r.machine === m));
         const horasPorCausa = {};
         CATEGORIES.forEach(c => { horasPorCausa[c.shortLabel] = +(ma.byCategory[c.key] || 0).toFixed(2); });
         return { maquina: m, partes: ma.count, disponibles: +ma.totalAvailable.toFixed(2), utilizacionPct: +ma.utilizationPct.toFixed(1), horasPorCausa };
       }).filter(x => x.partes > 0);
-      const lastRecs = records.slice().sort((x, y) => String(y.date).localeCompare(String(x.date))).slice(0, 60)
+      const lastRecs = regs.slice().sort((x, y) => String(y.date).localeCompare(String(x.date))).slice(0, 60)
         .map(r => [String(r.date).slice(0, 10), r.machine, r.shift, Number(r.available) || 0].concat(CATEGORIES.map(c => Number(r[c.key]) || 0)));
       let orders = [];
       try {
@@ -2102,7 +2115,7 @@ ${lines}${trendNote}`;
         historialCompleto: { partes: all.count, desde: dates[0] || null, hasta: dates[dates.length - 1] || null, disponibles: +all.totalAvailable.toFixed(2), utilizacionPct: +all.utilizationPct.toFixed(1), paradasPorCausa: all.cats.map(c => ({ causa: c.label, horas: +c.hrs.toFixed(2) })) },
         vistaFiltradaDelTablero: { partes: ctx.filtered.length, utilizacionPct: +ctx.agg.utilizationPct.toFixed(1), porMaquina: ctx.machineStats, porTurno: ctx.shiftStats },
         porMaquinaHistorico: byMachine,
-        tendenciaSemanal: aiWeeklyTrend(records, 12),
+        tendenciaSemanal: aiWeeklyTrend(regs, 12),
         ultimosPartes: lastRecs,
         ordenesDeProduccion: orders,
         planGanttSemanaActiva: gantt,
