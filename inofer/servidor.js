@@ -1830,12 +1830,15 @@ function horarioInforme_(cfg) {
 // Envío a la hora exacta: un disparador de una sola vez en el día y la hora elegidos (zona horaria de la planilla).
 // El disparador de cada hora queda solo de respaldo y únicamente manda dentro de las 2 horas siguientes al horario.
 const INFORME_MARGEN_H = 2;
+// Los informes usan SIEMPRE la hora de la planta (Argentina): la zona de la planilla o del proyecto de Apps Script
+// puede ser otra (p. ej. la de EE.UU. que pone Google por defecto) y corría el envío varias horas (16/11/2026).
+const ZONA_INFORME = 'America/Argentina/Buenos_Aires';
 // Fecha y hora del envío de ESTA semana más cercano a "ahora" (hoy o mañana, por si el disparador se adelanta antes de medianoche)
 function turnoInformeCerca_(cfg, ahora) {
-  const tz = zonaHoja_(), h = horarioInforme_(cfg);
+  const tz = ZONA_INFORME, h = horarioInforme_(cfg);
   let mejor = null;
   [-1, 0, 1].forEach(function (i) {
-    const dia = sumarDias_(isoDia_(ahora), i);
+    const dia = sumarDias_(Utilities.formatDate(ahora, tz, 'yyyy-MM-dd'), i);
     const f = Utilities.parseDate(dia + ' ' + (h.hora < 10 ? '0' : '') + h.hora + ':00', tz, 'yyyy-MM-dd HH:mm');
     if (Number(Utilities.formatDate(f, tz, 'u')) % 7 !== h.dia) return;
     if (!mejor || Math.abs(f.getTime() - ahora.getTime()) < Math.abs(mejor.getTime() - ahora.getTime())) mejor = f;
@@ -1845,9 +1848,9 @@ function turnoInformeCerca_(cfg, ahora) {
 // Google a veces corre el disparador exacto unos minutos ANTES: se acepta desde 15 min antes (y se espera hasta la hora si faltan pocos minutos)
 const INFORME_ANTES_MIN = 15;
 function proximoEnvioInforme_(cfg, desde) {
-  const tz = zonaHoja_(), h = horarioInforme_(cfg);
+  const tz = ZONA_INFORME, h = horarioInforme_(cfg);
   desde = desde || new Date();
-  const hoy = isoDia_(desde);
+  const hoy = Utilities.formatDate(desde, tz, 'yyyy-MM-dd');
   for (let i = 0; i <= 8; i++) {
     const dia = sumarDias_(hoy, i);
     const f = Utilities.parseDate(dia + ' ' + (h.hora < 10 ? '0' : '') + h.hora + ':00', tz, 'yyyy-MM-dd HH:mm');
@@ -1928,7 +1931,7 @@ function enviarInformeTipo_(tipo, forzar, opc) {
   const emails = (ct.emails || []).filter(function (x) { return /@/.test(String(x)); });
   if (!emails.length) return clave + ': no hay mails cargados en INOFER (Informe semanal → Envío automático).';
   if (ct.activo === false && !forzar) return clave + ': el envío por mail está desactivado.';
-  const ahora = new Date(), tz = zonaHoja_();
+  const ahora = new Date(), tz = ZONA_INFORME;
   const h = horarioInforme_(ct);
   if (!forzar) {
     // si el disparador exacto ya pasó, no existe o quedó con otro día/hora, se programa el próximo
@@ -2343,7 +2346,7 @@ function accionRotura(u, body) {
   if (body.action === 'respaldoInfo') {
     if (u.rol !== 'admin') return { status: 'error', error: 'Solo el administrador.' };
     const p = PropertiesService.getScriptProperties();
-    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID'), proximo: p.getProperty('INFORME_PROXIMO') || '', tipos: infoTiposInforme_(p), chequeo: jsonSeguro_(p.getProperty('INFORME_CHEQUEO'), null), zona: zonaHoja_(), progError: p.getProperty('INFORME_PROG_ERROR') || '' };
+    return { status: 'ok', ultimo: p.getProperty('RESPALDO_ULTIMO') || '', lista: jsonSeguro_(p.getProperty('RESPALDOS'), []), error: p.getProperty('RESPALDO_ERROR') || '', informe: jsonSeguro_(p.getProperty('INFORME_ULTIMO'), null), informeError: p.getProperty('INFORME_ERROR') || '', horario: !!p.getProperty('DISPARADOR_INFORME_UID'), proximo: p.getProperty('INFORME_PROXIMO') || '', tipos: infoTiposInforme_(p), chequeo: jsonSeguro_(p.getProperty('INFORME_CHEQUEO'), null), zona: ZONA_INFORME, zonaPlanilla: zonaHoja_(), zonaScript: Session.getScriptTimeZone(), progError: p.getProperty('INFORME_PROG_ERROR') || '' };
   }
   if (!(u.rol === 'admin' || puede(u, 'ordenes', 'edit') || puede(u, 'gantt', 'edit'))) return { status: 'error', error: 'Tu usuario no puede avisar roturas.' };
   if (body.action === 'roturaResolver' && !puedeMantSrv_(u)) return { status: 'error', error: 'Tu usuario no puede cerrar roturas.' };

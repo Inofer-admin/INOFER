@@ -1191,7 +1191,7 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
                   + (x.ultimo && x.ultimo.fecha ? `<br>Último: ${new Date(x.ultimo.fecha).toLocaleString('es-AR')}` : '')
                   + (x.progError ? `<br><span class="text-rose-300">⚠️ No se pudo programar: ${esc(x.progError)}</span>` : '')
                   + (x.error ? `<br><span class="text-rose-300">⚠️ ${esc(x.error)}</span>` : ''); });
-              if (r.zona) t.push(`<span class="text-slate-400">Zona horaria de la planilla: ${esc(r.zona)}${r.chequeo && r.chequeo.local ? ' · último control: ' + esc(r.chequeo.local) : ''}</span>`);
+              if (r.zona) t.push(`<span class="text-slate-400">Hora que usan los envíos: ${esc(r.zona)}${r.zonaPlanilla && r.zonaPlanilla !== r.zona ? ' (la planilla está en ' + esc(r.zonaPlanilla) + ')' : ''}${r.zonaScript && r.zonaScript !== r.zona ? ' (Apps Script está en ' + esc(r.zonaScript) + ')' : ''}${r.chequeo && r.chequeo.local ? ' · último control: ' + esc(r.chequeo.local) : ''}</span>`);
               if (r.progError) t.push(`<span class="text-rose-300">⚠️ No se pudo programar: ${esc(r.progError)}</span>`);
               if (r.informeError) t.push(`<span class="text-rose-300">⚠️ ${esc(r.informeError)}</span>`);
               el.innerHTML = t.join('<br>');
