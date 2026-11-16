@@ -9,7 +9,7 @@ const PUERTO_NUBE = 18900 + Math.floor(Math.random() * 500), PUERTO_WEB = PUERTO
 const NUBE = `http://127.0.0.1:${PUERTO_NUBE}/exec`;
 const resultados = [];
 const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'inofer-pruebas-'));
-fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal, copiaDeSeguridad: copiaDeSeguridad, revisarAvisosPush_: revisarAvisosPush_ };\n');
+fs.writeFileSync(path.join(tmp, 'servidor.js'), fs.readFileSync(path.join(FUENTE, 'servidor', 'servidor.gs'), 'utf8') + '\nreturn { doGet: doGet, doPost: doPost, restablecerClaveAdmin: restablecerClaveAdmin, enviarInformeSemanal: enviarInformeSemanal, copiaDeSeguridad: copiaDeSeguridad, revisarAvisosPush_: revisarAvisosPush_, turnoInformeCerca_: turnoInformeCerca_ };\n');
 const html = fs.readFileSync(path.join(FUENTE, 'res', 'web', 'index.html'), 'utf8');
 
 function web() {
@@ -221,8 +221,16 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       // 2) horario a otra hora (12 h corrido) → no manda aunque sea el mismo día
       await run(limpiar); await guardar({ dia: dow, hora: (hora + 12) % 24 });
       await run(enviar); pr = await props(); const r3 = pr.__R;
+      // 3) el disparador se adelanta 10 min: igual reconoce el horario de hoy
+      await run("const s = inoferServidor_(); const c = { dia: " + dow + ", hora: " + hora + " }; const f = s.turnoInformeCerca_(c, new Date()); const g = s.turnoInformeCerca_(c, new Date(f.getTime() - 10 * 60000)); PropertiesService.getScriptProperties().setProperty('__R', String(f.getTime() === g.getTime()));");
+      pr = await props(); const r4 = pr.__R;
+      // 4) el envío programado quedó con otro horario (viejo) → el control de cada hora lo corrige solo
+      await run("PropertiesService.getScriptProperties().setProperty('INFORME_PROGCFG', '1-14');" + enviar); pr = await props(); const r5 = pr.INFORME_PROGCFG;
       const info = await A.evaluate(async () => inoferCloudPost({ action: 'respaldoInfo', token: inoferAuthToken() }));
       await run(limpiar);
+      ok(r4 === 'true', 'con el disparador adelantado no reconoce el horario: ' + r4);
+      ok(r5 === dow + '-' + ((hora + 12) % 24), 'no corrigió el horario viejo: ' + r5);
+      ok(info.tipos && info.tipos.prod && info.tipos.prod.hora === (hora + 12) % 24, 'respaldoInfo sin el horario de la nube: ' + JSON.stringify(info.tipos));
       ok(prox && prox > new Date() && proxBA === String(hora).padStart(2, '0') + ':00' && pr.INFORME_AT_UID, 'no programó el envío exacto: ' + JSON.stringify({ prox: pr.INFORME_PROXIMO, proxBA }));
       ok(/Informe enviado/.test(r1) && /ya se envió/.test(r2), 'a la hora elegida no mandó (o mandó dos veces): ' + JSON.stringify({ r1, r2 }));
       ok(/no es el día y la hora/i.test(r3), 'mandó fuera de horario: ' + r3);
@@ -238,7 +246,8 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
         // pantalla: tarjetas de los tres y cambio de informe
         inoferInformeSemanal('2026-01-05'); await w(600);
         document.querySelector('#infMailCfg').click(); await w(300);
-        const hay = ['#infEmails', '#infEmails_mant', '#infEmails_ord', '#infIgual_mant'].every(s => !!document.querySelector(s));
+        const hay = ['#infEmails', '#infEmails_mant', '#infEmails_ord', '#infIgual_mant'].every(s => !!document.querySelector(s))
+          && (!document.querySelector('#infIgual_ord').checked || (document.querySelector('#infDia_ord').disabled && document.querySelector('#infHora_ord').value === document.querySelector('#infHora').value));
         document.querySelector('#infEmails_mant').value = 'mant@prueba.com'; document.querySelector('#infIgual_mant').checked = false;
         document.querySelector('#infDia_mant').value = '2'; document.querySelector('#infHora_mant').value = '8';
         document.querySelector('#infEmails_ord').value = 'ord@prueba.com';

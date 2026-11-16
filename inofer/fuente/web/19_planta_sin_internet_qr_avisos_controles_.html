@@ -1171,13 +1171,26 @@ function probarInformePorMail() { Logger.log(inoferServidor_().enviarInformeSema
           }
           if (id === 'infMailCfg') {
             const box = w.querySelector('#infMailBox'); box.classList.toggle('hidden');
+            // "Mismo día y hora que el de producción": el día y la hora propios no se usan → se muestran los de producción y quedan grises
+            const syncIgual = () => ['mant', 'ord'].forEach(t => { const ig = w.querySelector('#infIgual_' + t), d = w.querySelector('#infDia_' + t), h = w.querySelector('#infHora_' + t); if (!ig || !d || !h) return;
+              if (ig.checked) { d.value = w.querySelector('#infDia').value; h.value = w.querySelector('#infHora').value; }
+              d.disabled = h.disabled = ig.checked; d.classList.toggle('opacity-50', ig.checked); h.classList.toggle('opacity-50', ig.checked); });
+            if (!w.__infSync) { w.__infSync = true; w.addEventListener('change', e => { if (/^inf(Igual|Dia|Hora)/.test((e.target && e.target.id) || '')) { syncIgual(); w.querySelectorAll('.inf-difiere').forEach(x => x.remove()); } }); }
+            syncIgual();
             if (!box.classList.contains('hidden')) api({ action: 'respaldoInfo' }).then(r => {
               const el = w.querySelector('#infEstado'); if (!el) return;
               const u = r.informe; const t = [];
               t.push(u && u.fecha ? `Último envío: ${new Date(u.fecha).toLocaleString('es-AR')}${u.como ? ' ' + esc(u.como) : ''}` : 'Todavía no se envió ningún informe.');
               const fmt = f => new Date(f).toLocaleString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
               ['prod', 'mant', 'ord'].forEach(t => { const box = w.querySelector('#infProx_' + t); if (!box) return; const x = (r.tipos || {})[t] || (t === 'prod' ? { proximo: r.proximo, ultimo: r.informe } : {});
-                box.innerHTML = (x.proximo ? `<span class="text-emerald-300">⏰ Próximo envío: ${fmt(x.proximo)}</span>` : '<span class="text-amber-300">⏰ Sin envío programado (cargá mails y tocá Guardar)</span>') + (x.ultimo && x.ultimo.fecha ? `<br>Último: ${new Date(x.ultimo.fecha).toLocaleString('es-AR')}` : ''); });
+                const sx = t === 'prod' ? '' : '_' + t, dS = w.querySelector('#infDia' + sx), hS = w.querySelector('#infHora' + sx);
+                const DS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+                const difiere = x.dia != null && dS && hS && (Number(dS.value) !== Number(x.dia) || Number(hS.value) !== Number(x.hora));
+                box.innerHTML = (x.proximo ? `<span class="text-emerald-300">⏰ Próximo envío: ${fmt(x.proximo)}</span>` : '<span class="text-amber-300">⏰ Sin envío programado (cargá mails y tocá Guardar)</span>')
+                  + (difiere ? `<br><span class="inf-difiere text-amber-300 font-bold">⚠️ En la nube está guardado ${DS[x.dia]} ${String(x.hora).padStart(2, '0')}:00, no lo que ves acá. Tocá Guardar.</span>` : '')
+                  + (x.ultimo && x.ultimo.fecha ? `<br>Último: ${new Date(x.ultimo.fecha).toLocaleString('es-AR')}` : '')
+                  + (x.progError ? `<br><span class="text-rose-300">⚠️ No se pudo programar: ${esc(x.progError)}</span>` : '')
+                  + (x.error ? `<br><span class="text-rose-300">⚠️ ${esc(x.error)}</span>` : ''); });
               if (r.zona) t.push(`<span class="text-slate-400">Zona horaria de la planilla: ${esc(r.zona)}${r.chequeo && r.chequeo.local ? ' · último control: ' + esc(r.chequeo.local) : ''}</span>`);
               if (r.progError) t.push(`<span class="text-rose-300">⚠️ No se pudo programar: ${esc(r.progError)}</span>`);
               if (r.informeError) t.push(`<span class="text-rose-300">⚠️ ${esc(r.informeError)}</span>`);
