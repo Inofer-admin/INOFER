@@ -1,0 +1,135 @@
+  <script>
+    // ===== Nueva orden: pide pieza, máquina y cantidad (17/11/2026, pedido del usuario: "cada vez que creo una OP nueva crea solo la 7615") =====
+    // El botón viejo `#newOrderBtn` (núcleo 01) creaba SIEMPRE una orden de ejemplo (pieza 07615/1, molde 7615, 180 Tn, 1000 u)
+    // y numeraba 406 + cantidad de órdenes (repetía números si se borraba alguna). Ahora se intercepta el clic (en captura) y
+    // se abre `#inoferNuevaOP`: N° (siguiente = el mayor + 1, editable, no deja repetir), pieza con lista de la base, máquina
+    // (las de la pieza primero) y cantidad. Los datos (molde, u/h, material, pesos, bocas) salen de la base.
+    // También ofrece borrar las órdenes de ejemplo 07615/1 vacías que creó el botón viejo (`inoferOrdenesEjemplo7615`).
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const norm = window.inoferNormTxt || (s => String(s || '').toLowerCase().trim());
+      const pad = n => String(n).padStart(2, '0');
+      const hoy = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const ordenes = () => (typeof productionOrders !== 'undefined' && Array.isArray(productionOrders) ? productionOrders : []);
+      const catArr = () => (typeof partsCatalog !== 'undefined' && Array.isArray(partsCatalog)) ? partsCatalog : [];
+      const MAQS = () => (typeof GANTT_MACHINES_CONFIG !== 'undefined' ? GANTT_MACHINES_CONFIG : []);
+      const nombreMaq = id => (MAQS().find(m => m.id === id) || {}).name || id;
+      const idMaq = txt => { const t = norm(txt); const m = MAQS().find(x => norm(x.id) === t || norm(x.name) === t || norm(x.short) === t); return m ? m.id : ''; };
+      function buscar(p) {
+        const t = String(p || '').trim(); if (!t) return null;
+        if (typeof inoferCatBuscar === 'function') return inoferCatBuscar(t, true) || inoferCatBuscar(t + '/1', true) || inoferCatBuscar(t.replace(/\/1$/, ''), true) || null;
+        return catArr().find(c => norm(c.part) === norm(t)) || null;
+      }
+      const maqsDe = c => [...new Set((Array.isArray(c && c.machines) ? c.machines : []).concat(c && c.machine ? [c.machine] : []).map(idMaq).filter(Boolean))];
+      const numDe = o => parseInt(String(o.ordNumber || '').replace(/\D/g, ''), 10) || 0;
+      function siguienteNumero() { const n = ordenes().map(numDe); return String((n.length ? Math.max(...n) : 405) + 1).padStart(8, '0'); }
+      window.inoferSiguienteNumeroOP = siguienteNumero;
+      const puedeCrear = () => { try { return (typeof inoferCan !== 'function' || inoferCan('ordenes', 'edit')) && (typeof inoferPuede !== 'function' || inoferPuede('ord_crear')); } catch (e) { return false; } };
+
+      // órdenes de ejemplo que dejó el botón viejo: 07615/1 con todos los valores por defecto y sin producción
+      const esEjemplo = o => o && String(o.part) === '07615/1' && String(o.mold) === '7615' && Number(o.qtyTarget) === 1000 && Number(o.unitsPerHour) === 180
+        && Number(o.weightWithSprueKg) === 0.065 && !(o.logs || []).length && !(o.rechazos || []).length && !o.gantt && !o.creadaPor;
+      window.inoferOrdenesEjemplo7615 = () => ordenes().filter(esEjemplo);
+
+      function crear(d) {
+        const c = buscar(d.part);
+        const rate = (c && Number(c.unitsPerHour)) || 180, w = (c && Number(c.weightWithSprueKg)) || 0, f = hoy();
+        const o = {
+          id: 'ord-' + Date.now() + '-' + Math.floor(Math.random() * 1000), ordNumber: d.numero, date: f, machine: nombreMaq(d.maq),
+          mold: c ? (c.mold || '') : '', part: c ? c.part : String(d.part).trim().toUpperCase(), cavities: (c && Number(c.cavities)) || 1, unitsPerHour: rate,
+          material: (c && c.material) || ((MAQS().find(m => m.id === d.maq) || {}).defaultMaterial === 'alsi' ? 'ALSI' : 'ZAMAC'),
+          weightWithSprueKg: w, weightOkGrs: (c && Number(c.weightOkGrs)) || 0,
+          qtyTarget: d.qty, hoursToUse: Number((d.qty / rate).toFixed(2)), kgTotal: Number((d.qty * w).toFixed(1)), status: 'En Proceso', logs: [],
+          back: { date: f, moldVersion: c ? (c.mold || '') : '', dieCut: c ? (c.dieCut || '') : '', machiningDev: c ? (c.machiningDev || '') : '', endDate: '', endTime: '', unmountDate: '', unmountStart: '', unmountEnd: '',
+            upSupervisor: '', upStaff: '', downSupervisor: '', downStaff: '', daterExists: 'SI', daterPos: 'LADO FIJO', daterYear: f.slice(0, 4), daterMonth: f.slice(5, 7), eyeboltExists: 'SI',
+            coolClamps: '', coolBridges: '', coolHoses: '', comments: '' },
+          creadaPor: typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : ''
+        };
+        productionOrders.unshift(o);
+        selectedOrderId = o.id;
+        try { saveProductionOrders(); } catch (e) { }
+        try { renderProductionOrdersView(); } catch (e) { }
+        return o;
+      }
+      window.inoferCrearOrden = crear;
+
+      function abrir() {
+        if (!puedeCrear()) { toast('Tu usuario no puede crear órdenes'); return; }
+        const v = $('inoferNuevaOP'); if (v) v.remove();
+        const w = document.createElement('div'); w.id = 'inoferNuevaOP';
+        w.className = 'fixed inset-0 z-[75] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        const ej = window.inoferOrdenesEjemplo7615();
+        const esAdmin = typeof inoferSession !== 'undefined' && inoferSession && inoferSession.rol === 'admin';
+        const lista = catArr().filter(c => c && c.part && !(window.inoferEsPiezaR && inoferEsPiezaR(c.part))).slice(0, 3000);
+        w.innerHTML = `<form id="noForm" class="w-full max-w-md space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl" autocomplete="off">
+          <div class="flex items-center justify-between"><h3 class="text-base font-black text-white">+ Nueva orden de producción</h3><button type="button" class="no-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300">✕</button></div>
+          <label class="block text-xs text-slate-400">Pieza <span class="text-slate-500">(escribí el código)</span>
+            <input id="noPieza" list="noPiezaList" required placeholder="Código de la pieza" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-bold text-white">
+            <datalist id="noPiezaList">${lista.map(c => `<option value="${esc(c.part)}">${esc(c.desc || c.description || '')}</option>`).join('')}</datalist></label>
+          <div id="noInfo" class="text-[11px] text-slate-400"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-xs text-slate-400">Máquina<select id="noMaq" required class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-white"><option value="">Elegí…</option>${MAQS().map(m => `<option value="${esc(m.id)}">${esc(m.short || m.id)}</option>`).join('')}</select></label>
+            <label class="block text-xs text-slate-400">Cantidad a inyectar<input id="noQty" type="number" min="1" step="1" required class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-bold text-white"></label>
+          </div>
+          <label class="block text-xs text-slate-400">N° de OP<input id="noNum" required value="${esc(siguienteNumero())}" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"></label>
+          ${ej.length && esAdmin ? `<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] text-amber-100">Hay ${ej.length} orden${ej.length > 1 ? 'es' : ''} de ejemplo 07615/1 sin producción que creó el botón viejo (OP ${ej.slice(0, 6).map(o => esc(o.ordNumber)).join(', ')}${ej.length > 6 ? '…' : ''}).
+            <button type="button" id="noBorrarEj" class="ml-1 rounded border border-amber-400/60 px-2 py-0.5 font-bold">🗑️ Borrarlas</button> <span class="text-amber-200/70">(van a la papelera)</span></div>` : ''}
+          <div class="flex justify-end gap-2 border-t border-slate-800 pt-3">
+            <button type="button" class="no-cerrar rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300">Cancelar</button>
+            <button type="submit" class="rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400">Crear orden</button>
+          </div></form>`;
+        document.body.appendChild(w);
+        const info = () => {
+          const c = buscar($('noPieza').value);
+          if (!$('noPieza').value.trim()) { $('noInfo').textContent = ''; return; }
+          if (!c) { $('noInfo').innerHTML = '<span class="text-amber-300">⚠️ No está en la base de datos: se crea igual, pero sin molde, cadencia ni pesos.</span>'; return; }
+          const ms = maqsDe(c);
+          $('noInfo').innerHTML = `${esc(c.desc || c.description || '')} · Molde ${esc(c.mold || '—')} · ${esc(c.unitsPerHour || '—')} u/h · ${esc(c.material || '')}${ms.length ? ' · máquinas: ' + ms.map(esc).join(', ') : ''}`;
+          const sel = $('noMaq');
+          if (ms.length && (!sel.value || sel.__auto)) { sel.value = ms[0]; sel.__auto = true; }
+        };
+        $('noPieza').addEventListener('input', info); $('noPieza').addEventListener('change', info);
+        $('noMaq').addEventListener('change', e => { e.target.__auto = false; });
+        w.addEventListener('click', e => {
+          const t = e.target;
+          if (t === w || (t.closest && t.closest('.no-cerrar'))) { w.remove(); return; }
+          if (t.id === 'noBorrarEj') {
+            const L = window.inoferOrdenesEjemplo7615();
+            if (!L.length || !confirm(`¿Borrar ${L.length} orden${L.length > 1 ? 'es' : ''} de ejemplo 07615/1 sin producción?\n\nQuedan en la Papelera por si alguna era real.`)) return;
+            const ids = new Set(L.map(o => o.id));
+            productionOrders = productionOrders.filter(o => !ids.has(o.id));
+            if (!productionOrders.some(o => o.id === selectedOrderId)) selectedOrderId = productionOrders.length ? productionOrders[0].id : null;
+            try { saveProductionOrders(); renderProductionOrdersView(); } catch (er) { }
+            toast(`🗑️ Se borraron ${L.length} órdenes de ejemplo`);
+            t.parentElement.remove();
+          }
+        });
+        $('noForm').addEventListener('submit', e => {
+          e.preventDefault();
+          const part = $('noPieza').value.trim(), maq = $('noMaq').value, qty = Math.round(Number($('noQty').value) || 0);
+          const numero = $('noNum').value.trim();
+          if (!part || !maq || qty <= 0 || !numero) { toast('Completá pieza, máquina y cantidad'); return; }
+          if (window.inoferEsPiezaR && inoferEsPiezaR(part)) { toast('Las piezas -R no se inyectan'); return; }
+          const nd = numero.replace(/\D/g, '');
+          if (ordenes().some(o => String(o.ordNumber).trim() === numero || (nd && String(o.ordNumber).replace(/\D/g, '') === nd))) { toast(`Ya existe la OP ${numero}`); return; }
+          const c = buscar(part), ms = maqsDe(c);
+          if (c && ms.length && !ms.includes(maq) && !confirm(`La pieza ${c.part} no figura en la ${maq} (figura en ${ms.join(', ')}). ¿Crear la orden igual?`)) return;
+          const o = crear({ part, maq, qty, numero: /^\d+$/.test(numero) ? numero.padStart(8, '0') : numero });
+          w.remove();
+          toast(`✓ OP ${o.ordNumber} creada: ${o.part} en la ${maq}`);
+          try { switchOrderSubTab('front'); } catch (er) { }
+        });
+        setTimeout(() => $('noPieza').focus(), 50);
+      }
+      window.inoferNuevaOrden = abrir;
+
+      // El botón viejo (y "+ Nueva orden" de la lista, que lo cliquea) abren la ventana en vez de crear la de ejemplo
+      document.addEventListener('click', e => {
+        const b = e.target && e.target.closest && e.target.closest('#newOrderBtn, #inoferOrdNuevaBtn'); if (!b) return;
+        e.stopImmediatePropagation(); e.preventDefault();
+        abrir();
+      }, true);
+    })();
+  </script>

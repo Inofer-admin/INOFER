@@ -548,6 +548,43 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.r2.st === 'En Proceso' && !r.r2.cierre && r.r2.hist === 1 && r.r2.cambios === 2, 'no se pudo reabrir bien: ' + JSON.stringify(r.r2));
       ok(!A._errs.length, 'errores: ' + A._errs.slice(0, 2).join(' | '));
     });
+    await prueba('Nueva orden: pide la pieza (ya no crea siempre la 07615) y numera con el mayor + 1', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        productionOrders.push({ id: 'ord-ej7615', ordNumber: '00009990', date: '2026-10-01', machine: 'Italpresse 180 Tn', mold: '7615', part: '07615/1', cavities: 1, unitsPerHour: 180, material: 'ZAMAC', weightWithSprueKg: 0.065, weightOkGrs: 0, qtyTarget: 1000, status: 'En Proceso', logs: [] });
+        saveProductionOrders(); await w(200);
+        const antes = productionOrders.length;
+        switchTab('orders'); try { switchOrderSubTab('list'); } catch (e) { } await w(300);
+        document.getElementById('inoferOrdNuevaBtn').click(); await w(200);
+        const ventana = !!document.getElementById('inoferNuevaOP'), creoSola = productionOrders.length !== antes;
+        const num = document.getElementById('noNum').value;
+        const aviso = !!document.getElementById('noBorrarEj');
+        document.getElementById('noBorrarEj').click(); await w(200);
+        const quedaEj = productionOrders.some(o => o.id === 'ord-ej7615');
+        const p = document.getElementById('noPieza'); p.value = '90107'; p.dispatchEvent(new Event('input', { bubbles: true })); await w(100);
+        const maq = document.getElementById('noMaq').value;
+        document.getElementById('noQty').value = '500';
+        document.getElementById('noForm').requestSubmit(); await w(400);
+        const o = productionOrders[0];
+        // número repetido: no deja
+        document.getElementById('newOrderBtn').click(); await w(200);
+        const p2 = document.getElementById('noPieza'); p2.value = '90107'; p2.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('noQty').value = '10'; document.getElementById('noNum').value = o.ordNumber;
+        const n0 = productionOrders.length; document.getElementById('noForm').requestSubmit(); await w(200);
+        const repetida = productionOrders.length !== n0;
+        document.getElementById('inoferNuevaOP') && document.getElementById('inoferNuevaOP').remove();
+        const res = { ventana, creoSola, num, aviso, quedaEj, maq, o: { part: o.part, mold: o.mold, machine: o.machine, qty: o.qtyTarget, num: o.ordNumber, uph: o.unitsPerHour }, repetida, sel: selectedOrderId === o.id };
+        productionOrders = productionOrders.filter(x => x.id !== o.id); saveProductionOrders();
+        return res;
+      });
+      ok(r.ventana && !r.creoSola, 'el botón sigue creando una orden sola: ' + JSON.stringify(r));
+      ok(r.num === '00009991', 'el número sugerido no es el mayor + 1: ' + r.num);
+      ok(r.aviso && !r.quedaEj, 'no ofreció o no borró la orden de ejemplo 07615');
+      ok(r.maq === '200V', 'no eligió la máquina de la pieza: ' + r.maq);
+      ok(r.o.part === '90107' && r.o.mold === '90107' && /200 Tn \(V\)/.test(r.o.machine) && r.o.qty === 500 && r.o.uph === 73 && r.o.num === '00009991' && r.sel, 'la orden nueva no tomó los datos: ' + JSON.stringify(r.o));
+      ok(!r.repetida, 'dejó crear una orden con un número repetido');
+      ok(!A._errs.length, 'errores: ' + A._errs.slice(0, 2).join(' | '));
+    });
     await prueba('Usuarios: se aceptan tildes, ñ y espacios ("José Núñez" → jose.nunez) y se entra igual', async () => {
       const r = await A.evaluate(async () => {
         const out = { norm: inoferNormUsuario('  José Núñez '), mal: inoferUsuarioMal('ju@n'), corto: inoferUsuarioMal('jo') };
