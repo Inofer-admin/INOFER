@@ -1,0 +1,256 @@
+  <script>
+    // ===== Estado de la OP a mano (17/11/2026, pedido del usuario: "a veces terminamos antes la producción por decisiones internas") =====
+    // El admin (o quien tenga el permiso ord_estado) cambia el estado de una orden desde la Lista de órdenes (botón 🔄 Estado)
+    // o desde el detalle (al lado del estado). Opciones: En Proceso, Pendiente, Completada (si falta, queda como
+    // "terminada antes" con motivo, piezas hechas y lo que faltó) y Detenida por rotura (usa el flujo de la parte 28).
+    // Al terminar antes puede sacar del Gantt lo que quedaba programado de esa pieza en esa máquina, para que no aparezca
+    // como incumplido ni se proponga otra orden por el resto (la parte 23 respeta `cierreManual.ultimoDia`).
+    // Cada cambio queda en `o.estadoHist` [{de, a, at, por, motivo}]. Reabrir no vuelve a poner lo que se sacó del Gantt.
+    (function () {
+      const $ = id => document.getElementById(id);
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const n0 = v => Math.round(Number(v) || 0).toLocaleString('es-AR');
+      const pad = n => String(n).padStart(2, '0');
+      const isoD = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      const hoy = () => isoD(new Date());
+      const sumar = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return isoD(d); };
+      const fF = iso => { const p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; };
+      const toast = m => { try { showToast(m); } catch (e) { } };
+      const ordenes = () => (typeof productionOrders !== 'undefined' && Array.isArray(productionOrders) ? productionOrders : []);
+      const ROTURA = 'Detenida por rotura';
+      const ESTADOS = [
+        { v: 'En Proceso', ico: '▶️', t: 'En Proceso', d: 'Se sigue produciendo' },
+        { v: 'Pendiente', ico: '⏸️', t: 'Pendiente', d: 'Todavía no arranca o queda en espera' },
+        { v: 'Completada', ico: '🏁', t: 'Completada / terminada', d: 'Se terminó (aunque falten piezas)' },
+        { v: ROTURA, ico: '🔧', t: 'Detenida por rotura', d: 'Sale del Gantt hasta que vuelva a programarse' }
+      ];
+      const MOTIVOS = ['Decisión interna', 'El cliente bajó o canceló el pedido', 'Cambio de prioridades', 'Falta de material', 'Problema de calidad'];
+
+      const sesion = () => (typeof inoferSession !== 'undefined' ? inoferSession : null);
+      const puede = () => { const s = sesion(); if (!s) return false; if (s.rol === 'admin') return true; try { return inoferCan('ordenes', 'edit') && inoferPuede('ord_estado'); } catch (e) { return false; } };
+      const quien = () => (typeof inoferUsuarioEtiqueta === 'function' ? inoferUsuarioEtiqueta() : '');
+      const maqDe = o => (window.inoferCargaRapida && inoferCargaRapida.maqDeOrden) ? inoferCargaRapida.maqDeOrden(o) : '';
+      const hechas = o => (typeof inoferOkReal === 'function' ? inoferOkReal(o) : ((o.logs || []).reduce((a, l) => a + (Number(l.okPcs) || 0), 0)));
+      const ultimoTurno = o => (o.logs || []).map(l => String(l.date || l.fecha || '').slice(0, 10)).filter(Boolean).sort().pop() || '';
+
+      // lo que queda programado en el Gantt de esa pieza en esa máquina desde una fecha
+      function programadoMaq(o, desde) {
+        const m = maqDe(o); if (!m || !window.inoferProgramadoDesde) return 0;
+        try { return (inoferProgramadoDesde(o.part, desde).porMaq || {})[m] || 0; } catch (e) { return 0; }
+      }
+
+      // Aplica el cambio. opc: { motivo, sacarGantt, desde }
+      function cambiar(ordId, nuevo, opc) {
+        opc = opc || {};
+        const o = ordenes().find(x => String(x.id) === String(ordId)); if (!o) return null;
+        if (!puede()) { toast('Solo el administrador puede cambiar el estado de la orden'); return null; }
+        const antes = o.status || 'En Proceso';
+        if (nuevo === ROTURA) {
+          if (antes === ROTURA) return { igual: true };
+          if (!window.inoferDetenerPorRotura) { toast('No se pudo detener la orden'); return null; }
+          const r = inoferDetenerPorRotura(o.id, { motivo: opc.motivo || 'Rotura de molde (marcado a mano)' });
+          o.estadoHist = (o.estadoHist || []).concat([{ de: antes, a: ROTURA, at: new Date().toISOString(), por: quien(), motivo: opc.motivo || '' }]);
+          try { saveProductionOrders(); } catch (e) { }
+          return r;
+        }
+        const at = new Date().toISOString(), f = hoy();
+        if (antes === ROTURA) { // sale de rotura a mano: igual que en el detalle (parte 28)
+          o.roturasHist = (o.roturasHist || []).concat([Object.assign({}, o.rotura || {}, { volvio: f, manual: true })]);
+          delete o.rotura; delete o.statusAntesRotura;
+        }
+        const res = { quitado: 0 };
+        if (nuevo === 'Completada') {
+          const obj = Number(o.qtyTarget) || 0, ok = hechas(o), falta = Math.max(0, obj - ok);
+          if (opc.sacarGantt && window.inoferQuitarDelGantt) {
+            const m = maqDe(o);
+            if (m) { try { res.quitado = inoferQuitarDelGantt(o.part, m, opc.desde || f).total || 0; } catch (e) { } }
+            if (res.quitado) { try { saveGanttWeeks(); } catch (e) { } }
+          }
+          o.cierreManual = falta > 0 ? {
+            fecha: f, at, por: quien(), motivo: opc.motivo || 'Decisión interna', hechas: ok, objetivo: obj, falta,
+            sacoGantt: !!opc.sacarGantt, desde: opc.sacarGantt ? (opc.desde || f) : '', quitadoGantt: res.quitado,
+            ultimoDia: opc.sacarGantt ? sumar(opc.desde || f, -1) : f
+          } : undefined;
+          if (!o.cierreManual) delete o.cierreManual;
+          o.autoCompletada = false;
+          o.back = o.back || {};
+          if (!o.back.endDate) { o.back.endDate = f; const d = new Date(); o.back.endTime = pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+        } else if (antes === 'Completada') {
+          if (o.cierreManual) o.cierresHist = (o.cierresHist || []).concat([Object.assign({}, o.cierreManual, { reabierta: at, reabiertaPor: quien() })]);
+          delete o.cierreManual; o.autoCompletada = false;
+        }
+        o.status = nuevo; o.modificadoAt = at; o.modificadoPor = quien();
+        o.estadoHist = (o.estadoHist || []).concat([{ de: antes, a: nuevo, at, por: quien(), motivo: opc.motivo || '' }]);
+        try { saveProductionOrders(); } catch (e) { }
+        refrescar();
+        return res;
+      }
+      window.inoferCambiarEstadoOrden = cambiar;
+
+      function refrescar() {
+        try { renderProductionOrdersView(); } catch (e) { }
+        try { if (typeof renderGanttView === 'function' && document.getElementById('viewGantt') && !document.getElementById('viewGantt').classList.contains('hidden')) renderGanttView(); } catch (e) { }
+        try { const s = $('ord_status'); const o = typeof getActiveOrder === 'function' ? getActiveOrder() : null; if (s && o) s.value = o.status || 'En Proceso'; } catch (e) { }
+      }
+
+      // ---------- ventana ----------
+      function abrir(ordId, preelegido) {
+        const o = ordenes().find(x => String(x.id) === String(ordId)); if (!o) return;
+        if (!puede()) { toast('Solo el administrador puede cambiar el estado de la orden'); return; }
+        const viejo = $('inoferEstadoOP'); if (viejo) viejo.remove();
+        const obj = Number(o.qtyTarget) || 0, ok = hechas(o), falta = Math.max(0, obj - ok);
+        const pct = obj ? Math.min(100, Math.round(ok / obj * 100)) : 0;
+        const actual = o.status || 'En Proceso';
+        const f = hoy(), ult = ultimoTurno(o);
+        // si ya se cargó un turno hoy, lo de hoy se deja en el Gantt (se sacan los días siguientes)
+        const desdeSug = ult >= f ? sumar(f, 1) : f;
+        let elegido = preelegido || (actual === 'Completada' ? 'En Proceso' : 'Completada');
+        let motivo = MOTIVOS[0], otro = '', sacar = true, desde = desdeSug;
+        const w = document.createElement('div'); w.id = 'inoferEstadoOP';
+        w.className = 'fixed inset-0 z-[75] flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6';
+        document.body.appendChild(w);
+        function dibujar() {
+          const quedan = programadoMaq(o, desde);
+          const esCierre = elegido === 'Completada' && falta > 0;
+          const pideMotivo = esCierre || elegido === ROTURA || elegido === 'Pendiente';
+          const hist = (o.estadoHist || []).slice(-4).reverse();
+          w.innerHTML = `<div class="w-full max-w-lg space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+            <div class="flex items-start justify-between gap-2">
+              <div><h3 class="text-base font-black text-white">🔄 Estado de la OP ${esc(o.ordNumber || '')}</h3>
+                <p class="text-xs text-slate-400">${esc(o.part || '')} · ${esc(maqDe(o) || o.machine || '')} · ahora: <b class="text-slate-200">${esc(actual)}</b></p></div>
+              <button type="button" class="eo-cerrar rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white">✕</button>
+            </div>
+            <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+              <div class="flex justify-between text-xs text-slate-300"><span>Hechas <b class="text-white">${n0(ok)}</b> de ${n0(obj)}</span><span class="font-bold">${pct}%</span></div>
+              <div class="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div class="h-full ${pct >= 100 ? 'bg-emerald-400' : 'bg-amber-400'}" style="width:${pct}%"></div></div>
+              ${falta > 0 ? `<div class="mt-1 text-[11px] text-slate-400">Faltan ${n0(falta)} piezas${ult ? ` · último turno ${fF(ult)}` : ''}</div>` : ''}
+            </div>
+            <div class="grid grid-cols-2 gap-2">${ESTADOS.map(e => `<button type="button" data-eo="${esc(e.v)}" class="rounded-xl border px-3 py-2 text-left ${elegido === e.v ? 'border-amber-400 bg-amber-500/15' : 'border-slate-700 hover:border-slate-500'}">
+              <div class="text-sm font-bold text-white">${e.ico} ${esc(e.t)}${e.v === actual ? ' <span class="text-[10px] font-normal text-slate-400">(actual)</span>' : ''}</div><div class="text-[11px] text-slate-400">${esc(e.d)}</div></button>`).join('')}</div>
+            ${esCierre ? `<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">🏁 Se termina <b>antes</b>: quedan ${n0(ok)} hechas de ${n0(obj)} (faltan ${n0(falta)}). Queda registrado quién la cerró y por qué.</div>` : ''}
+            ${pideMotivo ? `<div class="space-y-1.5"><div class="text-xs font-bold text-slate-300">Motivo</div>
+              <div class="flex flex-wrap gap-1.5">${MOTIVOS.concat(['Otro…']).map(m => `<button type="button" data-mot="${esc(m)}" class="rounded-full border px-2.5 py-1 text-[11px] ${motivo === m ? 'border-amber-400 bg-amber-500/20 text-amber-100' : 'border-slate-700 text-slate-300'}">${esc(m)}</button>`).join('')}</div>
+              ${motivo === 'Otro…' ? `<input id="eoOtro" value="${esc(otro)}" placeholder="Escribí el motivo" class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white">` : ''}</div>` : ''}
+            ${esCierre ? `<div class="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+              <label class="flex items-start gap-2"><input type="checkbox" id="eoSacar" class="mt-0.5 h-4 w-4 accent-amber-500" ${sacar ? 'checked' : ''}>
+                <span>Sacar del Gantt lo que quedaba programado de esta pieza en la ${esc(maqDe(o) || 'máquina')} desde el
+                <select id="eoDesde" class="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-xs text-white">
+                  <option value="${f}" ${desde === f ? 'selected' : ''}>hoy ${fF(f)}</option>
+                  <option value="${sumar(f, 1)}" ${desde === sumar(f, 1) ? 'selected' : ''}>mañana ${fF(sumar(f, 1))}</option></select>
+                  · <b class="${quedan ? 'text-amber-200' : 'text-slate-500'}">${quedan ? n0(quedan) + ' piezas programadas' : 'no hay nada programado'}</b></span></label>
+              <p class="text-[11px] text-slate-500">Si no lo sacás, el Gantt lo sigue mostrando como pendiente y te va a proponer una orden nueva por ese resto.</p></div>` : ''}
+            ${actual === 'Completada' && elegido !== 'Completada' && o.cierreManual && o.cierreManual.quitadoGantt ? `<p class="text-[11px] text-amber-200">⚠️ Al cerrarla se sacaron ${n0(o.cierreManual.quitadoGantt)} piezas del Gantt; reabrirla no las vuelve a poner: programalas de nuevo si hace falta.</p>` : ''}
+            ${hist.length ? `<details class="text-[11px] text-slate-400"><summary class="cursor-pointer">Cambios anteriores</summary>${hist.map(h => `<div>${esc(String(h.at || '').slice(0, 10))} · ${esc(h.de)} → <b>${esc(h.a)}</b>${h.motivo ? ' · ' + esc(h.motivo) : ''}${h.por ? ' · ' + esc(h.por) : ''}</div>`).join('')}</details>` : ''}
+            <div class="flex justify-end gap-2 border-t border-slate-800 pt-3">
+              <button type="button" class="eo-cerrar rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300">Cancelar</button>
+              <button type="button" id="eoOk" class="rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-40" ${elegido === actual ? 'disabled' : ''}>Guardar estado</button>
+            </div></div>`;
+        }
+        dibujar();
+        w.addEventListener('input', e => { if (e.target.id === 'eoOtro') otro = e.target.value; });
+        w.addEventListener('change', e => {
+          if (e.target.id === 'eoSacar') { sacar = e.target.checked; }
+          if (e.target.id === 'eoDesde') { desde = e.target.value; dibujar(); }
+        });
+        w.addEventListener('click', e => {
+          const t = e.target.closest('button'); if (!t) { if (e.target === w) w.remove(); return; }
+          if (t.classList.contains('eo-cerrar')) { w.remove(); refrescar(); return; }
+          if (t.dataset.eo) { elegido = t.dataset.eo; dibujar(); return; }
+          if (t.dataset.mot) { motivo = t.dataset.mot; dibujar(); if (motivo === 'Otro…') { const i = $('eoOtro'); if (i) i.focus(); } return; }
+          if (t.id === 'eoOk') {
+            const mot = motivo === 'Otro…' ? String(otro || '').trim() : motivo;
+            if (motivo === 'Otro…' && !mot && (elegido === 'Completada' && falta > 0)) { toast('Escribí el motivo'); return; }
+            if (elegido === ROTURA && !confirm(`¿Detener la OP ${o.ordNumber || ''} por rotura de molde?\n\nSale del Gantt desde hoy y vuelve sola a "En Proceso" cuando la pieza aparezca otra vez en el Gantt.`)) return;
+            const r = cambiar(o.id, elegido, { motivo: mot, sacarGantt: elegido === 'Completada' && falta > 0 && sacar, desde });
+            w.remove();
+            if (!r) return;
+            if (elegido === 'Completada' && falta > 0) toast(`🏁 OP ${o.ordNumber || ''} terminada con ${n0(ok)} de ${n0(obj)}${r.quitado ? ` · se sacaron ${n0(r.quitado)} piezas del Gantt` : ''}`);
+            else toast(`OP ${o.ordNumber || ''}: ${elegido}`);
+          }
+        });
+      }
+      window.inoferEstadoOrden = abrir;
+
+      // ---------- botones ----------
+      // Lista de órdenes: botón 🔄 Estado en cada tarjeta (al lado de 📂 Abrir) + "terminada antes" en la tarjeta
+      function decorarLista() {
+        const cont = $('inoferOrdenesLista'); if (!cont) return;
+        const ok = puede();
+        cont.querySelectorAll('button.inofer-ord-abrir.flex-1').forEach(b => {
+          const fila = b.parentElement; if (!fila) return;
+          const id = b.dataset.id;
+          let e = fila.querySelector('.inofer-ord-estado');
+          if (!ok) { if (e) e.remove(); return; }
+          if (!e) {
+            e = document.createElement('button'); e.type = 'button'; e.dataset.id = id;
+            e.className = 'inofer-ord-estado rounded-lg border border-amber-500/40 px-2 py-1.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/10';
+            e.textContent = '🔄 Estado'; e.title = 'Cambiar el estado de la orden (terminarla antes, reabrirla…)';
+            b.insertAdjacentElement('afterend', e);
+          }
+        });
+        cont.querySelectorAll('button.inofer-ord-abrir:not(.flex-1)').forEach(b => {
+          const o = ordenes().find(x => String(x.id) === String(b.dataset.id));
+          const tarjeta = b.closest('.rounded-xl'); if (!tarjeta) return;
+          let n = tarjeta.querySelector('.inofer-ord-cierre');
+          if (o && o.status === 'Completada' && o.cierreManual) {
+            if (!n) { n = document.createElement('div'); n.className = 'inofer-ord-cierre text-[10px] font-bold text-amber-300'; const barra = tarjeta.querySelector('.h-1\\.5'); (barra ? barra.parentElement : tarjeta).appendChild(n); }
+            n.textContent = `🏁 Terminada antes: ${n0(o.cierreManual.hechas)} de ${n0(o.cierreManual.objetivo)} · ${o.cierreManual.motivo || ''}`;
+          } else if (n) n.remove();
+        });
+      }
+      // Detalle de la orden: botón al lado del estado
+      function decorarDetalle() {
+        const badge = $('orderStatusBadge'); if (!badge) return;
+        let b = $('inoferEstadoBtn');
+        if (!puede()) { if (b) b.remove(); }
+        else if (!b) {
+          b = document.createElement('button'); b.type = 'button'; b.id = 'inoferEstadoBtn';
+          b.className = 'inofer-ord-estado ml-1.5 rounded-lg border border-amber-500/40 px-2 py-1 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/10';
+          b.textContent = '🔄 Cambiar estado';
+          badge.insertAdjacentElement('afterend', b);
+        }
+        const o = typeof getActiveOrder === 'function' ? getActiveOrder() : null;
+        if (o && o.status === 'Completada' && o.cierreManual) {
+          badge.textContent = `Completada · terminada antes (${n0(o.cierreManual.hechas)}/${n0(o.cierreManual.objetivo)})`;
+          badge.title = `${o.cierreManual.motivo || ''} · ${o.cierreManual.por || ''}`;
+        } else if (o && o.status && o.status !== 'Completada' && badge.textContent === 'Completada') {
+          badge.title = 'Llegó al 100% de la cantidad';
+        }
+      }
+      document.addEventListener('click', e => {
+        const b = e.target.closest && e.target.closest('.inofer-ord-estado'); if (!b) return;
+        e.preventDefault();
+        const id = b.dataset.id || (typeof selectedOrderId !== 'undefined' ? selectedOrderId : null);
+        if (id) abrir(id);
+      });
+      // Frente de la orden: si eligen "Completada" y faltan piezas, se abre la ventana (para dejar el motivo y el Gantt al día)
+      document.addEventListener('change', e => {
+        if (!e.target || e.target.id !== 'ord_status') return;
+        const o = typeof getActiveOrder === 'function' ? getActiveOrder() : null; if (!o) return;
+        const v = e.target.value;
+        if (v === 'Completada' && o.status !== 'Completada' && (Number(o.qtyTarget) || 0) > hechas(o) && puede()) {
+          e.target.value = o.status || 'En Proceso';
+          abrir(o.id, 'Completada');
+        }
+      });
+
+      function envolver() {
+        if (typeof window.renderProductionOrdersView === 'function' && !window.renderProductionOrdersView.__estadoOP) {
+          const orig = window.renderProductionOrdersView;
+          const f = function () { const r = orig.apply(this, arguments); try { decorarDetalle(); decorarLista(); } catch (e) { } return r; };
+          Object.assign(f, orig); f.__estadoOP = true; window.renderProductionOrdersView = f;
+          try { renderProductionOrdersView = f; } catch (e) { }
+        }
+      }
+      // la lista se redibuja sola (filtros, búsqueda): se decora cuando cambia
+      function observar() {
+        const cont = $('inoferOrdenesLista'); if (!cont || cont.__estadoOP) return;
+        cont.__estadoOP = true;
+        new MutationObserver(() => { try { decorarLista(); } catch (e) { } }).observe(cont, { childList: true });
+        decorarLista();
+      }
+      function iniciar() { try { envolver(); observar(); decorarDetalle(); } catch (e) { } }
+      setInterval(iniciar, 3000);
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(iniciar, 500)); else setTimeout(iniciar, 500);
+    })();
+  </script>

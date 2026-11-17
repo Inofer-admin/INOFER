@@ -20,6 +20,7 @@
           { k: 'ord_crear', t: 'Crear órdenes nuevas' },
           { k: 'ord_editar', t: 'Modificar los datos de la orden (frente y dorso)' },
           { k: 'ord_borrar', t: 'Borrar órdenes' },
+          { k: 'ord_estado', t: 'Cambiar el estado de la orden a mano: terminarla antes, reabrirla, pendiente (solo si lo habilitás)', opt: true },
           { k: 'ord_rechazos', t: 'Cargar rechazos de control de calidad (descuentan piezas buenas)' },
           { k: 'ord_imprimir', t: 'Imprimir y exportar órdenes', nivel: 'view' },
           { k: 'ord_informe', t: 'Ver el informe general de órdenes', nivel: 'view' }
@@ -101,6 +102,7 @@
         ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn', '#crNuevaForm input', '#crNuevaForm button', '.cr-plan'],
         ord_editar: ['#saveOrderFrontBtn', '#saveOrderBackBtn', '#orderSubViewFront input', '#orderSubViewFront select', '#orderSubViewFront textarea', '#orderSubViewBack input', '#orderSubViewBack select', '#orderSubViewBack textarea', '.inofer-ord-editar', '.use-cat-btn', '#catalogQuickPicker'],
         ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        ord_estado: ['.inofer-ord-estado', '#ord_status'],
         gantt_manual: ['.gantt-aux-input', '.gantt-item-qty-input', '.del-gantt-item-btn', '.add-piece-to-mach-btn', '#assignOrderToGanttBtn', '#createNewGanttWeekBtn', '#duplicateGanttWeekBtn', '.unlink-gantt-shared-btn', '.link-gantt-order-btn', '#openGanttCatalogBtn', '#saveGanttBtn'],
         gantt_asistente: ['#inoferGanttChatUndo'],
         gantt_auto: ['#toggleAutoGanttPanelBtn', '#runAutoGanttMonthBtn', '#autoGanttExcelInput', '#loadPreloadedAnalisisExcelBtn', '#clearAutoGanttPasteBtn'],
@@ -131,6 +133,7 @@
         ord_turnos: ['.order-subtab-btn[data-order-subtab="rapida"]'],
         ord_crear: ['#newOrderBtn', '#inoferOrdNuevaBtn', '#crNuevaBtn'],
         ord_borrar: ['#deleteCurrentOrderBtn', '.inofer-ord-borrar'],
+        ord_estado: ['.inofer-ord-estado'],
         ord_editar_turnos: ['.del-order-log-btn', '.inofer-edit-log-btn', '.cr-log-edit', '.cr-log-del'],
         gantt_auto: ['#toggleAutoGanttPanelBtn'],
         precios_ver: ['#inoferPanelPrecios', '#inoferGanttFactBadge', '.inline-precio-input', '#cat_precio'],

@@ -508,6 +508,46 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       const on = d.modules.orders.find(o => o.id === 'ord-rc');
       ok(on && (on.rechazos || []).length === 1 && d.modules.calidad && d.modules.calidad.causas.includes('Poro en la cara A'), 'el rechazo o la causa no llegaron a la nube');
     });
+    await prueba('Estado de la OP a mano: el admin la termina antes con motivo, saca el resto del Gantt y la puede reabrir', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const pad = n => String(n).padStart(2, '0'), iso = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        const hoy = new Date(); const dom = new Date(hoy); dom.setDate(hoy.getDate() - hoy.getDay());
+        const nom = (GANTT_MACHINES_CONFIG.find(x => x.id === '180') || {}).name || '180';
+        ganttWeeksData['SEM-EO-PRUEBA'] = { name: 'Prueba estado OP', startDate: iso(dom), machines: { '180': { items: [{ part: 'EO-PIEZA', desc: 'Prueba', dailyQty: [100, 100, 100, 100, 100, 100, 100], totalQty: 700, stdRate: 100 }], aux: {} } } };
+        productionOrders.push({ id: 'ord-eo', ordNumber: '8101', part: 'EO-PIEZA', machine: nom, qtyTarget: 1000, unitsPerHour: 100, status: 'En Proceso', weightWithSprueKg: 0.2, material: 'ZAMAC', gantt: { key: 'eo-pieza|180', desde: iso(dom) },
+          logs: [{ id: 'lg-eo1', date: iso(hoy), turno: 'Mañana', startTime: '06:00', endTime: '14:00', okPcs: 640, scrapPcs: 5, operator: 'Juan' }] });
+        saveProductionOrders(); await w(300);
+        selectedOrderId = 'ord-eo'; switchTab('orders'); try { switchOrderSubTab('list'); } catch (e) { } renderProductionOrdersView(); await w(3500);
+        const boton = !!document.querySelector('.inofer-ord-estado[data-id="ord-eo"]');
+        inoferEstadoOrden('ord-eo'); await w(150);
+        const ventana = !!document.getElementById('inoferEstadoOP');
+        document.querySelector('#inoferEstadoOP [data-eo="Completada"]').click(); await w(80);
+        document.querySelector('#inoferEstadoOP [data-mot="Cambio de prioridades"]').click(); await w(80);
+        const desde = document.getElementById('eoDesde').value;   // ya hay turno hoy → sugiere mañana
+        document.getElementById('eoOk').click(); await w(300);
+        const o = productionOrders.find(x => x.id === 'ord-eo');
+        const it = ganttWeeksData['SEM-EO-PRUEBA'].machines['180'].items.find(x => x.part === 'EO-PIEZA');
+        const quedaHoy = it ? it.dailyQty[hoy.getDay()] : 0, quedaDespues = it ? it.dailyQty.slice(hoy.getDay() + 1).reduce((a, b) => a + b, 0) : 0;
+        const prop = inoferPropuestasGantt().filter(p => p.k === 'eo-pieza|180');
+        const cierre = JSON.parse(JSON.stringify(o.cierreManual || null));
+        const st1 = o.status;
+        const insignia = document.getElementById('orderStatusBadge').textContent;
+        // reabrir
+        inoferCambiarEstadoOrden('ord-eo', 'En Proceso', { motivo: 'Se retoma' }); await w(200);
+        const r2 = { st: o.status, cierre: !!o.cierreManual, hist: (o.cierresHist || []).length, cambios: (o.estadoHist || []).length };
+        delete ganttWeeksData['SEM-EO-PRUEBA']; productionOrders = productionOrders.filter(x => x.id !== 'ord-eo'); saveProductionOrders(); saveGanttWeeks();
+        return { boton, ventana, desde, manana: iso(new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + 1)), st1, cierre, quedaHoy, quedaDespues, prop: prop.map(p => p.tipo), insignia, r2 };
+      });
+      ok(r.boton && r.ventana, 'no aparece el botón 🔄 Estado o la ventana: ' + JSON.stringify(r));
+      ok(r.desde === r.manana, 'con turno cargado hoy debería sugerir sacar desde mañana: ' + r.desde);
+      ok(r.st1 === 'Completada' && r.cierre && r.cierre.hechas === 640 && r.cierre.falta === 360 && r.cierre.motivo === 'Cambio de prioridades', 'no quedó terminada antes con motivo: ' + JSON.stringify(r.cierre));
+      ok(r.quedaHoy === 100 && (r.quedaDespues === 0 || new Date().getDay() === 6), 'no sacó bien lo que quedaba en el Gantt: ' + JSON.stringify([r.quedaHoy, r.quedaDespues]));
+      ok(!r.prop.includes('nueva'), 'propone una orden nueva por lo que quedó programado: ' + r.prop.join(','));
+      ok(/terminada antes/.test(r.insignia), 'el detalle no dice "terminada antes": ' + r.insignia);
+      ok(r.r2.st === 'En Proceso' && !r.r2.cierre && r.r2.hist === 1 && r.r2.cambios === 2, 'no se pudo reabrir bien: ' + JSON.stringify(r.r2));
+      ok(!A._errs.length, 'errores: ' + A._errs.slice(0, 2).join(' | '));
+    });
     await prueba('Usuarios: se aceptan tildes, ñ y espacios ("José Núñez" → jose.nunez) y se entra igual', async () => {
       const r = await A.evaluate(async () => {
         const out = { norm: inoferNormUsuario('  José Núñez '), mal: inoferUsuarioMal('ju@n'), corto: inoferUsuarioMal('jo') };

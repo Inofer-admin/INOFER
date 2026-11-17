@@ -60,6 +60,8 @@
         Object.keys(P).forEach(k => {
           const x = P[k];
           if (ordenes().some(o => usadas.has(o.id) && o.gantt && o.gantt.key === k) || L.some(p => p.k === k)) return;
+          // orden terminada antes a mano (estado de la OP): no proponer otra por lo que quedó programado hasta el día del cierre
+          if (ordenes().some(o => o.cierreManual && o.status === 'Completada' && (o.gantt ? o.gantt.key === k : (norm(o.part) === norm(x.part) && maqDe(o) === x.maq)) && !x.dias.some(f => f > (o.cierreManual.ultimoDia || o.cierreManual.fecha || '')))) return;
           L.push({ tipo: 'nueva', k, x, qty: x.qty });
         });
         // órdenes del Gantt que ya no están programadas
