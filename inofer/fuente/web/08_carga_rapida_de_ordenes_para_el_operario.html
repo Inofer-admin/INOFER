@@ -185,6 +185,24 @@
         return L.slice(0, 4);
       }
       const corto = c => String(c || '').replace(/^\d+\s*-\s*/, '').slice(0, 22);
+      // (18/11/2026) la Carga rápida muestra solo las OP abiertas de la máquina elegida: acá se ven las de las otras y se llega a la lista completa
+      function bloqueOtras() {
+        const otras = productionOrders.filter(o => maqDeOrden(o) !== st.maq && abierta(o));
+        const verLista = `<button type="button" id="crVerLista" class="mt-3 text-xs font-bold text-amber-300 underline">📂 Ver todas las órdenes (también las terminadas y detenidas)</button>`;
+        if (!otras.length) return `<div class="mt-2">${verLista}</div>`;
+        return `<details id="crOtrasMaq" class="mt-4 rounded-2xl border border-slate-700 bg-slate-950/40 p-3">
+          <summary class="cursor-pointer text-sm font-bold text-slate-200">🔎 Ver OP abiertas de otras máquinas (${otras.length})</summary>
+          <div class="mt-3 grid gap-2 sm:grid-cols-2">${otras.map(o => { const a = avance(o); const m = maqDeOrden(o); return `<button type="button" class="cr-ord-otra ${BTN} border-slate-700 bg-slate-950 hover:border-amber-400" data-id="${esc(o.id)}">
+            <span class="flex items-center justify-between gap-2"><span class="text-base text-amber-300">${esc(o.part || 'Sin pieza')}</span><span class="rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-200">${esc(m || o.machine || 'sin máquina')}</span></span>
+            <span class="block text-[11px] font-normal text-slate-400">OP ${esc(o.ordNumber)} · ${a.pct}%</span></button>`; }).join('')}</div>
+          ${verLista}</details>`;
+      }
+      function salirCR() {
+        st.nueva = false; st.editLogId = ''; st.continuar = null; st.cambios = []; st.parada = false;
+        const lb = document.querySelector('.order-subtab-btn[data-order-subtab="list"]');
+        if (lb && !(typeof inoferCan === 'function' && !inoferCan('ordenes', 'view'))) { switchOrderSubTab('list'); return; }
+        try { if (typeof switchTab === 'function') switchTab($('viewHoy') ? 'hoy' : 'dashboard'); } catch (e) { }
+      }
       function render() {
         const box = $('inoferCR');
         if (!box) return;
@@ -232,7 +250,7 @@
                     <input id="crNumero" inputmode="numeric" value="${siguienteNumero()}" class="w-full rounded-xl border-2 border-slate-700 bg-slate-950 px-4 py-3 text-lg font-bold text-white focus:border-amber-400 focus:outline-none"></label>
                 </div>
                 <div class="flex gap-2">
-                  ${ords.length ? '<button type="button" id="crCancelarNueva" class="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Volver</button>' : ''}
+                  <button type="button" id="crCancelarNueva" class="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-300">Volver</button>
                   <button type="submit" class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-base font-black text-slate-950 hover:bg-amber-400">Crear orden y seguir →</button>
                 </div>
               </form>`;
@@ -246,6 +264,7 @@
                 ${puedeCrear ? `<button type="button" id="crNuevaBtn" class="${BTN} border-dashed border-slate-600 bg-transparent text-center text-slate-300 hover:border-amber-400 hover:text-white"><span class="block text-2xl">+</span><span class="text-sm">Empezar una orden nueva</span></button>` : ''}
               </div>`;
           }
+          html += bloqueOtras();
         } else {
           const o = productionOrders.find(x => x.id === st.ordId);
           if (!o) { st.paso = 'orden'; return render(); }
@@ -330,7 +349,13 @@
                 <button type="button" class="cr-log-del rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs font-bold text-rose-300" data-id="${esc(l.id)}">🗑️</button></div>` : ''}
             </div>`).join('')}</div>`;
         }
-        box.innerHTML = migas + html;
+        // (18/11/2026) siempre se puede volver o salir sin cargar nada
+        const txtVolver = st.paso === 'maquina' ? '← Volver' : (st.paso === 'orden' ? (st.nueva && productionOrders.some(o => maqDeOrden(o) === st.maq && abierta(o)) ? '← Volver a las órdenes' : '← Cambiar de máquina') : (st.editLogId ? '← Cancelar la corrección' : '← Elegir otra orden'));
+        const nav = `<div id="crNavBar" class="mb-3 flex items-center justify-between gap-2">
+          <button type="button" id="crVolver" class="rounded-xl border-2 border-slate-600 bg-slate-950 px-4 py-2.5 text-sm font-black text-slate-100 hover:border-amber-400">${txtVolver}</button>
+          <button type="button" id="crSalir" class="rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-bold text-slate-300 hover:text-white">✕ Salir sin cargar</button>
+        </div>`;
+        box.innerHTML = nav + migas + html;
         if (st.paso === 'turno') setTimeout(pintarReparto, 0);
         if (st.paso === 'turno' && st.editLogId) { try { precargarTurno(); } catch (e) { console.error(e); } }
         // paradas tomadas con el cronómetro de la máquina (parte 29)
@@ -749,7 +774,23 @@
           else if ((el = g('.cr-maq'))) { st.maq = el.dataset.maq; pref.maq = st.maq; guardarPref(); st.paso = 'orden'; st.nueva = false; render(); }
           else if ((el = g('.cr-ord'))) { st.editLogId = ''; st.cambios = []; st.ordId = el.dataset.id; selectedOrderId = st.ordId; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render(); setTimeout(() => $('crOk') && $('crOk').focus(), 50); }
           else if (g('#crNuevaBtn')) { st.nueva = true; render(); setTimeout(() => $('crPieza') && $('crPieza').focus(), 50); }
-          else if (g('#crCancelarNueva')) { st.nueva = false; render(); }
+          else if (g('#crCancelarNueva')) { st.nueva = false; if (!productionOrders.some(o => maqDeOrden(o) === st.maq && abierta(o))) st.paso = 'maquina'; render(); }
+          else if (g('#crSalir')) { salirCR(); }
+          else if (g('#crVerLista')) { salirCR(); }
+          else if (g('#crVolver')) {
+            const hayOrds = productionOrders.some(o => maqDeOrden(o) === st.maq && abierta(o));
+            if (st.paso === 'maquina') { salirCR(); return; }
+            if (st.paso === 'orden') { if (st.nueva && hayOrds) st.nueva = false; else { st.nueva = false; st.paso = 'maquina'; st.continuar = null; } }
+            else { st.editLogId = ''; st.cambios = []; st.parada = false; st.paso = 'orden'; }
+            render();
+          }
+          else if ((el = g('.cr-ord-otra'))) {
+            const o = productionOrders.find(x => x.id === el.dataset.id); if (!o) return;
+            const m = maqDeOrden(o);
+            if (m) st.maq = m;
+            st.editLogId = ''; st.cambios = []; st.nueva = false; st.ordId = o.id; selectedOrderId = o.id; st.paso = 'turno'; st.turno = st.continuar ? st.continuar.turno : turnoActual(); render();
+            showToast(m ? `OP ${o.ordNumber}: se carga en la ${m}, que es la máquina de la orden` : `OP ${o.ordNumber}: la orden no tiene máquina asignada`);
+          }
           else if ((el = g('.cr-plan'))) { $('crPieza').value = el.dataset.part; $('crCantidad').value = el.dataset.qty; infoPieza(); }
           else if ((el = g('.cr-delta'))) {
             const i = $('crOk'); i.value = Math.max(0, (Number(i.value) || 0) + Number(el.dataset.d)); i.dataset.auto = '';

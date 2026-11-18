@@ -1740,6 +1740,42 @@ const nube = p => p.evaluate(async () => (await (await fetch(cloudApiUrl + '?act
       ok(r.tol3 === '67.9-72.1', 'la tolerancia configurada no se aplicó: ' + r.tol3);
       ok(r.editor.filas === 6 && r.editor.dato && r.editor.txt, 'el editor no arrancó con la hoja: ' + JSON.stringify(r.editor));
     });
+    await prueba('Carga rápida: volver/salir sin cargar y ver OP de otras máquinas (18/11/2026)', async () => {
+      const r = await A.evaluate(async () => {
+        const w = ms => new Promise(r => setTimeout(r, ms));
+        const out = {};
+        const o1 = inoferCrearOrden({ part: (partsCatalog.find(c => (c.machines || []).includes('Z30')) || partsCatalog[0]).part, maq: 'Z30', qty: 500, numero: String(inoferSiguienteNumeroOP()) });
+        await w(300);
+        const CR = inoferCargaRapida;
+        // máquina sin OP abiertas → antes quedaba atrapado en "Orden nueva"
+        // se dejan sin OP abiertas las de la 180 por un momento (solo en memoria; se frena la sincronización)
+        lastLocalChangeAt = Date.now() + 60000;
+        const sacadas = productionOrders.filter(o => CR.maqDeOrden(o) === '180' && CR.abierta(o));
+        productionOrders = productionOrders.filter(o => !sacadas.includes(o));
+        const sinOps = '180';
+        out.sinOps = sinOps;
+        CR.abrir({ maq: sinOps }); await w(300);
+        out.nueva = !!document.getElementById('crNuevaForm');
+        out.otras = !!document.getElementById('crOtrasMaq') && document.querySelectorAll('.cr-ord-otra').length > 0;
+        document.getElementById('crCancelarNueva').click(); await w(200);
+        out.volvioMaq = CR.estado.paso === 'maquina';
+        CR.abrir({ maq: sinOps }); await w(200);
+        document.getElementById('crVolver').click(); await w(200);
+        out.volver = CR.estado.paso === 'maquina';
+        // OP de otra máquina → se abre en su máquina
+        CR.abrir({ maq: sinOps }); await w(200);
+        document.querySelector(`.cr-ord-otra[data-id="${o1.id}"]`).click(); await w(300);
+        out.otra = CR.estado.paso === 'turno' && CR.estado.ordId === o1.id && CR.estado.maq === 'Z30';
+        document.getElementById('crVolver').click(); await w(200);
+        out.aOrden = CR.estado.paso === 'orden';
+        document.getElementById('crSalir').click(); await w(300);
+        out.salir = currentOrderSubTab === 'list' && !document.getElementById('orderSubViewList').classList.contains('hidden');
+        productionOrders = productionOrders.filter(o => o.id !== o1.id).concat(sacadas); lastLocalChangeAt = Date.now(); saveProductionOrders(); await w(300);
+        return out;
+      });
+      ok(r.sinOps && r.nueva && r.otras, 'en una máquina sin OP no se ven las de otras máquinas: ' + JSON.stringify(r));
+      ok(r.volvioMaq && r.volver && r.otra && r.aOrden && r.salir, 'no se puede volver o salir de la carga rápida: ' + JSON.stringify(r));
+    });
     await prueba('Sin errores en la consola', async () => { ok(!A._errs.length && !(B && B._errs.length), 'errores: ' + A._errs.concat(B ? B._errs : []).slice(0, 3).join(' | ')); });
   } finally {
     await b.close(); w.close(); srv.kill();
